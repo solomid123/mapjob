@@ -541,8 +541,9 @@ async def ws_transcribe(websocket: WebSocket, lang: str = "fr"):
         url = f"http://www.google.com/speech-api/v2/recognize?client=chromium&lang={l_code}&key=AIzaSyBOti4mM-6x9WDnZIjIeyEU21OpBXqWBgw"
         headers = {"Content-Type": "audio/l16; rate=16000"}
         try:
-            resp = sess.post(url, headers=headers, data=pcm_bytes, timeout=2.0)
+            resp = sess.post(url, headers=headers, data=pcm_bytes, timeout=2.5)
             if resp.status_code == 200:
+                resp.encoding = "utf-8"
                 for line in resp.text.strip().split("\n"):
                     try:
                         p_data = json.loads(line)
@@ -600,6 +601,9 @@ async def ws_transcribe(websocket: WebSocket, lang: str = "fr"):
         except Exception:
             client = None
 
+    # Sensitive VAD threshold for digital tab audio & browser mic
+    VAD_RMS_THRESHOLD = 30
+
     try:
         while True:
             data = await websocket.receive_json()
@@ -632,25 +636,24 @@ async def ws_transcribe(websocket: WebSocket, lang: str = "fr"):
             except Exception:
                 rms = 0
 
-            # VAD threshold: speech active if RMS > 200
-            if rms > 200:
+            # VAD: speech active if RMS > VAD_RMS_THRESHOLD (captures clear tab sound without clipping)
+            if rms >= VAD_RMS_THRESHOLD:
                 speech_active = True
                 speech_buffer.extend(raw_chunk)
                 silent_chunks_count = 0
                 chunks_since_interim += 1
 
-                # Ultra-fast real-time interim streaming:
-                # Every 2 chunks (~256ms) while speaking with >= 200ms audio, stream partial words
-                if chunks_since_interim >= 2 and len(speech_buffer) >= 6400 and not interim_inflight:
+                # Real-time interim streaming every ~380ms while speaking
+                if chunks_since_interim >= 3 and len(speech_buffer) >= 9600 and not interim_inflight:
                     interim_inflight = True
                     chunks_since_interim = 0
                     snap = bytes(speech_buffer)
                     asyncio.create_task(run_interim(snap, pref_lang))
 
-                # Continuous speech boundary (2.4s): finalize and continue with 100ms overlap
-                if len(speech_buffer) >= 76800:
+                # Continuous speech boundary (6.0s max per utterance): finalize smoothly with 500ms acoustic overlap
+                if len(speech_buffer) >= 192000:
                     to_process = bytes(speech_buffer)
-                    speech_buffer = bytearray(speech_buffer[-3200:])
+                    speech_buffer = bytearray(speech_buffer[-16000:])
                     silent_chunks_count = 0
                     chunks_since_interim = 0
 
@@ -672,8 +675,8 @@ async def ws_transcribe(websocket: WebSocket, lang: str = "fr"):
                 silent_chunks_count += 1
                 speech_buffer.extend(raw_chunk)
 
-                # Utterance complete: 1 silent chunk (~128ms pause) with >= 0.15s audio (4800 bytes)
-                if silent_chunks_count >= 1 and len(speech_buffer) >= 4800:
+                # Utterance complete: natural conversational pause of ~380ms (3 silent chunks) with >= 0.3s audio (9600 bytes)
+                if silent_chunks_count >= 3 and len(speech_buffer) >= 9600:
                     to_process = bytes(speech_buffer)
                     speech_buffer = bytearray()
                     speech_active = False
@@ -685,8 +688,8 @@ async def ws_transcribe(websocket: WebSocket, lang: str = "fr"):
                     if not transcribed_text:
                         transcribed_text = await asyncio.to_thread(query_google_speech_l16, http_session, to_process, fallback_lang)
 
-                    # Secondary fallback: Fuelix Whisper (only if acoustic failed)
-                    if not transcribed_text and client:
+                    # Secondary fallback: Fuelix Whisper (if Google couldn't parse the acoustic)
+                    if not transcribed_text and client and len(to_process) >= 16000:
                         try:
                             buf = io.BytesIO()
                             with wave.open(buf, "wb") as wf:
@@ -701,7 +704,7 @@ async def ws_transcribe(websocket: WebSocket, lang: str = "fr"):
                         except Exception:
                             pass
 
-                    # Filter hallucinations and output final immediately
+                    # Output final immediately
                     if transcribed_text:
                         c_low = transcribed_text.lower().strip(' .,!?:;')
                         if c_low not in hallucinations and c_low != last_transcript.lower():

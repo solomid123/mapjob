@@ -53,9 +53,9 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
   const [sharing, setSharing] = useState(false);
   const [shareLabel, setShareLabel] = useState('');
   const [connected, setConnected] = useState(false);
-  type Engine = 'live' | 'whisper' | 'google' | 'gemini' | 'assemblyai' | 'browser';
+  type Engine = 'google' | 'gemini' | 'assemblyai' | 'browser';
   const [engine, setEngine] = useState<Engine | null>(null);
-  const [enginePref, setEnginePref] = useState<Engine>('live');
+  const [enginePref, setEnginePref] = useState<Engine>('google');
   const [hasAudioInput, setHasAudioInput] = useState(false);
   const [audioActive, setAudioActive] = useState(false);
   const [engineNote, setEngineNote] = useState('');
@@ -80,7 +80,7 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
   const detachPcmRef = useRef<(() => void) | null>(null);
   const relaySessionRef = useRef(0);
   const geminiAttemptsRef = useRef(0);
-  const enginePrefRef = useRef<Engine>('live');
+  const enginePrefRef = useRef<Engine>('google');
   const lineId = useRef(1);
   const answerId = useRef(1);
   const autoScrollRef = useRef(true);
@@ -275,15 +275,69 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
     }
   }, [lang, pushLine]);
 
+  const startBackendRelay = useCallback(async (stream: MediaStream, targetEngine: 'google' | 'gemini') => {
+    const session = ++relaySessionRef.current;
+    geminiAttemptsRef.current = 0;
+    try {
+      await ensureAudioInput(stream);
+    } catch {
+      setEngineNote('Microphone/tab audio unavailable.');
+      startBrowserSpeech();
+      return;
+    }
+    if (relaySessionRef.current !== session) return;
+
+    const wsUrl = `${BACKEND.replace(/^http/, 'ws')}/ws/transcribe?lang=${lang}&engine=${targetEngine}`;
+    const connect = () => {
+      if (relaySessionRef.current !== session) return;
+      const ws = new WebSocket(wsUrl);
+      relayWsRef.current = ws;
+      ws.onopen = () => {
+        setConnected(true);
+        setEngine(targetEngine);
+        setEngineNote('');
+      };
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg.transcript) {
+            setEngine(targetEngine);
+            pushLine(msg.transcript, Boolean(msg.final));
+          } else if (msg.status === 'live') {
+            setEngine(targetEngine);
+          } else if (msg.error) {
+            setEngineNote(`⚠️ ${msg.error}`);
+          }
+        } catch { /* noop */ }
+      };
+      ws.onclose = () => {
+        if (relaySessionRef.current !== session) return;
+        setTimeout(() => { if (relaySessionRef.current === session) connect(); }, 2000);
+      };
+    };
+
+    detachPcmRef.current?.();
+    detachPcmRef.current = attachPcmGraph(stream, (b64) => {
+      const open = relayWsRef.current;
+      if (open && open.readyState === WebSocket.OPEN) open.send(JSON.stringify({ audio_data: b64 }));
+    });
+    connect();
+  }, [attachPcmGraph, ensureAudioInput, lang, pushLine, startBrowserSpeech]);
+
   const startAssemblyAI = useCallback(async (stream: MediaStream) => {
-    // Try AssemblyAI realtime via short-lived backend token; fall back to browser speech.
     let token = '';
     try {
       const r = await fetch(`${BACKEND}/api/assembly/token`);
-      if (r.ok) token = (await r.json()).token || '';
-    } catch { /* backend offline -> fallback */ }
-    if (!token) {
-      startBrowserSpeech();
+      const data = await r.json();
+      token = data.token || '';
+      if (!token) {
+        setEngineNote(`⚠️ ${data.error || 'AssemblyAI API key not set'}. Using Google Speech instead.`);
+        await startBackendRelay(stream, 'google');
+        return;
+      }
+    } catch {
+      setEngineNote('Backend offline. Falling back to Google Speech.');
+      await startBackendRelay(stream, 'google');
       return;
     }
 
@@ -295,11 +349,15 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
       wsRef.current = ws;
       let gotTranscript = false;
 
-      ws.onopen = () => setEngineNote('AssemblyAI realtime connected.');
+      ws.onopen = () => {
+        setConnected(true);
+        setEngine('assemblyai');
+        setEngineNote('');
+      };
       ws.onerror = () => {
         if (!gotTranscript) {
           try { ws.close(); } catch { /* noop */ }
-          startBrowserSpeech();
+          void startBackendRelay(stream, 'google');
         }
       };
       ws.onmessage = (ev) => {
@@ -326,7 +384,7 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
         } catch { /* non-JSON keepalive */ }
       };
       ws.onclose = () => {
-        if (!gotTranscript) startBrowserSpeech();
+        if (!gotTranscript) void startBackendRelay(stream, 'google');
       };
 
       detachPcmRef.current?.();
@@ -335,61 +393,9 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
         if (open && open.readyState === WebSocket.OPEN) open.send(JSON.stringify({ audio_data: b64 }));
       });
     } catch {
-      startBrowserSpeech();
+      void startBackendRelay(stream, 'google');
     }
-  }, [pushLine, startBrowserSpeech, ensureAudioInput, attachPcmGraph]);
-
-  const startGeminiRelay = useCallback(async (stream: MediaStream) => {
-    // Gemini 3.5 Transcribe Live via the local backend relay (API key never hits the browser).
-    // Auto-renews the session (Gemini caps Live sessions at ~10 min).
-    const session = ++relaySessionRef.current;
-    geminiAttemptsRef.current = 0;
-    try {
-      await ensureAudioInput(stream);
-    } catch {
-      setEngineNote('Microphone/tab audio unavailable.');
-      startBrowserSpeech();
-      return;
-    }
-    if (relaySessionRef.current !== session) return;
-
-    const wsUrl = `${BACKEND.replace(/^http/, 'ws')}/ws/transcribe?lang=${lang}`;
-    const connect = () => {
-      if (relaySessionRef.current !== session) return;
-      const ws = new WebSocket(wsUrl);
-      relayWsRef.current = ws;
-      ws.onopen = () => {
-        setConnected(true);
-        setEngine('whisper');
-        setEngineNote('🟢 AI Live Transcribe connected. Listening to audio...');
-      };
-      ws.onmessage = (ev) => {
-        try {
-          const msg = JSON.parse(ev.data);
-          if (msg.transcript) {
-            setEngine(msg.engine || 'whisper');
-            pushLine(msg.transcript, Boolean(msg.final));
-          } else if (msg.status === 'live') {
-            setEngine(msg.engine || 'whisper');
-            setEngineNote(`🟢 AI Live Speech Active (${msg.engine || 'Whisper-1'}). Streaming tab audio.`);
-          } else if (msg.error) {
-            setEngineNote(`Notice: ${msg.error}`);
-          }
-        } catch { /* noop */ }
-      };
-      ws.onclose = () => {
-        if (relaySessionRef.current !== session) return;
-        setTimeout(() => { if (relaySessionRef.current === session) connect(); }, 2000);
-      };
-    };
-
-    detachPcmRef.current?.();
-    detachPcmRef.current = attachPcmGraph(stream, (b64) => {
-      const open = relayWsRef.current;
-      if (open && open.readyState === WebSocket.OPEN) open.send(JSON.stringify({ audio_data: b64 }));
-    });
-    connect();
-  }, [attachPcmGraph, ensureAudioInput, lang, pushLine, startBrowserSpeech]);
+  }, [pushLine, startBackendRelay, ensureAudioInput, attachPcmGraph]);
 
   const startEngine = useCallback(async (stream: MediaStream | null, pref: Engine) => {
     if (!sessionIdRef.current) {
@@ -399,14 +405,18 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
     }
     if (pref === 'browser') {
       startBrowserSpeech();
-    } else if (stream) {
-      if (pref === 'live' || pref === 'whisper' || pref === 'google' || pref === 'gemini') await startGeminiRelay(stream);
-      else if (pref === 'assemblyai') await startAssemblyAI(stream);
+    } else if (pref === 'assemblyai') {
+      if (stream) await startAssemblyAI(stream);
+      else startBrowserSpeech();
+    } else if (pref === 'gemini') {
+      if (stream) await startBackendRelay(stream, 'gemini');
       else startBrowserSpeech();
     } else {
-      startBrowserSpeech();
+      // Default: Google Speech (fastest, working, reliable)
+      if (stream) await startBackendRelay(stream, 'google');
+      else startBrowserSpeech();
     }
-  }, [startAssemblyAI, startGeminiRelay, startBrowserSpeech, lang]);
+  }, [startAssemblyAI, startBackendRelay, startBrowserSpeech, lang]);
 
   const stopSharing = useCallback(() => {
     if (sessionIdRef.current) {
@@ -600,8 +610,8 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
               </div>
               <p className="text-xs text-gray-500">
                 {sharing ? `Sharing: ${shareLabel || 'Tab Audio'} · ` : 'Share your interview/Meet tab to transcribe in real-time · '}
-                <span className="font-semibold text-gray-700">
-                  {engine === 'browser' ? '⚡ Chrome Instant (0ms)' : engine === 'live' ? '⚡ AI Live Tab Relay' : engine === 'whisper' ? 'Whisper-1 AI' : connected ? 'Listening...' : 'Ready'}
+                <span className="font-bold text-gray-800">
+                  {engine === 'google' ? '⚡ Google Speech (Tab Audio Active)' : engine === 'gemini' ? '✨ Gemini Live (gemini-3.5-transcribe-live)' : engine === 'assemblyai' ? '🟣 AssemblyAI (Active)' : engine === 'browser' ? '🎙️ Chrome Speech (Mic)' : connected ? 'Listening...' : 'Ready'}
                 </span>
               </p>
             </div>
@@ -720,9 +730,10 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
                 aria-label="Transcription engine"
                 title="Transcription engine"
               >
-                <option value="live">⚡ AI Live Tab Audio (Ultra-Fast Instant Streaming)</option>
-                <option value="whisper">Whisper-1 AI (Batch High-Accuracy)</option>
-                <option value="browser">🎙️ Microphone Only (WebSpeech - Cannot hear shared tab)</option>
+                <option value="google">⚡ Google Speech (Fast Tab Audio - Recommended)</option>
+                <option value="gemini">✨ Gemini Live (gemini-3.5-transcribe-live)</option>
+                <option value="assemblyai">🟣 AssemblyAI Real-Time (Tab Audio)</option>
+                <option value="browser">🎙️ Chrome Native WebSpeech (Microphone Only)</option>
               </select>
               <button
                 onClick={() => {

@@ -424,21 +424,19 @@ def assembly_token():
     """Mint a short-lived AssemblyAI realtime token so the browser never sees the API key."""
     from services.automation.config import ASSEMBLYAI_API_KEY
     if not ASSEMBLYAI_API_KEY:
-        raise HTTPException(status_code=500, detail="ASSEMBLYAI_API_KEY not set in .env")
+        return {"configured": False, "token": None, "error": "ASSEMBLYAI_API_KEY not configured in .env"}
     try:
         r = requests.post(
             "https://api.assemblyai.com/v2/realtime/token",
             headers={"Authorization": ASSEMBLYAI_API_KEY, "Content-Type": "application/json"},
             json={"expires_in_seconds": 600},
-            timeout=15,
+            timeout=10,
         )
-        if r.status_code != 200:
-            raise HTTPException(status_code=502, detail=f"AssemblyAI token error: {r.text[:300]}")
-        return {"token": r.json().get("token")}
-    except HTTPException:
-        raise
+        if r.status_code == 200:
+            return {"configured": True, "token": r.json().get("token")}
+        return {"configured": False, "token": None, "error": f"AssemblyAI status {r.status_code}"}
     except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e))
+        return {"configured": False, "token": None, "error": str(e)}
 
 @app.post("/api/interview/answer")
 def interview_answer(req: InterviewAnswerRequest):
@@ -513,51 +511,125 @@ def gemini_status():
     from services.automation.config import GEMINI_API_KEY, GEMINI_LIVE_MODEL
     return {"configured": bool(GEMINI_API_KEY), "model": GEMINI_LIVE_MODEL or "gemini-3.5-transcribe-live"}
 
+
+def query_google_speech_l16(sess: requests.Session, pcm_bytes: bytes, l_code: str = "fr-FR") -> str:
+    url = f"http://www.google.com/speech-api/v2/recognize?client=chromium&lang={l_code}&key=AIzaSyBOti4mM-6x9WDnZIjIeyEU21OpBXqWBgw"
+    headers = {"Content-Type": "audio/l16; rate=16000"}
+    try:
+        resp = sess.post(url, headers=headers, data=pcm_bytes, timeout=2.5)
+        if resp.status_code == 200:
+            resp.encoding = "utf-8"
+            for line in resp.text.strip().split("\n"):
+                try:
+                    p_data = json.loads(line)
+                    results = p_data.get("result", [])
+                    if results and len(results) > 0:
+                        alt = results[0].get("alternative", [])
+                        if alt and len(alt) > 0:
+                            return alt[0].get("transcript", "").strip()
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    return ""
+
 @app.websocket("/ws/transcribe")
-async def ws_transcribe(websocket: WebSocket, lang: str = "fr"):
+async def ws_transcribe(websocket: WebSocket, lang: str = "fr", engine: str = "google"):
     """
-    Realtime audio transcription relay:
-    Streams 16kHz PCM audio chunks from browser (tab audio or mic) and
-    transcribes using Fuelix Whisper-1 (with SpeechRecognition fallback),
-    or Gemini Live if configured.
+    High-performance real-time speech transcription relay:
+    - engine="google" (default): Ultra-fast Chromium Speech v2 API with Whisper-1 fallback.
+    - engine="gemini": Real-time bidirectional Gemini Live streaming via Google Bidi WebSocket.
     """
     import asyncio
-    import io
-    import wave
+    import base64
     import struct
     import math
-    import base64
-    import openai
-    import speech_recognition as sr
-    from services.automation.config import FUELIX_API_KEY, FUELIX_BASE_URL, GEMINI_API_KEY, GEMINI_LIVE_MODEL
+    import io
+    import wave
+    from services.automation.config import GEMINI_API_KEY, GEMINI_LIVE_MODEL, FUELIX_API_KEY, FUELIX_BASE_URL
 
     await websocket.accept()
-    # Direct Ultra-Low Latency Streaming Speech Relay (Raw L16 + Connection Pooling)
-    await websocket.send_json({"status": "live", "engine": "live", "model": "google-live-v2"})
 
-    http_session = requests.Session()
+    # Route to Gemini Live if selected
+    if engine.lower() == "gemini":
+        if not GEMINI_API_KEY:
+            await websocket.send_json({"error": "GEMINI_API_KEY not set in .env. Falling back to Google Speech."})
+            engine = "google"
+        else:
+            try:
+                import websockets as ws_lib
+                model = GEMINI_LIVE_MODEL or "gemini-3.5-transcribe-live"
+                codes = ["fr-FR"] if lang == "fr" else ["en-US"]
+                vocab = ["CATIA", "SolidWorks", "Creo", "Abaqus", "Ansys", "thermomecanique",
+                         "mecatronique", "cotation GPS", "tolerancement", "DFMEA",
+                         "Technip Energies", "Framatome", "metrologie", "industrialisation"]
+                gemini_url = (f"wss://generativelanguage.googleapis.com/ws/"
+                              f"google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent"
+                              f"?key={GEMINI_API_KEY}")
 
-    def query_google_speech_l16(sess: requests.Session, pcm_bytes: bytes, l_code: str) -> str:
-        url = f"http://www.google.com/speech-api/v2/recognize?client=chromium&lang={l_code}&key=AIzaSyBOti4mM-6x9WDnZIjIeyEU21OpBXqWBgw"
-        headers = {"Content-Type": "audio/l16; rate=16000"}
-        try:
-            resp = sess.post(url, headers=headers, data=pcm_bytes, timeout=2.5)
-            if resp.status_code == 200:
-                resp.encoding = "utf-8"
-                for line in resp.text.strip().split("\n"):
+                async with ws_lib.connect(gemini_url, max_size=8 * 1024 * 1024) as gws:
+                    await gws.send(json.dumps({"setup": {
+                        "model": f"models/{model}",
+                        "generationConfig": {"responseModalities": ["TEXT"]},
+                        "inputAudioTranscription": {"languageCodes": codes, "customVocabulary": vocab},
+                    }}))
                     try:
-                        p_data = json.loads(line)
-                        results = p_data.get("result", [])
-                        if results and len(results) > 0:
-                            alt = results[0].get("alternative", [])
-                            if alt and len(alt) > 0:
-                                return alt[0].get("transcript", "").strip()
+                        async with asyncio.timeout(15):
+                            while True:
+                                raw = await gws.recv()
+                                hello = json.loads(raw)
+                                if "setupComplete" in hello or "setup_complete" in hello:
+                                    break
                     except Exception:
-                        continue
-        except Exception:
-            pass
-        return ""
+                        await websocket.send_json({"error": f"Gemini setup timeout for model {model}. Falling back to Google Speech."})
+                        engine = "google"
+                    else:
+                        await websocket.send_json({"status": "live", "engine": "gemini", "model": model})
 
+                        def extract_gemini(msg: dict):
+                            sc = msg.get("serverContent") or msg.get("server_content") or {}
+                            for key in ("inputTranscription", "input_transcription"):
+                                node = sc.get(key)
+                                if isinstance(node, dict) and node.get("text"):
+                                    return node["text"], True
+                            for key in ("interimInputTranscription", "interim_input_transcription"):
+                                node = sc.get(key)
+                                if isinstance(node, dict) and node.get("text"):
+                                    return node["text"], False
+                            return None
+
+                        async def b2g():
+                            try:
+                                while True:
+                                    data = await websocket.receive_json()
+                                    if data.get("end"):
+                                        return
+                                    chunk = data.get("audio_data")
+                                    if chunk:
+                                        await gws.send(json.dumps({"realtimeInput": {
+                                            "mediaChunks": [{"mimeType": "audio/pcm;rate=16000", "data": chunk}]}}))
+                            except Exception:
+                                return
+
+                        async def g2b():
+                            try:
+                                async for raw in gws:
+                                    msg = json.loads(raw)
+                                    hit = extract_gemini(msg)
+                                    if hit:
+                                        text, final = hit
+                                        await websocket.send_json({"transcript": text, "final": final, "engine": "gemini"})
+                            except Exception:
+                                return
+
+                        await asyncio.wait({asyncio.create_task(b2g()), asyncio.create_task(g2b())}, return_when=asyncio.FIRST_COMPLETED)
+                        return
+            except Exception as e:
+                await websocket.send_json({"error": f"Gemini connection error: {str(e)[:150]}. Falling back to Google Speech."})
+                engine = "google"
+
+    # Default / Primary: Google Chromium Speech API v2 + Whisper fallback
+    http_session = requests.Session()
     speech_buffer = bytearray()
     speech_active = False
     silent_chunks_count = 0
@@ -587,7 +659,7 @@ async def ws_transcribe(websocket: WebSocket, lang: str = "fr"):
                     await websocket.send_json({
                         "transcript": txt,
                         "final": False,
-                        "engine": "live"
+                        "engine": "google"
                     })
         except Exception:
             pass
@@ -597,12 +669,12 @@ async def ws_transcribe(websocket: WebSocket, lang: str = "fr"):
     client = None
     if FUELIX_API_KEY:
         try:
+            import openai
             client = openai.OpenAI(base_url=FUELIX_BASE_URL, api_key=FUELIX_API_KEY)
         except Exception:
             client = None
 
-    # Sensitive VAD threshold for digital tab audio & browser mic
-    VAD_RMS_THRESHOLD = 30
+    await websocket.send_json({"status": "live", "engine": "google", "model": "google-chromium-v2"})
 
     try:
         while True:
@@ -629,31 +701,30 @@ async def ws_transcribe(websocket: WebSocket, lang: str = "fr"):
             if count == 0:
                 continue
 
-            # Compute RMS of current chunk
             try:
                 shorts = struct.unpack(f"<{count}h", raw_chunk)
                 rms = math.sqrt(sum(s * s for s in shorts) / count)
             except Exception:
                 rms = 0
 
-            # VAD: speech active if RMS > VAD_RMS_THRESHOLD (captures clear tab sound without clipping)
-            if rms >= VAD_RMS_THRESHOLD:
+            # VAD threshold: speech active if RMS > 60 (clear tab audio)
+            if rms >= 60:
                 speech_active = True
                 speech_buffer.extend(raw_chunk)
                 silent_chunks_count = 0
                 chunks_since_interim += 1
 
-                # Real-time interim streaming every ~380ms while speaking
-                if chunks_since_interim >= 3 and len(speech_buffer) >= 9600 and not interim_inflight:
+                # Interim word streaming every 2 chunks (~256ms)
+                if chunks_since_interim >= 2 and len(speech_buffer) >= 6400 and not interim_inflight:
                     interim_inflight = True
                     chunks_since_interim = 0
                     snap = bytes(speech_buffer)
                     asyncio.create_task(run_interim(snap, pref_lang))
 
-                # Continuous speech boundary (6.0s max per utterance): finalize smoothly with 500ms acoustic overlap
-                if len(speech_buffer) >= 192000:
+                # Continuous speech boundary (3.5s max): finalize and keep 200ms overlap
+                if len(speech_buffer) >= 112000:
                     to_process = bytes(speech_buffer)
-                    speech_buffer = bytearray(speech_buffer[-16000:])
+                    speech_buffer = bytearray(speech_buffer[-6400:])
                     silent_chunks_count = 0
                     chunks_since_interim = 0
 
@@ -668,15 +739,15 @@ async def ws_transcribe(websocket: WebSocket, lang: str = "fr"):
                             await websocket.send_json({
                                 "transcript": transcribed_text,
                                 "final": True,
-                                "engine": "live"
+                                "engine": "google"
                             })
 
             elif speech_active:
                 silent_chunks_count += 1
                 speech_buffer.extend(raw_chunk)
 
-                # Utterance complete: natural conversational pause of ~380ms (3 silent chunks) with >= 0.3s audio (9600 bytes)
-                if silent_chunks_count >= 3 and len(speech_buffer) >= 9600:
+                # Utterance complete: 2 silent chunks (~250ms pause) with >= 0.2s audio (6400 bytes)
+                if silent_chunks_count >= 2 and len(speech_buffer) >= 6400:
                     to_process = bytes(speech_buffer)
                     speech_buffer = bytearray()
                     speech_active = False
@@ -688,7 +759,7 @@ async def ws_transcribe(websocket: WebSocket, lang: str = "fr"):
                     if not transcribed_text:
                         transcribed_text = await asyncio.to_thread(query_google_speech_l16, http_session, to_process, fallback_lang)
 
-                    # Secondary fallback: Fuelix Whisper (if Google couldn't parse the acoustic)
+                    # Secondary fallback: Fuelix Whisper
                     if not transcribed_text and client and len(to_process) >= 16000:
                         try:
                             buf = io.BytesIO()
@@ -704,7 +775,6 @@ async def ws_transcribe(websocket: WebSocket, lang: str = "fr"):
                         except Exception:
                             pass
 
-                    # Output final immediately
                     if transcribed_text:
                         c_low = transcribed_text.lower().strip(' .,!?:;')
                         if c_low not in hallucinations and c_low != last_transcript.lower():
@@ -712,7 +782,7 @@ async def ws_transcribe(websocket: WebSocket, lang: str = "fr"):
                             await websocket.send_json({
                                 "transcript": transcribed_text,
                                 "final": True,
-                                "engine": "live"
+                                "engine": "google"
                             })
 
     except WebSocketDisconnect:

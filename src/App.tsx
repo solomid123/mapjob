@@ -942,12 +942,6 @@ export function App() {
                 <h2 className="text-2xl font-black text-[#222222] tracking-tight">
                   {isLoadingJobs ? 'Searching jobs in map area...' : `${filteredJobs.length} mechanical engineering jobs`}
                 </h2>
-                {isLoadingJobs && (
-                  <span className="inline-flex items-center gap-1 text-[11px] font-bold text-[#FF385C] bg-rose-50 px-2.5 py-0.5 rounded-full border border-rose-100">
-                    <Loader2 className="w-3 h-3 animate-spin" />
-                    <span>Searching area...</span>
-                  </span>
-                )}
               </div>
               <p className="text-xs text-[#717171] mt-0.5">
                 {searchAsMapMoves ? `Showing offers in visible map area (${activeLocationLabel})` : `${currentCity.name} Engineering Corridor`}

@@ -1,0 +1,86 @@
+{
+  "personal": {
+    "first_name": "Badreddine",
+    "last_name": "Barki",
+    "full_name": "Badreddine Barki",
+    "email": "badreddinebarki@gmail.com",
+    "phone": "+33745768010",
+    "phone_formatted": "+33 7 45 76 80 10",
+    "phone_national": "0745768010",
+    "phone_country_code": "+33",
+    "address_street": "14 Rue de la 2e D.B.",
+    "postal_code": "80000",
+    "city": "Amiens",
+    "country": "France",
+    "country_code": "FR",
+    "linkedin": "https://www.linkedin.com/in/badreddine-barki",
+    "github": "https://github.com/badreddinebarki"
+  },
+  "legal": {
+    "authorized_in_france": true,
+    "authorized_in_eu": true,
+    "requires_sponsorship": false,
+    "has_driver_license": true,
+    "driver_license_type": "B"
+  },
+  "career": {
+    "current_title": "Ingénieur en Génie Mécanique / R&D",
+    "current_company": "Technip Energies",
+    "years_of_experience": 4,
+    "degree": "Master en Génie Mécanique (Bac +5 / Titre Ingénieur)",
+    "school": "École Universitaire de Physique et d'Ingénierie, Université Clermont Auvergne",
+    "field_of_study": "Génie Mécanique, Conception & Simulation",
+    "graduation_year": 2021
+  },
+  "compensation": {
+    "target_salary_annual_eur": 45000,
+    "minimum_salary_annual_eur": 42000,
+    "currency": "EUR"
+  },
+  "availability": {
+    "notice_period_months": 1,
+    "notice_period_weeks": 4,
+    "willing_to_relocate": true,
+    "willing_to_commute": true
+  },
+  "languages": {
+    "Français": "C1/C2 (Courant / Bilingue)",
+    "French": "Native / Bilingual",
+    "Anglais": "C2 (Bilingue - EF SET 74/100)",
+    "English": "C2 (Fluent / Bilingual)",
+    "Arabe": "Langue maternelle",
+    "Arabic": "Native"
+  },
+  "skills": [
+    "SolidWorks",
+    "CATIA V5",
+    "ANSYS",
+    "Calcul de structure (FEA / FEM)",
+    "Simulation numérique",
+    "Conception mécanique (CAO / CAD)",
+    "Mécanique des fluides (CFD)",
+    "Thermique",
+    "Dessin industriel & cotation ISO (GD&T)",
+    "Matériaux & Métallurgie",
+    "Gestion de projet technique",
+    "R&D industrielle",
+    "Mise en plan & tolérancement",
+    "BOM (Nomenclature)"
+  ],
+  "documents": {
+    "cv_filename": "Badreddine_Barki_CV.pdf"
+  },
+  "pre_answered_questions": {
+    "sponsorship": "Non / No (Je ne nécessite pas de parrainage de visa pour travailler dans l'UE)",
+    "work_permit": "Oui / Yes (Autorisé à travailler légalement)",
+    "driver_license": "Oui / Yes (Permis B)",
+    "relocation": "Oui / Yes (Prêt à déménager)",
+    "remote_preference": "Sur site / Hybride",
+    "notice_period": "1 mois",
+    "experience_cad": "4",
+    "experience_solidworks": "4",
+    "experience_catia": "3",
+    "experience_ansys": "3",
+    "experience_fea": "4"
+  }
+}

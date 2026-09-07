@@ -10,7 +10,8 @@ import {
   Sparkles, 
   Building2, 
   Check,
-  ArrowUpRight
+  ArrowUpRight,
+  Zap
 } from 'lucide-react';
 import type { Job } from '../types/job';
 
@@ -265,7 +266,28 @@ export const JobDetailModal: React.FC<JobDetailModalProps> = ({
                 </div>
 
                 {/* Primary CTA Apply Button */}
-                {job.applyUrl ? (
+                {job.canApplyViaApi ? (
+                  <div className="space-y-2">
+                    <button
+                      onClick={() => onApply(job)}
+                      className="w-full py-3.5 px-6 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-sm sm:text-base shadow-lg shadow-emerald-100 transition-all active:scale-[0.98] flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <Zap className="w-4 h-4 text-amber-300 fill-amber-300" />
+                      <span>1-Click Direct ATS API Apply</span>
+                    </button>
+                    {job.applyUrl && (
+                      <a
+                        href={job.applyUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="w-full py-2 px-4 rounded-xl border border-gray-200 hover:bg-gray-50 text-gray-700 text-xs font-bold transition flex items-center justify-center gap-1"
+                      >
+                        <span>View on {job.atsProvider || 'ATS'} Board</span>
+                        <ArrowUpRight className="w-3.5 h-3.5" />
+                      </a>
+                    )}
+                  </div>
+                ) : job.applyUrl ? (
                   <div className="space-y-2">
                     <a
                       href={job.applyUrl}

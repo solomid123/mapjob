@@ -19,7 +19,7 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-from typing import Optional
+from typing import Optional, Dict, Any, List
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse, Response
@@ -510,6 +510,63 @@ def interview_analyze(req: InterviewAnalyzeRequest):
 def gemini_status():
     from services.automation.config import GEMINI_API_KEY, GEMINI_LIVE_MODEL
     return {"configured": bool(GEMINI_API_KEY), "model": GEMINI_LIVE_MODEL or "gemini-3.5-transcribe-live"}
+
+class DirectApplyRequest(pydantic.BaseModel):
+    job_id: str
+    board: str
+    provider: str = "Greenhouse"
+    company: str = ""
+    job_title: str = ""
+    candidate: Optional[Dict[str, Any]] = None
+
+@app.get("/api/jobs/direct-ats")
+def get_direct_ats_jobs(keywords: Optional[str] = None, city: Optional[str] = None, limit: int = 60):
+    """Retrieve verified direct ATS engineering & tech jobs from public boards (Greenhouse, Ashby, Lever)."""
+    from services.automation.direct_ats_client import fetch_all_direct_ats_jobs
+    jobs = fetch_all_direct_ats_jobs(keywords=keywords, city=city)
+    return {"count": len(jobs), "jobs": jobs[:limit]}
+
+@app.get("/api/jobs/ats/questions")
+def get_ats_questions(board: str, job_id: str, provider: str = "Greenhouse"):
+    """Retrieve official application questions for an ATS job."""
+    from services.automation.direct_ats_client import get_job_questions
+    questions = get_job_questions(board=board, job_id=job_id, provider=provider)
+    return {"questions": questions}
+
+@app.post("/api/jobs/apply-direct")
+def apply_direct_ats(req: DirectApplyRequest):
+    """Apply directly to the company's official ATS candidate endpoint via HTTP POST (0 human intervention)."""
+    from services.automation.direct_ats_client import submit_direct_api_application
+    from services.automation.candidate_profile import CANDIDATE_PROFILE
+    from services.automation.supabase_db import save_application_record, get_candidate_details
+    
+    # Merge candidate profile with Supabase and defaults
+    c_info = get_candidate_details()
+    c_info.update(CANDIDATE_PROFILE or {})
+    if req.candidate:
+        c_info.update(req.candidate)
+        
+    result = submit_direct_api_application(
+        job_id=req.job_id,
+        board=req.board,
+        provider=req.provider,
+        candidate=c_info
+    )
+    
+    # Record to Supabase
+    try:
+        save_application_record(
+            company=req.company or req.board,
+            job_title=req.job_title or "Engineer",
+            portal_url=f"https://boards.greenhouse.io/{req.board}/jobs/{req.job_id}",
+            status="applied" if result.get("success") else "failed",
+            job_id=req.job_id,
+            form_data=result
+        )
+    except Exception as e:
+        print(f"[Direct ATS] Error saving to Supabase: {e}")
+        
+    return result
 
 
 def query_google_speech_l16(sess: requests.Session, pcm_bytes: bytes, l_code: str = "fr-FR") -> str:

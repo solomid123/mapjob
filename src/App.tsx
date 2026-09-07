@@ -20,6 +20,7 @@ import { CITIES } from './data/mockJobs';
 import { fetchAdzunaJobs, resolveLocationFromCoords, getVisibleHubsInBounds } from './services/adzuna';
 import { fetchArbeitnowJobs } from './services/arbeitnow';
 import { getDirectAtsJobs } from './services/directAtsJobs';
+import { fetchDirectAtsJobs, applyViaDirectAtsApi } from './services/directAtsApi';
 import { isDirectAts, type Job } from './types/job';
 import {
   saveJobToSupabase,
@@ -75,18 +76,21 @@ export function App() {
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const activeParamsRef = useRef<Parameters<typeof fetchAdzunaJobs>[0]>({ cityId: 'eindhoven' });
 
-  // Unified multi-source job aggregator (Verified Direct ATS + Adzuna parallel feed + Arbeitnow European tech feed)
+  // Unified multi-source job aggregator (Direct ATS API + Direct ATS Local + Adzuna parallel feed + Arbeitnow European tech feed)
   const loadAggregatedJobs = async (params: Parameters<typeof fetchAdzunaJobs>[0]): Promise<Job[]> => {
     try {
-      const directJobs = getDirectAtsJobs(params.cityId || params.where);
-      const [adzunaJobs, arbeitnowJobs] = await Promise.all([
+      const cityQuery = params.cityId || params.where;
+      const [apiAtsJobs, directJobs, adzunaJobs, arbeitnowJobs] = await Promise.all([
+        fetchDirectAtsJobs(params.query, cityQuery),
+        Promise.resolve(getDirectAtsJobs(cityQuery)),
         fetchAdzunaJobs(params),
         fetchArbeitnowJobs(params.where || params.cityId),
       ]);
 
       const seen = new Set<string>();
       const combined: Job[] = [];
-      for (const j of [...directJobs, ...adzunaJobs, ...arbeitnowJobs]) {
+      // Prioritize direct ATS API jobs first!
+      for (const j of [...apiAtsJobs, ...directJobs, ...adzunaJobs, ...arbeitnowJobs]) {
         if (!seen.has(j.id)) {
           seen.add(j.id);
           combined.push(j);
@@ -486,15 +490,46 @@ export function App() {
     showToast('Status reset. You can now re-apply.');
   };
 
-  // Autonomous 1-Click Fast Apply powered by Fuelix PageAgent (visible browser mode)
+  // Autonomous 1-Click Fast Apply: Direct ATS API (instant) or Browser PageAgent fallback
   const handleFastApply = async (job: Job) => {
     if (applyingJobId) {
       setIsLiveAgentOpen(true);
-      showToast('An autonomous application is already running. Opening live inspector...');
+      showToast('An application is already running.');
       return;
     }
 
     setApplyingJobId(job.id);
+
+    // 100% Direct ATS API submission (Greenhouse, Ashby, Lever) - 0 browser / 0 human intervention!
+    if (job.canApplyViaApi) {
+      showToast(`⚡ Submitting application directly via ${job.atsProvider || 'ATS'} API...`);
+      try {
+        const result = await applyViaDirectAtsApi(job);
+        if (result.success) {
+          setAppliedJobIds((prev) => {
+            const next = new Set(prev);
+            next.add(job.id);
+            try {
+              localStorage.setItem('mapjob_applied_ids', JSON.stringify(Array.from(next)));
+            } catch {}
+            return next;
+          });
+          setJobs((prev) =>
+            prev.map((j) => (j.id === job.id ? { ...j, applicantCount: (j.applicantCount || 0) + 1 } : j))
+          );
+          showToast(`🎉 Applied to ${job.company} via official ${job.atsProvider || 'ATS'} API!`);
+        } else {
+          showToast(`⚠️ ATS API notice: ${result.message}`);
+        }
+      } catch (err: any) {
+        showToast(`❌ Direct API Apply error: ${err.message || 'Network error'}`);
+      } finally {
+        setApplyingJobId(null);
+      }
+      return;
+    }
+
+    // Fallback: Browser PageAgent for non-API web portals
     setLiveActivity('Opening browser & navigating to portal...');
     setIsLiveAgentOpen(true);
     showToast(`⚡ Launching PageAgent browser for ${job.title}...`);
@@ -780,7 +815,7 @@ export function App() {
       }
 
       // Min Salary
-      if (minSalary > 0 && job.salaryMax < minSalary) {
+      if (minSalary > 0 && job.salaryMax && job.salaryMax < minSalary) {
         return false;
       }
 
@@ -790,7 +825,7 @@ export function App() {
       }
 
       // ⚡ 1-Click Direct ATS Filter (filters out aggregators like Apec, France Travail, HelloWork, Indeed, etc.)
-      if (directAtsOnly && !isDirectAts(job.atsProvider)) {
+      if (directAtsOnly && !job.canApplyViaApi && !job.isDirectApply && !isDirectAts(job.atsProvider)) {
         return false;
       }
 
@@ -978,6 +1013,7 @@ export function App() {
                     isHovered={hoveredJobId === job.id}
                     isSelected={false}
                     isSaved={savedJobIds.has(job.id)}
+                    isApplied={appliedJobIds.has(job.id)}
                     onHover={handleCardHover}
                     onSelect={handleOpenJobPage}
                     onToggleSave={handleToggleSave}

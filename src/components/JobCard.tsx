@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Heart, ChevronLeft, ChevronRight, Zap } from 'lucide-react';
+import { Heart, ChevronLeft, ChevronRight, Zap, ArrowUpRight } from 'lucide-react';
 import type { Job } from '../types/job';
 
 interface JobCardProps {
@@ -13,6 +13,61 @@ interface JobCardProps {
   onToggleSave: (id: string) => void;
   onApply?: (job: Job) => void;
 }
+
+/**
+ * A stable colour for a company name.
+ *
+ * Deterministic, so an employer is the same colour on every card, in every
+ * session, and the grid reads as a set of distinct companies rather than a
+ * wall of one repeated photograph.
+ */
+const brandHue = (name: string): number => {
+  // FNV-1a. A plain `% 360` on each step, which is what this was, throws away
+  // the high bits every character and lands similar names on similar hues:
+  // "Bosch Group" and "ALTEN Engineering" both came out the same green. Mixing
+  // the whole 32-bit state and reducing once at the end spreads them out.
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < name.length; i += 1) {
+    hash ^= name.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  // Golden-angle stride, so even adjacent hash values land far apart on the wheel.
+  return ((hash >>> 0) * 137.508) % 360;
+};
+
+/**
+ * What a card shows when the employer supplied no photograph, which is nearly
+ * every job. Airbnb has a picture of the actual room; an ATS feed has a company
+ * name and nothing else, and inventing a photo of an unrelated workplace was
+ * both dishonest and the reason every card looked identical.
+ */
+const CompanyCover: React.FC<{ job: Job }> = ({ job }) => {
+  const hue = brandHue(job.company || job.title || '');
+  const initials = (job.company || '?')
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((word) => word[0])
+    .join('')
+    .toUpperCase();
+
+  return (
+    <div
+      className="w-full h-full flex flex-col items-center justify-center gap-3 transition duration-500 group-hover:scale-105"
+      style={{
+        backgroundImage: `linear-gradient(135deg, hsl(${hue} 58% 46%), hsl(${(hue + 34) % 360} 62% 33%))`,
+      }}
+    >
+      <div className="w-16 h-16 rounded-2xl bg-white/95 shadow-sm flex items-center justify-center">
+        <span className="text-xl font-black tracking-tight" style={{ color: `hsl(${hue} 58% 34%)` }}>
+          {initials}
+        </span>
+      </div>
+      <span className="px-6 text-center text-white text-sm font-bold tracking-tight drop-shadow-sm line-clamp-2">
+        {job.company}
+      </span>
+    </div>
+  );
+};
 
 export const JobCard: React.FC<JobCardProps> = ({
   job,
@@ -47,21 +102,25 @@ export const JobCard: React.FC<JobCardProps> = ({
       onClick={() => onSelect(job)}
       onMouseEnter={() => onHover(job.id)}
       onMouseLeave={() => onHover(null)}
+      tabIndex={0}
+      role="link"
+      onKeyDown={(e) => { if (e.key === 'Enter' && e.target === e.currentTarget) onSelect(job); }}
       className="group flex flex-col cursor-pointer transition select-none"
     >
       {/* Airbnb Photo Carousel Container - Aspect ratio ~20/19 (almost square like Airbnb) */}
       <div className={`relative aspect-[20/19] w-full rounded-2xl overflow-hidden bg-gray-100 mb-3 transition-all ${
         isHovered || isSelected ? 'ring-2 ring-black shadow-lg' : ''
       }`}>
-        <img
-          src={job.images[currentImageIndex] || job.images[0]}
-          alt={`${job.company} workplace`}
-          className="w-full h-full object-cover group-hover:scale-105 transition duration-500"
-          loading="lazy"
-          onError={(e) => {
-            e.currentTarget.src = 'https://images.unsplash.com/photo-1581092160607-ee22621dd758?w=1000&auto=format&fit=crop&q=85';
-          }}
-        />
+        {job.images.length > 0 ? (
+          <img
+            src={job.images[currentImageIndex] || job.images[0]}
+            alt={`${job.company} workplace`}
+            className="w-full h-full object-cover group-hover:scale-105 transition duration-500"
+            loading="lazy"
+          />
+        ) : (
+          <CompanyCover job={job} />
+        )}
 
         {/* Top Badges */}
         <div className="absolute top-3 left-3 right-3 flex items-start justify-between pointer-events-none z-10">
@@ -152,15 +211,16 @@ export const JobCard: React.FC<JobCardProps> = ({
           {job.jobType} • {job.remoteType} {job.visaSponsorship ? '• Visa Support' : ''}
         </p>
 
-        {/* Line 4: Price / Salary */}
-        <div className="pt-1 flex items-baseline gap-1.5">
-          <span className="text-[15px] font-bold text-[#222222]">
-            {job.salaryDisplay}
-          </span>
-          {Boolean((job.salaryMin && job.salaryMin > 0) || (job.salaryMax && job.salaryMax > 0)) && (
-            <span className="text-[13px] text-[#717171] font-normal">
-              est. / year
-            </span>
+        {/* Line 4: Salary, only when the employer actually published one. The
+            slot keeps its height either way so the grid stays aligned. */}
+        <div className="pt-1 flex items-baseline gap-1.5 min-h-[22px]">
+          {job.salaryDisplay ? (
+            <>
+              <span className="text-[15px] font-bold text-[#222222]">{job.salaryDisplay}</span>
+              <span className="text-[13px] text-[#717171] font-normal">/ year</span>
+            </>
+          ) : (
+            <span className="text-[13px] text-[#717171]">Salary not published</span>
           )}
         </div>
 
@@ -203,23 +263,38 @@ export const JobCard: React.FC<JobCardProps> = ({
             <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
               ✓ Applied
             </span>
-          ) : onApply ? (
+          ) : job.applyUrl && onApply ? (
+            // Offered on every listing that has a form, not just the handful of
+            // boards with an "apply API" (there are none that accept an
+            // anonymous POST). The engine opens the employer's real form and
+            // fills it, so what matters is that a URL exists.
             <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 onApply(job);
               }}
-              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold shadow-xs transition active:scale-95 cursor-pointer ${
-                job.canApplyViaApi
-                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                  : 'bg-gray-900 hover:bg-black text-white'
-              }`}
-              title={job.canApplyViaApi ? "1-Click Direct ATS API Apply (0 human intervention)" : "Autonomous 1-Click Application"}
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold shadow-xs transition active:scale-95 cursor-pointer bg-gray-900 hover:bg-black text-white"
+              title="Fill this employer's form from your profile, then show you the result before anything is sent"
             >
-              <Zap className={`w-3 h-3 ${job.canApplyViaApi ? 'text-amber-300 fill-amber-300' : 'text-amber-400 fill-amber-400'}`} />
-              <span>{job.canApplyViaApi ? 'API Apply' : 'Auto Apply'}</span>
+              <Zap className="w-3 h-3 text-amber-400 fill-amber-400" />
+              <span>Auto apply</span>
             </button>
+          ) : job.applyUrl ? (
+            // No handler wired in this context, so link straight out. A plain
+            // anchor keeps the new tab tied to the click, which popup blockers
+            // require.
+            <a
+              href={job.applyUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold shadow-xs transition active:scale-95 cursor-pointer bg-gray-900 hover:bg-black text-white"
+              title="Open the employer's own application form"
+            >
+              <span>Apply</span>
+              <ArrowUpRight className="w-3 h-3" />
+            </a>
           ) : null}
         </div>
 

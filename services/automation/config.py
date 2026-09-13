@@ -36,6 +36,28 @@ FUELIX_PLANNER_FALLBACK = os.getenv("FUELIX_PLANNER_FALLBACK", "gpt-5.6-terra")
 FUELIX_WRITER = os.getenv("FUELIX_WRITER", "gpt-5.6-terra")
 FUELIX_WRITER_FALLBACK = os.getenv("FUELIX_WRITER_FALLBACK", "gpt-5.6-terra")
 
+# The apply engine's brain: small decisions taken mid-run, while a browser sits
+# waiting on the answer. Speed is the requirement, so these are deliberately
+# not the planner/writer models above. Both were measured at ~1.4s on this
+# account for the prompts in apply_brain.py; the big models take 5-15s, which
+# is long enough to time a form out.
+FUELIX_BRAIN = os.getenv("FUELIX_BRAIN", "gpt-4.1-mini")
+FUELIX_BRAIN_FALLBACK = os.getenv("FUELIX_BRAIN_FALLBACK", "gemini-3.1-flash-lite")
+
+# The in-page agent (page-agent.js). It reasons over the live DOM and picks one
+# tool call per step, so a step's latency is felt directly: the browser sits
+# still until the answer arrives, and a form takes tens of steps.
+#
+# Measured on this account, three runs each, against a 120-field page with the
+# agent's own tool schema attached:
+#
+#     gpt-5.6-terra   3.61 / 3.84 / 4.60s   median 3.84s
+#     gpt-5.6-luna    3.58 / 4.58 / 5.68s   median 4.58s
+#
+# Both answer with a well-formed tool call; terra is the steadier of the two, so
+# it is the default. Set FUELIX_PAGE_AGENT to try another.
+FUELIX_PAGE_AGENT = os.getenv("FUELIX_PAGE_AGENT", "gpt-5.6-terra")
+
 # Deprecated: Azure Kimi path kept only for backwards-compat, do not use for new code.
 AZURE_KIMI_ENDPOINT = os.getenv("AZURE_KIMI_ENDPOINT", "")
 AZURE_KIMI_KEY = os.getenv("AZURE_KIMI_KEY", "")
@@ -50,6 +72,30 @@ GOOGLE_LOGIN_EMAIL = os.getenv("GOOGLE_LOGIN_EMAIL", "badreddinebarki@gmail.com"
 GOOGLE_LOGIN_PASSWORD = os.getenv("GOOGLE_LOGIN_PASSWORD", "")
 CANDIDATE_ACCOUNT_PASSWORD = os.getenv("CANDIDATE_ACCOUNT_PASSWORD", "")
 CANDIDATE_FALLBACK_PASSWORD = os.getenv("CANDIDATE_FALLBACK_PASSWORD", "")
+
+# Employer-portal account credentials, tried in this order by the sign-in
+# ladder. They live in .env rather than in source: this file is committed, and
+# a password in a committed file is a password that has been published.
+PORTAL_EMAIL = os.getenv("PORTAL_EMAIL", GMAIL_USER)
+PORTAL_PASSWORD_PRIMARY = os.getenv("PORTAL_PASSWORD_PRIMARY", "")
+PORTAL_PASSWORD_SECONDARY = os.getenv("PORTAL_PASSWORD_SECONDARY", "")
+PORTAL_SIGNUP_PASSWORD = os.getenv("PORTAL_SIGNUP_PASSWORD", "")
+
+
+def portal_password_is_google_password() -> bool:
+    """
+    True when a password destined for employer portals is also the password to
+    the Google account.
+
+    Worth knowing before it is typed into a few hundred job boards. That one
+    account is the mailbox, which is the password-reset channel for everything
+    else, so a single badly-run careers site leaks far more than a job
+    application.
+    """
+    google = GOOGLE_LOGIN_PASSWORD
+    if not google:
+        return False
+    return google in (PORTAL_PASSWORD_PRIMARY, PORTAL_PASSWORD_SECONDARY, PORTAL_SIGNUP_PASSWORD)
 
 # Adzuna settings
 ADZUNA_APP_ID = os.getenv("VITE_ADZUNA_APP_ID", "")

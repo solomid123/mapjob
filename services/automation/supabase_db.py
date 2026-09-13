@@ -45,6 +45,18 @@ def save_application_record(
         conn.autocommit = True
         cur = conn.cursor()
         
+        if job_id:
+            try:
+                cur.execute("""
+                    INSERT INTO public.jobs (id, title, company, redirect_url, status, source)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (id) DO UPDATE SET 
+                        status = EXCLUDED.status,
+                        updated_at = now();
+                """, (job_id, job_title, company, portal_url, status, "direct_ats"))
+            except Exception as ej:
+                job_id = None
+
         cur.execute("""
             INSERT INTO public.job_applications (
                 job_id, company, job_title, portal_url, status, 

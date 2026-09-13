@@ -144,18 +144,29 @@ class AIDOMAgent:
         self.max_steps = 20
         self.executed_actions = set()
 
-    def inject_cookie_vault(self):
-        """Injects all stored session cookies via CDP so login barriers are eliminated."""
+    def inject_cookie_vault(self, skip_platforms=()):
+        """
+        Injects all stored session cookies via CDP so login barriers are eliminated.
+
+        `skip_platforms` exists because injecting is destructive: a cookie with
+        the same name, domain and path replaces the one already there. Replaying
+        the vault's stale Google cookies over a profile that holds a live Google
+        session would overwrite the good values with dead ones and sign the
+        browser out.
+        """
         vault_path = os.path.join(os.path.dirname(__file__), "cookies_vault.json")
         if not os.path.exists(vault_path):
             return
 
+        skip = {str(p).lower() for p in skip_platforms}
         try:
             with open(vault_path, "r", encoding="utf-8") as f:
                 vault = json.load(f)
 
             cdp_cookies = []
             for platform, cookies in vault.items():
+                if str(platform).lower() in skip:
+                    continue
                 for c in cookies:
                     co = {
                         "name": c["name"],

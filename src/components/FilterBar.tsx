@@ -70,10 +70,10 @@ export const FilterBar: React.FC<FilterBarProps> = ({
                 ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs ring-2 ring-emerald-300'
                 : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:border-emerald-400 hover:bg-emerald-100/70'
             }`}
-            title="Filter to only jobs with direct 1-click ATS applications (Greenhouse, Lever, Ashby, Workday, etc.) without external account barriers"
+            title="Only listings with an implemented, authorized API submission integration. Public ATS listings alone do not qualify."
           >
             <Zap className={`w-3.5 h-3.5 ${directAtsOnly ? 'text-amber-300 fill-amber-300' : 'text-emerald-600 fill-emerald-600'}`} />
-            <span>1-Click Apply Only</span>
+            <span>API Apply Only</span>
           </button>
         )}
 

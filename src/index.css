@@ -1,0 +1,264 @@
+@import 'leaflet/dist/leaflet.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    /* `text-rendering` stays at the browser default. optimizeLegibility forces
+     * kerning and ligatures through a slower path that smears small UI text on
+     * Windows, which is a large part of why the app looked soft rather than HD. */
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body, input, button, select, textarea {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    color: #222222;
+    background-color: #ffffff;
+    margin: 0;
+    padding: 0;
+  }
+
+  #root {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+}
+
+/*
+ * Tiles are requested at @2x and drawn at half that size, so the browser must
+ * be allowed to interpolate. `image-rendering: crisp-edges` forbids exactly
+ * that and was turning a retina tile into a gritty, aliased one.
+ */
+.leaflet-tile {
+  image-rendering: auto;
+}
+
+.leaflet-pane,
+.leaflet-tile-pane,
+.leaflet-marker-pane,
+.leaflet-marker-icon {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom Leaflet Marker Styling for Airbnb Salary Pills (Tickets) - Razor Sharp HD */
+.salary-pill-wrapper {
+  background: transparent !important;
+  border: none !important;
+}
+
+.salary-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 11px;
+  background-color: #ffffff;
+  color: #111111;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-weight: 800;
+  font-size: 13.5px;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  border-radius: 9999px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.14), 0 0 0 1px rgba(0, 0, 0, 0.1);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: transform 0.15s cubic-bezier(0.2, 0, 0, 1), background-color 0.15s, color 0.15s, box-shadow 0.15s;
+  transform-origin: center center;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* A pill that sizes to its own text instead of to a fixed box. The label is a
+ * company name as often as a salary now, so the width is not knowable up front;
+ * translating by half its own size keeps it centred on the coordinate. */
+.salary-pill.is-centered {
+  position: absolute;
+  transform: translate(-50%, -50%);
+}
+.salary-pill.is-centered:hover,
+.salary-pill.is-centered.is-active,
+.salary-pill.is-centered.is-hovered {
+  transform: translate(-50%, -50%) scale(1.12);
+}
+
+.salary-pill:hover {
+  transform: scale(1.1);
+  background-color: #111111;
+  color: #ffffff;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.28), 0 0 0 1px #111111;
+  z-index: 1000 !important;
+}
+
+.salary-pill.is-active,
+.salary-pill.is-hovered {
+  background-color: #111111 !important;
+  color: #ffffff !important;
+  transform: scale(1.15);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35), 0 0 0 1px #111111 !important;
+  z-index: 9999 !important;
+}
+
+.salary-pill.is-saved {
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.14), 0 0 0 2px #FF385C !important;
+}
+
+/* Airbnb-style cluster bubble: dark count pill that breaks apart on zoom */
+.salary-pill.is-cluster {
+  background-color: #222222;
+  color: #ffffff;
+  font-size: 13px;
+  padding: 6px 14px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3), 0 0 0 2px #ffffff, 0 0 0 3px rgba(0, 0, 0, 0.25);
+}
+
+.salary-pill.is-cluster:hover {
+  background-color: #000000;
+  color: #ffffff;
+}
+
+/* Slim elegant scrollbar for listings */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.16);
+  border-radius: 9999px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+/* Clean custom Leaflet popup styling */
+.leaflet-popup-content-wrapper {
+  padding: 0 !important;
+  border-radius: 16px !important;
+  overflow: hidden !important;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18) !important;
+}
+
+.leaflet-popup-content {
+  margin: 0 !important;
+  line-height: 1.4 !important;
+}
+
+.leaflet-container a.leaflet-popup-close-button {
+  top: 8px !important;
+  right: 8px !important;
+  background: rgba(255, 255, 255, 0.9) !important;
+  color: #333 !important;
+  border-radius: 50% !important;
+  width: 24px !important;
+  height: 24px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: 14px !important;
+  padding: 0 !important;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.2) !important;
+  z-index: 10 !important;
+}
+
+/* Hide scrollbars on category tabs while allowing scroll */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Airbnb Signature Spring & Pop Micro-animations */
+@keyframes airbnbPop {
+  0% {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-airbnb-pop {
+  animation: airbnbPop 0.16s ease-out;
+}
+
+.airbnb-spring {
+  transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, color 0.15s ease;
+}
+/* Saved jobs keep their rose ring even at the smallest dot size */
+.airbnb-dot-pin.is-saved {
+  box-shadow: 0 1.5px 4px rgba(0, 0, 0, 0.3), 0 0 0 2px #FF385C;
+}
+
+/* Pins fade in rather than snapping into place when a new area loads.
+ *
+ * Opacity only, and that is not a style choice. These wrappers *are* the
+ * elements Leaflet positions, by writing `transform: translate3d(x, y, 0)`
+ * straight onto them — and an animation's transform beats an inline one. The
+ * shared `airbnbPop` keyframe animates transform, so for its whole 140ms every
+ * pin on the map was yanked to the corner of the pane and then snapped back,
+ * on every pan, every zoom and every new search. Fading is the only property
+ * here that is safe to touch. */
+@keyframes airbnbFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.leaflet-marker-pane .salary-pill-wrapper,
+.leaflet-marker-pane .airbnb-dot-wrapper {
+  animation: airbnbFadeIn 0.14s ease-out;
+}
+/* The card that hangs off a pin. Leaflet's default is a 300px box with 13px of
+ * padding and a 12px radius; this is the app's own card surface instead. */
+.job-map-popup .leaflet-popup-content-wrapper {
+  width: max-content;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 16px;
+  box-shadow: 0 6px 26px rgba(0, 0, 0, 0.22), 0 0 0 1px rgba(0, 0, 0, 0.06);
+}
+.job-map-popup .leaflet-popup-content {
+  width: auto !important;
+  margin: 0;
+  line-height: inherit;
+}
+.job-map-popup .leaflet-popup-tip {
+  box-shadow: none;
+}
+.job-map-popup .leaflet-popup-close-button {
+  top: 8px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  background: rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(4px);
+  color: #ffffff;
+  font-size: 17px;
+  font-weight: 600;
+  transition: background-color 0.15s;
+}
+.job-map-popup .leaflet-popup-close-button:hover {
+  background: rgba(0, 0, 0, 0.45);
+  color: #ffffff;
+}

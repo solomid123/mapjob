@@ -1,0 +1,21 @@
+{
+  "_comment": "Copy to match_profile.json and edit. This decides what the engine applies to, so every list here narrows or widens the search directly.",
+
+  "target_titles": ["mechanical engineer", "design engineer", "project engineer"],
+  "role_keywords": ["hvac", "piping", "cad", "thermal"],
+  "skills": ["solidworks", "catia", "ansys", "autocad", "matlab", "gd&t"],
+
+  "preferred_cities": ["paris", "lyon"],
+  "acceptable_cities": ["lille", "nantes", "toulouse"],
+  "countries": ["fr", "france"],
+  "remote_ok": true,
+
+  "years_experience": 3,
+  "languages": ["english", "french"],
+
+  "exclude_keywords": ["security clearance", "night shift"],
+  "exclude_companies": [],
+  "accept_internships": false,
+
+  "skills_for_full_marks": 5
+}

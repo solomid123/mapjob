@@ -3,6 +3,7 @@ import sys
 import time
 import json
 import queue
+import logging
 import threading
 import tempfile
 import shutil
@@ -33,7 +34,12 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 from services.automation.ai_dom_agent import AIDOMAgent
 from services.automation.candidate_profile import CANDIDATE_PROFILE
 from services.automation.page_agent_manager import PageAgentManager
+from services.automation import agent_profile
+from services.automation.config import FUELIX_PAGE_AGENT as PAGE_AGENT_MODEL
+from services.automation.chrome_launcher import launch_chrome
 import undetected_chromedriver as uc
+
+logger = logging.getLogger("api_server")
 
 app = FastAPI(title="MapJob Automation Bridge")
 
@@ -54,8 +60,29 @@ active_agent_status = {
 current_manager_container = {"manager": None}
 current_driver_container = {"driver": None}
 
+# A finished rehearsal leaves its browser open on the filled form. That window is
+# what the candidate reviews, and the same window is what sends the application
+# if they approve it — filling a second browser from scratch would mean sending
+# a form nobody had read.
+pending_review: Dict[str, Any] = {
+    "driver": None,
+    "manager": None,
+    "profile_dir": None,
+    "profile_persistent": False,
+    "job_title": "",
+    "company": "",
+    "url": "",
+    "job_id": None,
+    "notify_email": None,
+    "started_at": None,
+    "expires_at": None,
+}
+REVIEW_WINDOW_SECONDS = 15 * 60
+
 agent_state = {
     "is_running": False,
+    "dry_run": True,
+    "started_at": None,
     "job_title": "",
     "company": "",
     "target_url": "",
@@ -63,6 +90,7 @@ agent_state = {
     "current_step": "Ready",
     "logs": [],
     "screenshot": None,
+    "screenshot_seq": 0,
     "last_result": None
 }
 
@@ -71,6 +99,12 @@ class ApplyRequest(pydantic.BaseModel):
     job_title: Optional[str] = ""
     company: Optional[str] = ""
     headless: Optional[bool] = False
+    job_id: Optional[str] = None
+    # Where the submission receipt goes; defaults to the configured candidate.
+    notify_email: Optional[str] = None
+    # A rehearsal by default: the agent fills the form and stops with the Submit
+    # button untouched, so nothing reaches an employer unless it is asked for.
+    dry_run: Optional[bool] = True
 
 def push_log(message: str, step: int = 0, status: str = "running", done: bool = False, success: bool = False):
     safe_msg = str(message).encode('utf-8', 'replace').decode('utf-8')
@@ -89,7 +123,11 @@ def push_log(message: str, step: int = 0, status: str = "running", done: bool = 
     if len(agent_state["logs"]) > 100:
         agent_state["logs"] = agent_state["logs"][-100:]
     if done:
-        agent_state["phase"] = "submitted" if success else "failed"
+        # A finished rehearsal is not a submission, and should not be labelled one.
+        if not success:
+            agent_state["phase"] = "failed"
+        else:
+            agent_state["phase"] = "filled" if agent_state.get("dry_run", True) else "submitted"
         agent_state["is_running"] = False
         active_agent_status["is_running"] = False
     elif step >= 5:
@@ -135,10 +173,80 @@ def resolve_direct_portal(url: str) -> str:
         print(f"[Resolver] Notice: {e}")
     return url
 
-def run_agent_thread(target_url: str, job_title: str = "Candidate Position", company: str = "Employer", headless: bool = False):
+def finalize_submission(job_title: str, company: str, portal_url: str, evidence: str,
+                        job_id: Optional[str], notify_email: Optional[str],
+                        started_at: float) -> Dict[str, Any]:
+    """Record a *verified* submission and tell the candidate it happened.
+
+    This runs only after the agent confirmed the employer's own success state,
+    so nothing here can claim an application that was never sent. The employer's
+    acknowledgement is a separate email that we watch for, not one we fabricate.
+    """
+    from services.automation import mailer
+    from services.automation.email_watcher import EmailWatcher
+    from services.automation.supabase_db import save_application_record
+
+    submitted_at = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started_at))
+    recipient = notify_email or CANDIDATE_PROFILE.get("email") or ""
+
+    try:
+        save_application_record(
+            company=company,
+            job_title=job_title,
+            portal_url=portal_url,
+            status="applied",
+            job_id=job_id,
+            logs=[entry.get("message", "") for entry in agent_state.get("logs", [])][-40:],
+        )
+    except Exception as e:
+        push_log(f"Could not persist the application record: {e}", step=10)
+
+    receipt = mailer.send_application_receipt(
+        to_email=recipient,
+        company=company,
+        job_title=job_title,
+        portal_url=portal_url,
+        evidence=evidence,
+        submitted_at=submitted_at,
+    )
+    if receipt.get("sent"):
+        push_log(f"Receipt emailed to {recipient}.", step=10)
+    else:
+        push_log(receipt.get("reason", "Receipt email was not sent."), step=10)
+
+    # The employer's acknowledgement arrives on its own schedule. Watch for it in
+    # the background so the UI can show real proof instead of an assumption.
+    def watch():
+        try:
+            watcher = EmailWatcher()
+            if not watcher.is_configured():
+                return
+            found = watcher.wait_for_confirmation(company, since_epoch=started_at, timeout_seconds=600)
+            result = agent_state.get("last_result") or {}
+            result["employer_confirmation"] = found
+            agent_state["last_result"] = result
+            active_agent_status["last_result"] = result
+        except Exception as e:
+            print(f"[Confirmation] watcher stopped: {e}", flush=True)
+
+    threading.Thread(target=watch, name="confirmation-watch", daemon=True).start()
+
+    return {
+        "receipt_email": receipt,
+        "recipient": recipient,
+        "submitted_at": submitted_at,
+        "employer_confirmation": {"found": False, "pending": True},
+    }
+
+def run_agent_thread(target_url: str, job_title: str = "Candidate Position", company: str = "Employer",
+                    headless: bool = False, job_id: Optional[str] = None,
+                    notify_email: Optional[str] = None, dry_run: bool = True):
     active_agent_status["is_running"] = True
+    started_at = time.time()
     push_log(f"Starting Autonomous AI Application Engine for URL: {target_url}", step=1)
-    
+    if dry_run:
+        push_log("Rehearsal mode: the form gets filled, the Submit button is left for you.", step=1)
+
     # 1. Pre-resolve direct destination portal if this is an Adzuna aggregator wrapper
     resolved_url = resolve_direct_portal(target_url)
     if resolved_url != target_url:
@@ -147,6 +255,8 @@ def run_agent_thread(target_url: str, job_title: str = "Candidate Position", com
 
     driver = None
     profile_dir = None
+    profile_persistent = False
+    keep_open = False
     try:
         push_log("Configuring browser with anti-detect and session parameters...", step=2)
         options = uc.ChromeOptions()
@@ -157,11 +267,20 @@ def run_agent_thread(target_url: str, job_title: str = "Candidate Position", com
         options.add_argument("--no-first-run")
         options.add_argument("--no-default-browser-check")
 
-        # Isolated temporary profile to avoid lock conflicts from any previous background Chrome process
-        profile_dir = tempfile.mkdtemp(prefix="mapjob_chrome_")
+        # The automation's own profile, so sessions signed into once are still
+        # there next run. Falls back to a signed-in copy when another run holds
+        # the lock, since Chrome will not share a profile directory.
+        sweep_abandoned_profiles()
+        profile_dir, profile_persistent = agent_profile.acquire(log=lambda m: push_log(m, step=2))
+        if agent_profile.google_is_linked():
+            push_log(f"Using the saved browser profile ({agent_profile.signed_in_summary()}).", step=2)
+        else:
+            push_log("No saved browser profile yet. Run 'python -m services.automation.link_google' "
+                     "once to sign in, and sites will stop asking.", step=2)
 
         push_log("Opening browser window on screen...", step=2)
-        driver = uc.Chrome(options=options, user_data_dir=profile_dir)
+        driver = launch_chrome(options=options, user_data_dir=profile_dir,
+                               log=lambda msg: push_log(msg, step=2))
         current_driver_container["driver"] = driver
         try:
             driver.maximize_window()
@@ -171,11 +290,25 @@ def run_agent_thread(target_url: str, job_title: str = "Candidate Position", com
             driver.execute_cdp_cmd("Page.bringToFront", {})
         except Exception:
             pass
-        
-        # Inject cookie vault for recognized sites if any
+
+        # A profile whose Google cookies have gone missing is still marked as
+        # linked, and would otherwise fail one sign-in at a time with no
+        # explanation. Cheap to check here, since the browser is already open.
+        if profile_persistent and agent_profile.google_is_linked() \
+                and not agent_profile.google_session_present(driver):
+            push_log("The saved Google sign-in has lapsed. Run "
+                     "'python -m services.automation.link_google' to restore it.", step=2)
+
+        # Inject cookie vault for recognized sites if any.
+        # Once the profile carries a real Google session, the vault's Google
+        # cookies are not just useless but harmful: they are an incomplete
+        # export (no SID/HSID/APISID/LSID) and injecting them overwrites the
+        # live values with dead ones.
         try:
             agent_dom = AIDOMAgent(driver)
-            agent_dom.inject_cookie_vault()
+            agent_dom.inject_cookie_vault(
+                skip_platforms=("google", "gmail") if agent_profile.google_is_linked() else ()
+            )
         except Exception:
             pass
 
@@ -188,42 +321,276 @@ def run_agent_thread(target_url: str, job_title: str = "Candidate Position", com
         current_manager_container["manager"] = page_manager
         
         # Run autonomous agent loop
-        res = page_manager.run_agent(job_title=job_title, company=company, candidate=CANDIDATE_PROFILE)
-        
+        # The agent now types every field itself rather than finishing off what
+        # a second filler started, so the run is a handful of steps longer at
+        # roughly four seconds each. The budget reflects that.
+        res = page_manager.run_agent(job_title=job_title, company=company, candidate=CANDIDATE_PROFILE,
+                                     max_wait_seconds=180, submit=not dry_run)
+
         success = res.get("success", False)
         barrier = res.get("barrier", False)
         msg = res.get("message", "Application completed.")
-        
-        if success:
-            push_log(f"🎉 Application Submitted & Verified: {msg}", step=10, done=True, success=True)
+
+        receipt = None
+        if success and dry_run:
+            # Nothing was sent, so there is nothing to record or acknowledge.
+            # The window stays open: it holds the filled form the candidate is
+            # about to read, and it is the same window that will send it.
+            keep_open = True
+            pending_review.update({
+                "driver": driver,
+                "manager": page_manager,
+                "profile_dir": profile_dir,
+                "profile_persistent": profile_persistent,
+                "job_title": job_title,
+                "company": company,
+                "url": target_url,
+                "job_id": job_id,
+                "notify_email": notify_email,
+                "started_at": started_at,
+                "expires_at": time.time() + REVIEW_WINDOW_SECONDS,
+            })
+            threading.Thread(target=expire_pending_review, args=(pending_review["expires_at"],),
+                             name="review-expiry", daemon=True).start()
+            push_log(f"✅ Form filled and left for your review: {msg}", step=10, done=True, success=True)
+        elif success:
+            push_log(f"🎉 Application Submitted & Verified: {msg}", step=10, success=True)
+            receipt = finalize_submission(
+                job_title=job_title,
+                company=company,
+                portal_url=target_url,
+                evidence=res.get("evidence") or msg,
+                job_id=job_id,
+                notify_email=notify_email,
+                started_at=started_at,
+            )
+            push_log("Application recorded and receipt processed.", step=10, done=True, success=True)
         elif barrier:
             push_log(f"⚠️ Portal Barrier: {msg}", step=10, done=True, success=False)
         else:
             push_log(f"⚠️ Application Incomplete: {msg}", step=10, done=True, success=False)
 
-        active_agent_status["last_result"] = {"success": success, "barrier": barrier, "message": msg}
+        active_agent_status["last_result"] = {
+            "success": success,
+            "barrier": barrier,
+            "message": msg,
+            "receipt": receipt,
+            "dry_run": dry_run,
+            "submitted": bool(success and not dry_run),
+            "awaiting_review": bool(success and dry_run),
+            "fields_filled": res.get("fields_filled", 0),
+            "resume_attached": bool(res.get("resume_attached")),
+            "unexpected_submit": bool(res.get("unexpected_submit")),
+        }
         agent_state["last_result"] = active_agent_status["last_result"]
 
     except Exception as e:
         push_log(f"Automation execution notice: {e}", step=99, done=True, success=False)
-        active_agent_status["last_result"] = {"success": False, "message": str(e)}
+        active_agent_status["last_result"] = {"success": False, "message": str(e), "dry_run": dry_run}
         agent_state["last_result"] = active_agent_status["last_result"]
     finally:
         active_agent_status["is_running"] = False
         agent_state["is_running"] = False
-        current_manager_container["manager"] = None
+        # Keep the last frame after the browser is gone: the final picture of
+        # what happened is the most useful one, and it outlives the manager.
+        manager = current_manager_container.get("manager")
+        if manager and getattr(manager, "latest_screenshot", None):
+            agent_state["screenshot"] = manager.latest_screenshot
+            agent_state["screenshot_seq"] = int(getattr(manager, "screenshot_seq", 0) or 0)
+        if keep_open:
+            # Deliberately left running: `pending_review` owns this browser now.
+            current_manager_container["manager"] = pending_review["manager"]
+            current_driver_container["driver"] = pending_review["driver"]
+        else:
+            current_manager_container["manager"] = None
+            current_driver_container["driver"] = None
+            if driver:
+                try:
+                    time.sleep(5)
+                    driver.quit()
+                except Exception:
+                    pass
+            # Releases the lock on the persistent profile, or deletes the
+            # throwaway. Never deletes the profile the user signed into.
+            try:
+                agent_profile.release(profile_dir, profile_persistent)
+            except Exception:
+                pass
+
+
+PROFILE_PREFIX = "mapjob_chrome_"
+# Long enough that a profile still in use is never a candidate, since a run
+# holds its profile open for the whole review window.
+PROFILE_STALE_SECONDS = 30 * 60
+
+
+def sweep_abandoned_profiles() -> int:
+    """
+    Deletes Chrome profiles left behind by runs that did not finish, and
+    returns the megabytes reclaimed.
+
+    Each run gets a fresh temp profile, and the tidy-up only happens on the
+    paths that end normally. A crashed browser, a closed window or a reloaded
+    server all skip it, so the directories pile up unnoticed — 802 MB of them
+    had accumulated here, on a disk with under 3 GB left. A dead profile is
+    unusable by definition: nothing ever reopens one, so anything old enough
+    not to belong to a live run is safe to drop.
+    """
+    root = tempfile.gettempdir()
+    cutoff = time.time() - PROFILE_STALE_SECONDS
+    freed = 0
+    try:
+        names = os.listdir(root)
+    except OSError:
+        return 0
+    for name in names:
+        if not name.startswith(PROFILE_PREFIX):
+            continue
+        path = os.path.join(root, name)
+        try:
+            if not os.path.isdir(path) or os.path.getmtime(path) > cutoff:
+                continue
+            size = sum(
+                os.path.getsize(os.path.join(dirpath, f))
+                for dirpath, _, files in os.walk(path)
+                for f in files
+                if os.path.exists(os.path.join(dirpath, f))
+            )
+        except OSError:
+            continue
+        # A profile Chrome still holds keeps its files locked, so Windows
+        # simply refuses and the directory stays. That is the outcome we want.
+        shutil.rmtree(path, ignore_errors=True)
+        if not os.path.exists(path):
+            freed += size
+    mb = freed // (1024 * 1024)
+    if mb:
+        print(f"[Cleanup] reclaimed {mb} MB from abandoned Chrome profiles", flush=True)
+    return mb
+
+
+def close_pending_review(reason: str = ""):
+    """Shuts the review browser and forgets it. Safe to call when there isn't one."""
+    driver = pending_review.get("driver")
+    profile_dir = pending_review.get("profile_dir")
+    profile_persistent = bool(pending_review.get("profile_persistent"))
+    pending_review.update({"driver": None, "manager": None, "profile_dir": None,
+                           "profile_persistent": False, "expires_at": None})
+    if current_driver_container.get("driver") is driver:
         current_driver_container["driver"] = None
-        if driver:
-            try:
-                time.sleep(5)
-                driver.quit()
-            except Exception:
-                pass
-        if profile_dir and os.path.exists(profile_dir):
-            try:
-                shutil.rmtree(profile_dir, ignore_errors=True)
-            except Exception:
-                pass
+        current_manager_container["manager"] = None
+    if driver:
+        if reason:
+            print(f"[Review] closing browser: {reason}", flush=True)
+        try:
+            driver.quit()
+        except Exception:
+            pass
+    try:
+        agent_profile.release(profile_dir, profile_persistent)
+    except Exception:
+        pass
+
+
+def expire_pending_review(expires_at: float):
+    """
+    A review window that nobody comes back to would otherwise leave Chrome
+    running forever. Waits out the deadline, then closes it — unless the
+    candidate has since submitted, cancelled, or started something else, in
+    which case this deadline no longer refers to the open browser.
+    """
+    while True:
+        remaining = expires_at - time.time()
+        if remaining <= 0:
+            break
+        time.sleep(min(remaining, 15))
+        if pending_review.get("expires_at") != expires_at:
+            return
+    if pending_review.get("expires_at") == expires_at and pending_review.get("driver"):
+        push_log("Review window closed after 15 minutes with no decision. Nothing was sent.",
+                 step=10, done=True, success=False)
+        close_pending_review("review window expired")
+
+
+def submit_pending_thread():
+    """
+    Sends the form the candidate just read, in the browser they read it in.
+
+    Re-opening a second browser and filling it again would mean submitting a
+    form nobody had seen — the model does not fill a page identically twice.
+    """
+    manager = pending_review.get("manager")
+    driver = pending_review.get("driver")
+    job_title = pending_review.get("job_title") or "Position"
+    company = pending_review.get("company") or "Employer"
+    target_url = pending_review.get("url") or ""
+    started_at = pending_review.get("started_at") or time.time()
+    # This deadline is no longer live: the run has been taken over here.
+    pending_review["expires_at"] = None
+
+    active_agent_status["is_running"] = True
+    agent_state["is_running"] = True
+    agent_state["dry_run"] = False
+    agent_state["phase"] = "autonomous_agent"
+
+    try:
+        if not manager or not driver:
+            push_log("That filled form is no longer open, so there is nothing to send.",
+                     step=10, done=True, success=False)
+            agent_state["last_result"] = {"success": False, "dry_run": False,
+                                          "message": "The review browser was already closed."}
+            active_agent_status["last_result"] = agent_state["last_result"]
+            return
+
+        push_log(f"Sending your application to {company}...", step=6)
+        try:
+            driver.execute_cdp_cmd("Page.bringToFront", {})
+        except Exception:
+            pass
+
+        res = manager.submit_filled_form(job_title=job_title, company=company, max_wait_seconds=90)
+        success = res.get("success", False)
+        barrier = res.get("barrier", False)
+        msg = res.get("message", "Submission attempt finished.")
+
+        receipt = None
+        if success:
+            push_log(f"🎉 Application Submitted & Verified: {msg}", step=10, success=True)
+            receipt = finalize_submission(
+                job_title=job_title,
+                company=company,
+                portal_url=target_url,
+                evidence=res.get("evidence") or msg,
+                job_id=pending_review.get("job_id"),
+                notify_email=pending_review.get("notify_email"),
+                started_at=started_at,
+            )
+            push_log("Application recorded and receipt processed.", step=10, done=True, success=True)
+        elif barrier:
+            push_log(f"⚠️ Portal Barrier: {msg}", step=10, done=True, success=False)
+        else:
+            # No confirmation means no claim of one. The browser stays open so
+            # the candidate can see for themselves what the page is showing.
+            push_log(f"⚠️ Not sent, or not confirmed: {msg}", step=10, done=True, success=False)
+
+        agent_state["last_result"] = {
+            "success": success,
+            "barrier": barrier,
+            "message": msg,
+            "receipt": receipt,
+            "dry_run": False,
+            "submitted": bool(success),
+        }
+        active_agent_status["last_result"] = agent_state["last_result"]
+    except Exception as e:
+        push_log(f"Submission notice: {e}", step=99, done=True, success=False)
+        agent_state["last_result"] = {"success": False, "dry_run": False, "message": str(e)}
+        active_agent_status["last_result"] = agent_state["last_result"]
+    finally:
+        active_agent_status["is_running"] = False
+        agent_state["is_running"] = False
+        time.sleep(4)
+        close_pending_review("submission finished")
 
 @app.get("/")
 def root():
@@ -245,6 +612,7 @@ def cancel_application():
     active_agent_status["is_running"] = False
     agent_state["is_running"] = False
     agent_state["phase"] = "cancelled"
+    close_pending_review("cancelled by candidate")
     driver = current_driver_container.get("driver")
     if driver:
         try:
@@ -256,14 +624,63 @@ def cancel_application():
     push_log("Application cancelled by user.", done=True, success=False)
     return {"status": "cancelled"}
 
+
+@app.post("/api/apply/submit")
+def submit_reviewed_application():
+    """
+    Sends the application the candidate has just read, in the browser it is
+    already open in. This is the only endpoint in the app that files anything
+    with an employer, and it exists only after a rehearsal has shown the form.
+    """
+    if active_agent_status["is_running"]:
+        raise HTTPException(status_code=400, detail="Something is already running in that browser.")
+    if not pending_review.get("driver"):
+        raise HTTPException(status_code=409,
+                            detail="There is no filled form waiting. Run the apply again to fill one.")
+
+    agent_state["is_running"] = True
+    active_agent_status["is_running"] = True
+    agent_state["phase"] = "autonomous_agent"
+    agent_state["current_step"] = "Sending your application..."
+    agent_state["last_result"] = None
+    active_agent_status["last_result"] = None
+
+    threading.Thread(target=submit_pending_thread, name="apply-submit", daemon=True).start()
+    return {"status": "submitting", "company": pending_review.get("company")}
+
+def latest_frame() -> Optional[str]:
+    """The most recent screenshot as a data URI, or None."""
+    manager = current_manager_container.get("manager")
+    if manager and getattr(manager, "latest_screenshot", None):
+        return manager.latest_screenshot
+    return agent_state.get("screenshot")
+
+
+@app.get("/api/apply/screenshot")
+def get_apply_screenshot(seq: int = 0):
+    """
+    The live view of the browser, as PNG bytes.
+
+    Kept out of the state payload on purpose: a full-page screenshot runs to
+    megabytes, and the state is polled about once a second. `seq` only exists
+    to make each frame a distinct URL, so the browser fetches the new one.
+    """
+    frame = latest_frame()
+    if not frame or "," not in frame:
+        raise HTTPException(status_code=404, detail="No screenshot has been captured yet.")
+    try:
+        png = base64.b64decode(frame.split(",", 1)[1])
+    except Exception:
+        raise HTTPException(status_code=404, detail="That screenshot could not be read.")
+    return Response(content=png, media_type="image/png", headers={"Cache-Control": "no-store"})
+
+
 @app.get("/api/apply/state")
 def get_apply_state():
     manager = current_manager_container.get("manager")
-    screenshot = None
-    if manager and hasattr(manager, "latest_screenshot") and manager.latest_screenshot:
-        screenshot = manager.latest_screenshot
-    elif agent_state.get("screenshot"):
-        screenshot = agent_state.get("screenshot")
+    seq = int(getattr(manager, "screenshot_seq", 0) or 0) or int(agent_state.get("screenshot_seq") or 0)
+    # A URL rather than the picture itself, so polling this stays cheap.
+    screenshot_url = f"/api/apply/screenshot?seq={seq}" if latest_frame() else ""
 
     return {
         "is_running": agent_state["is_running"],
@@ -273,15 +690,25 @@ def get_apply_state():
         "phase": agent_state["phase"],
         "current_step": agent_state["current_step"],
         "logs": agent_state["logs"][-35:],
-        "screenshot": screenshot,
-        "last_result": agent_state["last_result"]
+        "screenshot_url": screenshot_url,
+        "screenshot_seq": seq,
+        "last_result": agent_state["last_result"],
+        "dry_run": agent_state.get("dry_run", True),
+        "started_at": agent_state.get("started_at"),
+        "model": PAGE_AGENT_MODEL,
+        # True while a filled form is sitting in an open browser, unsent.
+        "awaiting_review": bool(pending_review.get("driver")),
     }
 
 @app.post("/api/apply")
 def start_application(req: ApplyRequest):
     if active_agent_status["is_running"]:
         raise HTTPException(status_code=400, detail="An application is already running in background.")
-    
+
+    # A browser left open on someone else's half-reviewed form has no claim on
+    # the screen once a new run starts.
+    close_pending_review("superseded by a new run")
+
     # Clear old logs
     while not log_queue.empty():
         try:
@@ -300,15 +727,39 @@ def start_application(req: ApplyRequest):
     agent_state["current_step"] = "Opening browser on employer portal..."
     agent_state["logs"] = []
     agent_state["screenshot"] = None
+    agent_state["screenshot_seq"] = 0
     agent_state["last_result"] = None
+    agent_state["dry_run"] = True if req.dry_run is None else bool(req.dry_run)
+    agent_state["started_at"] = time.time()
 
     t = threading.Thread(
         target=run_agent_thread,
         args=(req.url, req.job_title or "Candidate Position", req.company or "Employer", req.headless),
+        kwargs={"job_id": req.job_id, "notify_email": req.notify_email,
+                "dry_run": True if req.dry_run is None else bool(req.dry_run)},
         daemon=True
     )
     t.start()
-    return {"status": "started", "url": req.url}
+
+    from services.automation import mailer
+    return {
+        "status": "started",
+        "url": req.url,
+        "receipt_email_configured": mailer.is_configured(),
+        "receipt_email_hint": mailer.configuration_hint(),
+    }
+
+@app.get("/api/apply/email-status")
+def get_apply_email_status():
+    """Whether MapJob can email a submission receipt, and to whom."""
+    from services.automation import mailer
+    from services.automation.email_watcher import EmailWatcher
+    return {
+        "receipt_email_configured": mailer.is_configured(),
+        "receipt_email_hint": mailer.configuration_hint(),
+        "recipient": CANDIDATE_PROFILE.get("email", ""),
+        "inbox_watch_configured": EmailWatcher().is_configured(),
+    }
 
 @app.get("/api/apply/stream")
 async def stream_logs(request: Request):
@@ -519,12 +970,167 @@ class DirectApplyRequest(pydantic.BaseModel):
     job_title: str = ""
     candidate: Optional[Dict[str, Any]] = None
 
+# Below this many listings on screen, a viewport search is worth double-checking
+# against the plain national feed. Set where it is because a real city view
+# returns hundreds and a mis-named one returns single figures; anywhere in
+# between is a quiet town, where both queries agree anyway.
+ANCHOR_MIN_IN_VIEW = 25
+
+
+# How many of those names to actually try. Each one is a fresh fan-out at
+# Adzuna, so this is the ceiling on what a wrongly-named viewport may cost.
+ANCHOR_MAX_TRIES = 2
+
+
+def _viewport_anchor(bbox: str):
+    """A map viewport as the (names, radius_km, country) Adzuna can search.
+
+    Adzuna has no coordinate search, so the only way to ask it for what is on
+    screen is to name the town in the middle and give a radius. Without this the
+    map could only fetch a whole country in relevance order and discard whatever
+    fell outside the view -- which is fine looking at a region and useless
+    looking at a street, where it left nine listings out of tens of thousands.
+
+    `names` is ordered fine-to-coarse, because there is no single administrative
+    level that every country files jobs under.
+    """
+    from services.automation.adzuna_client import MARKETS, bbox_center_radius
+    from services.automation.geocoder import reverse_place
+
+    anchor = bbox_center_radius(bbox)
+    if not anchor:
+        return [], None, None
+    lat, lng, radius_km = anchor
+    try:
+        found = reverse_place(lat, lng)
+    except Exception as exc:  # noqa: BLE001
+        # Never let naming the view stop the view from loading.
+        logger.warning("Reverse geocode failed for %s,%s: %s", lat, lng, exc)
+        return [], None, None
+    if not found or not found.get("place"):
+        return [], None, None
+    country = (found.get("country") or "").lower()
+    if country not in MARKETS:
+        # Somewhere Adzuna does not cover, or somewhere we cannot attribute.
+        # Searching for the name in a neighbour's market answers confidently
+        # and wrongly, so this declines to anchor at all.
+        return [], None, None
+    names = found.get("places") or [found["place"]]
+    return names[:ANCHOR_MAX_TRIES], radius_km, country
+
+
 @app.get("/api/jobs/direct-ats")
-def get_direct_ats_jobs(keywords: Optional[str] = None, city: Optional[str] = None, limit: int = 60):
-    """Retrieve verified direct ATS engineering & tech jobs from public boards (Greenhouse, Ashby, Lever)."""
-    from services.automation.direct_ats_client import fetch_all_direct_ats_jobs
-    jobs = fetch_all_direct_ats_jobs(keywords=keywords, city=city)
-    return {"count": len(jobs), "jobs": jobs[:limit]}
+def get_direct_ats_jobs(
+    keywords: Optional[str] = None,
+    city: Optional[str] = None,
+    bbox: Optional[str] = None,
+    limit: int = 1200,
+    full: bool = False,
+    source: str = "all",
+):
+    """Job listings for the map and the result column.
+
+    source='adzuna' answers from the aggregator alone and never touches the ATS
+    boards. That is not just a filter: crawling the verified boards is the
+    expensive half of this endpoint, so skipping it is what takes a cold search
+    from roughly twenty seconds to under three. source='ats' is the mirror
+    image, and 'all' (the default) blends both as before.
+
+    bbox='west,south,east,north' restricts results to a map viewport.
+    Responses are slim by default; pass full=true for untruncated descriptions.
+    """
+    from services.automation.direct_ats_client import (
+        fetch_all_direct_ats_jobs,
+        filter_by_bbox,
+        slim_job,
+    )
+
+    source = (source or "all").strip().lower()
+    complete = True
+
+    if source == "adzuna":
+        from services.automation.adzuna_client import (
+            countries_for_bbox,
+            fetch_adzuna_feed,
+        )
+
+        # A viewport already says which markets are worth asking, so ask those
+        # and spend the saved calls on depth instead of on countries that are
+        # nowhere near the screen.
+        countries = countries_for_bbox(bbox) if bbox and not city else None
+        names, distance_km, anchor_country = (
+            _viewport_anchor(bbox) if bbox and not city else ([], None, None)
+        )
+        # A named place lives in exactly one market, so asking the others for it
+        # is a wasted call. Spending the whole budget on the one country that can
+        # answer is what turns a border viewport from 100 listings into 300.
+        if anchor_country:
+            countries = (anchor_country,)
+
+        if city or not names:
+            jobs, complete = fetch_adzuna_feed(
+                keywords=keywords or "", city=city or "", countries=countries
+            )
+        else:
+            # Naming the middle of a viewport can go wrong in ways that do not
+            # look like errors. Adzuna answers an unknown place with an empty
+            # list, and the middle of Brussels is the commune of
+            # Saint-Josse-ten-Noode, which it knows just well enough to return
+            # five jobs for a city of a million. So the test is never "did that
+            # work" but "did that beat the alternative": each candidate name and
+            # the plain national feed are judged on the only thing that matters
+            # here, how many real listings they put on this screen.
+            jobs, complete, best = [], True, -1
+            for attempt in list(names) + [""]:
+                found, found_complete = fetch_adzuna_feed(
+                    keywords=keywords or "",
+                    city=attempt,
+                    countries=countries,
+                    distance_km=distance_km if attempt else None,
+                )
+                in_view = len(filter_by_bbox(found, bbox))
+                if in_view > best:
+                    jobs, complete, best = found, found_complete, in_view
+                if in_view >= ANCHOR_MIN_IN_VIEW:
+                    break
+            logger.info("Viewport %s -> %s: %s in view.", bbox, names, best)
+    else:
+        jobs = fetch_all_direct_ats_jobs(
+            keywords=keywords,
+            city=city,
+            include_aggregators=(source != "ats"),
+        )
+
+    total = len(jobs)
+
+    if bbox:
+        jobs = filter_by_bbox(jobs, bbox)
+
+    matched = len(jobs)
+    limit = max(1, min(limit, 5000))
+    page = jobs[:limit]
+    if not full:
+        page = [slim_job(j) for j in page]
+
+    return {
+        "count": matched,
+        "total": total,
+        "truncated": matched > limit,
+        # False while the deeper pages are still landing. The client asks again
+        # shortly rather than treating a fast first paint as the whole feed.
+        "complete": complete,
+        "jobs": page,
+    }
+
+
+@app.get("/api/jobs/detail")
+def get_direct_ats_job_detail(id: str):
+    """Full record for one job, including the untruncated description."""
+    from services.automation.direct_ats_client import get_job_by_id
+    job = get_job_by_id(id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found or no longer listed.")
+    return {"job": job}
 
 @app.get("/api/jobs/ats/questions")
 def get_ats_questions(board: str, job_id: str, provider: str = "Greenhouse"):
@@ -535,38 +1141,155 @@ def get_ats_questions(board: str, job_id: str, provider: str = "Greenhouse"):
 
 @app.post("/api/jobs/apply-direct")
 def apply_direct_ats(req: DirectApplyRequest):
-    """Apply directly to the company's official ATS candidate endpoint via HTTP POST (0 human intervention)."""
+    """Try to submit the application over HTTP to the employer's own ATS.
+
+    No browser agent is involved: it either goes over HTTP or it does not go at
+    all. Today no aggregated board exposes a public application endpoint, so
+    this always reports `portal_required` with the employer's form URL. It never
+    emails a receipt for an application that was not actually sent.
+    """
     from services.automation.direct_ats_client import submit_direct_api_application
     from services.automation.candidate_profile import CANDIDATE_PROFILE
     from services.automation.supabase_db import save_application_record, get_candidate_details
-    
-    # Merge candidate profile with Supabase and defaults
+    from services.automation import mailer
+    from services.automation.email_watcher import EmailWatcher
+
     c_info = get_candidate_details()
     c_info.update(CANDIDATE_PROFILE or {})
     if req.candidate:
         c_info.update(req.candidate)
-        
+
+    cv_path = (CANDIDATE_PROFILE.get("resumes") or {}).get("en") \
+        or (CANDIDATE_PROFILE.get("resumes") or {}).get("fr")
+
+    started_at = time.time()
     result = submit_direct_api_application(
         job_id=req.job_id,
         board=req.board,
         provider=req.provider,
-        candidate=c_info
+        candidate=c_info,
+        cv_path=cv_path,
     )
-    
-    # Record to Supabase
+
+    company = req.company or req.board
+    job_title = req.job_title or "Position"
+    portal_url = result.get("applyUrl") or ""
+
     try:
         save_application_record(
-            company=req.company or req.board,
-            job_title=req.job_title or "Engineer",
-            portal_url=f"https://boards.greenhouse.io/{req.board}/jobs/{req.job_id}",
-            status="applied" if result.get("success") else "failed",
+            company=company,
+            job_title=job_title,
+            portal_url=portal_url,
+            # "not_submitted" rather than "failed": nothing was attempted, so
+            # this must not look like a rejected application in the history.
+            status="applied" if result.get("success") else "not_submitted",
             job_id=req.job_id,
-            form_data=result
+            form_data=result,
         )
     except Exception as e:
         print(f"[Direct ATS] Error saving to Supabase: {e}")
-        
+
+    if not result.get("success"):
+        return result
+
+    # Only reachable once some ATS accepts an unauthenticated submission. The
+    # receipt is deliberately gated on the ATS's own success status so it can
+    # never claim an application that was never sent.
+    recipient = c_info.get("email") or CANDIDATE_PROFILE.get("email") or ""
+    result["recipient"] = recipient
+    result["receipt_email"] = mailer.send_application_receipt(
+        to_email=recipient,
+        company=company,
+        job_title=job_title,
+        portal_url=portal_url,
+        evidence=result.get("evidence", ""),
+        submitted_at=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started_at)),
+    )
+
+    watcher = EmailWatcher()
+    if watcher.is_configured():
+        threading.Thread(
+            target=lambda: watcher.wait_for_confirmation(company, since_epoch=started_at, timeout_seconds=600),
+            name="direct-confirmation-watch",
+            daemon=True,
+        ).start()
+    result["employer_confirmation"] = {"found": False, "pending": watcher.is_configured()}
+
     return result
+
+
+# ---------------------------------------------------------------------------
+# Browser applications.
+#
+# The HTTP route above can only ever report `portal_required`, because no board
+# accepts an anonymous POST. Filling the employer's own form in a real browser
+# is the mechanism that actually works, and these three endpoints are what
+# connect it to the button.
+#
+# Filling a form takes 20-40 seconds, far longer than a request should be held
+# open, so a run is started, given an id, and polled.
+# ---------------------------------------------------------------------------
+
+class BrowserApplyRequest(pydantic.BaseModel):
+    job_url: str
+    job_id: str = ""
+    company: str = ""
+    job_title: str = ""
+    # Defaults to a rehearsal. Submitting to a real employer cannot be undone,
+    # so the client has to ask for it explicitly, every time.
+    dry_run: bool = True
+
+
+@app.post("/api/apply/browser")
+def start_browser_apply(req: BrowserApplyRequest):
+    """Open the employer's form in a real browser and fill it from the profile.
+
+    Returns immediately with a run id. With dry_run (the default) the run stops
+    at a screenshot of the completed form and submits nothing.
+    """
+    from services.automation import apply_runner
+
+    url = (req.job_url or "").strip()
+    if not url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="A job URL is required to open the application form.")
+
+    run = apply_runner.start_apply(
+        job_id=req.job_id,
+        job_url=url,
+        company=req.company,
+        job_title=req.job_title,
+        dry_run=req.dry_run,
+    )
+    return run.public()
+
+
+@app.get("/api/apply/browser/runs")
+def list_browser_applies(limit: int = 25):
+    """Recent browser runs, newest first."""
+    from services.automation import apply_runner
+    return {"runs": apply_runner.list_runs(limit=limit)}
+
+
+@app.get("/api/apply/browser/{run_id}")
+def get_browser_apply(run_id: str):
+    """Current state of one run. Poll this until `done` is true."""
+    from services.automation import apply_runner
+
+    run = apply_runner.get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="No such application run.")
+    return run.public()
+
+
+@app.get("/api/apply/browser/{run_id}/screenshot")
+def get_browser_apply_screenshot(run_id: str):
+    """The captured form, so the candidate can read it before approving."""
+    from services.automation import apply_runner
+
+    path = apply_runner.screenshot_path(run_id)
+    if not path:
+        raise HTTPException(status_code=404, detail="No screenshot for this run.")
+    return FileResponse(str(path), media_type="image/png")
 
 
 def query_google_speech_l16(sess: requests.Session, pcm_bytes: bytes, l_code: str = "fr-FR") -> str:

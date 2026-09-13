@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import type L from 'leaflet';
 import { 
   Map as MapIcon, 
@@ -12,24 +12,126 @@ import { FilterBar } from './components/FilterBar';
 import { JobCard } from './components/JobCard';
 import { JobMap } from './components/JobMap';
 import { JobPage } from './components/JobPage';
-import { LiveAgentModal } from './components/LiveAgentModal';
 import { PostJobModal } from './components/PostJobModal';
 import { AutomatedEmailsModal } from './components/AutomatedEmailsModal';
 import { InterviewHelperModal } from './components/InterviewHelperModal';
 import { CITIES } from './data/mockJobs';
-import { fetchAdzunaJobs, resolveLocationFromCoords, getVisibleHubsInBounds } from './services/adzuna';
-import { fetchArbeitnowJobs } from './services/arbeitnow';
-import { getDirectAtsJobs } from './services/directAtsJobs';
-import { fetchDirectAtsJobs, applyViaDirectAtsApi } from './services/directAtsApi';
-import { isDirectAts, type Job } from './types/job';
+import { resolveLocationFromCoords, getVisibleHubsInBounds } from './services/adzuna';
+import {
+  fetchDirectAtsJobs,
+  fetchJobFeed,
+  startBrowserApply,
+  pollBrowserApply,
+  type BrowserApplyRun,
+  type FetchJobsOptions,
+} from './services/directAtsApi';
+import { ApplyReviewPanel } from './components/ApplyReviewPanel';
+
+/**
+ * Below this fraction of the loaded region's width, a viewport is refetched even
+ * though its jobs are technically already in hand.
+ *
+ * The backend answers a viewport by naming the town at its centre and searching
+ * a radius around it, and a fixed number of listings spread over a 50km radius
+ * is thin once you are looking at one street. So "we already have this area" is
+ * true but not useful past a certain point: the closer view deserves its own,
+ * tighter search. A quarter is about two zoom levels, which is far enough to be
+ * worth a request and near enough that ordinary panning still costs nothing.
+ */
+const REFETCH_BELOW_WIDTH_RATIO = 0.25;
+
+function isAlreadyLoaded(region: L.LatLngBounds | null, bounds: L.LatLngBounds): boolean {
+  if (!region?.contains(bounds)) return false;
+  const regionWidth = region.getEast() - region.getWest();
+  const width = bounds.getEast() - bounds.getWest();
+  return regionWidth <= 0 || width / regionWidth > REFETCH_BELOW_WIDTH_RATIO;
+}
+
+/**
+ * Fetch a feed, then keep collecting the rest of it.
+ *
+ * The backend answers a cold search from one fast wave of calls and fills in
+ * the deeper pages behind it, so the first response is real but partial. This
+ * paints that immediately and then asks again every couple of seconds until the
+ * backend says it is done -- the follow-up calls are cheap, because by then it
+ * is serving them out of memory.
+ *
+ * `isCurrent` is checked before every update so a superseded search (the user
+ * typed again, or moved the map) can never overwrite the newer results.
+ */
+const REFILL_DELAY_MS = 1800;
+const REFILL_MAX_TRIES = 6;
+
+async function loadFeedWithRefill(
+  options: FetchJobsOptions,
+  isCurrent: () => boolean,
+  onJobs: (jobs: Job[]) => void
+): Promise<void> {
+  let feed = await fetchJobFeed(options);
+  if (!isCurrent()) return;
+  onJobs(feed.jobs);
+
+  for (let tries = 0; tries < REFILL_MAX_TRIES && !feed.complete; tries++) {
+    await new Promise((resolve) => setTimeout(resolve, REFILL_DELAY_MS));
+    if (!isCurrent()) return;
+    try {
+      feed = await fetchJobFeed(options);
+    } catch {
+      return; // The first wave is already on screen; a failed top-up is not an error.
+    }
+    if (!isCurrent()) return;
+    onJobs(feed.jobs);
+  }
+}
+import type { Job } from './types/job';
 import {
   saveJobToSupabase,
   fetchSavedJobsFromSupabase,
   updateJobStatusInSupabase,
 } from './services/supabase';
 
+interface JobSearchParams {
+  cityId?: string;
+  where?: string;
+  country?: string;
+  query?: string;
+  lastPosted?: string;
+  page?: number;
+  centerLat?: number;
+  centerLng?: number;
+  defaultWhat?: string;
+}
+
+/**
+ * A town-level coordinate stands for the whole town, so the viewport test has
+ * to be as coarse as the data is. Six kilometres is about a European city's own
+ * half-width, and it is the difference between "zoom into a street in Eindhoven
+ * and the column says 3 jobs" and it saying what the town actually holds: every
+ * Eindhoven listing shares one geocoded centre point, and a street-level box
+ * simply misses that point.
+ *
+ * An exact coordinate is a real address and is judged exactly, with no slack.
+ * Kept in step with `CITY_RADIUS_KM` in `direct_ats_client.py`, which culls the
+ * same jobs server-side.
+ */
+const CITY_RADIUS_KM = 6;
+
+function inViewOf(bounds: L.LatLngBounds): (job: Job) => boolean {
+  const midLat = (bounds.getNorth() + bounds.getSouth()) / 2;
+  const padLat = CITY_RADIUS_KM / 111;
+  const padLng = CITY_RADIUS_KM / (111 * Math.max(0.05, Math.cos((midLat * Math.PI) / 180)));
+  const loose = bounds.pad(0); // a copy, so the map's own bounds are untouched
+  loose.extend([bounds.getNorth() + padLat, bounds.getEast() + padLng]);
+  loose.extend([bounds.getSouth() - padLat, bounds.getWest() - padLng]);
+
+  return (job: Job) =>
+    job.locationPrecision === 'exact'
+      ? bounds.contains([job.lat, job.lng])
+      : loose.contains([job.lat, job.lng]);
+}
+
 export function App() {
-  // Data state: 100% strictly live data from Adzuna API
+  // Live ATS listings; API submission is a separate capability.
   const [jobs, setJobs] = useState<Job[]>([]);
 
   const [savedJobIds, setSavedJobIds] = useState<Set<string>>(() => {
@@ -37,7 +139,7 @@ export function App() {
     if (saved) {
       try {
         return new Set(JSON.parse(saved));
-      } catch (e) {
+      } catch {
         return new Set();
       }
     }
@@ -61,6 +163,11 @@ export function App() {
 
   // Filter state
   const [searchQuery, setSearchQuery] = useState('');
+  const [committedQuery, setCommittedQuery] = useState('');
+  useEffect(() => {
+    const timer = setTimeout(() => setCommittedQuery(searchQuery), 350);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
   const [selectedCity, setSelectedCity] = useState('eindhoven');
   const [activeLocationLabel, setActiveLocationLabel] = useState('Eindhoven & Brainport (NL)');
   const [selectedCategory, setSelectedCategory] = useState('all');
@@ -74,34 +181,10 @@ export function App() {
   const [isLoadingJobs, setIsLoadingJobs] = useState(false);
   const [currentPage, setCurrentPage] = useState(2);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const activeParamsRef = useRef<Parameters<typeof fetchAdzunaJobs>[0]>({ cityId: 'eindhoven' });
-
-  // Unified multi-source job aggregator (Direct ATS API + Direct ATS Local + Adzuna parallel feed + Arbeitnow European tech feed)
-  const loadAggregatedJobs = async (params: Parameters<typeof fetchAdzunaJobs>[0]): Promise<Job[]> => {
-    try {
-      const cityQuery = params.cityId || params.where;
-      const [apiAtsJobs, directJobs, adzunaJobs, arbeitnowJobs] = await Promise.all([
-        fetchDirectAtsJobs(params.query, cityQuery),
-        Promise.resolve(getDirectAtsJobs(cityQuery)),
-        fetchAdzunaJobs(params),
-        fetchArbeitnowJobs(params.where || params.cityId),
-      ]);
-
-      const seen = new Set<string>();
-      const combined: Job[] = [];
-      // Prioritize direct ATS API jobs first!
-      for (const j of [...apiAtsJobs, ...directJobs, ...adzunaJobs, ...arbeitnowJobs]) {
-        if (!seen.has(j.id)) {
-          seen.add(j.id);
-          combined.push(j);
-        }
-      }
-      return combined;
-    } catch (err) {
-      console.warn('Aggregated fetch error:', err);
-      return fetchAdzunaJobs(params);
-    }
-  };
+  const [visibleCardCount, setVisibleCardCount] = useState(60);
+  const activeParamsRef = useRef<JobSearchParams>({ cityId: 'eindhoven' });
+  const searchRequestRef = useRef(0);
+  const [searchError, setSearchError] = useState('');
 
   // Live aggregated job fetching for initial/dropdown selection
   useEffect(() => {
@@ -113,8 +196,13 @@ export function App() {
     }
 
     let isMounted = true;
+    const requestId = ++searchRequestRef.current;
+    if (mapMoveTimerRef.current) clearTimeout(mapMoveTimerRef.current);
+    // A new city or query invalidates whatever area the map had already loaded.
+    fetchedRegionRef.current = null;
     async function loadLiveJobs() {
       setIsLoadingJobs(true);
+      setSearchError('');
       try {
         const currentHub = CITIES.find((c) => c.id === selectedCity);
         if (currentHub) {
@@ -122,21 +210,27 @@ export function App() {
         }
         const params = {
           cityId: selectedCity,
-          query: searchQuery,
+          query: committedQuery,
           lastPosted,
           page: 1,
         };
         activeParamsRef.current = params;
         setCurrentPage(2);
 
-        const liveJobs = await loadAggregatedJobs(params);
-        if (isMounted) {
-          setJobs(liveJobs);
-        }
+        await loadFeedWithRefill(
+          { keywords: params.query, city: params.cityId },
+          () => isMounted && requestId === searchRequestRef.current,
+          (liveJobs) => {
+            setJobs(liveJobs);
+            // Cleared on the first wave, not the last: the map is usable now.
+            setIsLoadingJobs(false);
+          }
+        );
       } catch (err) {
-        console.error('Failed to load real Adzuna jobs:', err);
+        console.error('Failed to load jobs:', err);
+        if (requestId === searchRequestRef.current) setSearchError('Job feed unavailable. Check the backend and retry.');
       } finally {
-        if (isMounted) setIsLoadingJobs(false);
+        if (isMounted && requestId === searchRequestRef.current) setIsLoadingJobs(false);
       }
     }
 
@@ -144,20 +238,22 @@ export function App() {
     return () => {
       isMounted = false;
     };
-  }, [selectedCity, searchQuery, lastPosted]);
+  }, [selectedCity, committedQuery, lastPosted]);
 
   // Load more jobs dynamically in the current map view (+50 more pins)
+  // Load more jobs dynamically in the current map view
   const handleLoadMoreInArea = async () => {
+    if (visibleCardCount < filteredJobs.length) {
+      setVisibleCardCount((count) => count + 60);
+      return;
+    }
     if (isLoadingMore) return;
     setIsLoadingMore(true);
     try {
       const nextPage = currentPage + 1;
-      const moreJobs = await fetchAdzunaJobs({
-        ...activeParamsRef.current,
-        query: searchQuery,
-        lastPosted,
-        page: nextPage,
-      });
+      const cityQuery = activeParamsRef.current.cityId || activeParamsRef.current.where;
+      const moreAts = await fetchDirectAtsJobs({ keywords: searchQuery, city: cityQuery });
+      const moreJobs = moreAts;
 
       if (moreJobs.length > 0) {
         setJobs((prev) => {
@@ -166,7 +262,7 @@ export function App() {
           return [...prev, ...additions];
         });
         setCurrentPage(nextPage);
-        showToast(`Added ${moreJobs.length} more vacancies to this area!`);
+        showToast(`Refreshed ${moreJobs.length} direct vacancies in this area!`);
       } else {
         showToast('All available vacancies in this radius are already displayed.');
       }
@@ -184,17 +280,43 @@ export function App() {
 
   // Debounced live API caller as the user moves/drags the map
   const mapMoveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (mapMoveTimerRef.current) clearTimeout(mapMoveTimerRef.current);
+    searchRequestRef.current += 1;
+  }, []);
 
   // Immediate loading trigger as soon as map dragging / zooming begins
   const handleMapMoveStart = () => {
     if (!searchAsMapMoves) return;
-    setIsLoadingJobs(true);
+    // Only drop a fetch that has not started yet. This deliberately does not
+    // invalidate the in-flight search as well: a move does not always end in a
+    // request (the area may already be loaded, or the map may have no size yet),
+    // and cancelling the city search that is still arriving left the app with an
+    // empty list and nothing on its way to fill it. `handleMapMoveEnd` claims
+    // the request slot at the moment it actually decides to fetch.
+    if (mapMoveTimerRef.current) clearTimeout(mapMoveTimerRef.current);
   };
 
+  /**
+   * The geographic region the jobs currently in state were fetched for. While
+   * the camera stays inside it, panning needs no network round trip at all.
+   */
+  const fetchedRegionRef = useRef<L.LatLngBounds | null>(null);
+
   const handleMapMoveEnd = (center: { lat: number; lng: number }, bounds: L.LatLngBounds) => {
+    // A map with no size on screen reports its bounds as a single point, and a
+    // zero-area viewport contains nothing, so filtering by it empties the whole
+    // result column. That is not hypothetical: below the `md` breakpoint the map
+    // pane is `display:none`, and the list next to it went to "0 jobs" while the
+    // feed held six hundred.
+    if (bounds.getNorth() === bounds.getSouth() || bounds.getEast() === bounds.getWest()) {
+      return;
+    }
     setMapBounds(bounds);
     if (!searchAsMapMoves) return;
+    if (isAlreadyLoaded(fetchedRegionRef.current, bounds)) return;
 
+    const requestId = ++searchRequestRef.current;
     setIsLoadingJobs(true);
 
     if (mapMoveTimerRef.current) {
@@ -202,121 +324,69 @@ export function App() {
     }
 
     mapMoveTimerRef.current = setTimeout(async () => {
+      setSearchError('');
+      // Fetch a ring beyond the viewport so the next nudge is already covered.
+      const region = bounds.pad(0.35);
       try {
-        const visibleHubs = getVisibleHubsInBounds(bounds);
-
-        if (visibleHubs.length > 1) {
-          // Multiple cities in visible viewport! (e.g. Eindhoven, Tilburg, Breda, Den Bosch)
-          // Sort by distance to center and pick up to 4 closest hubs
-          const sortedHubs = [...visibleHubs]
-            .sort((a, b) => {
-              const distA = Math.hypot(a.lat - center.lat, a.lng - center.lng);
-              const distB = Math.hypot(b.lat - center.lat, b.lng - center.lng);
-              return distA - distB;
-            })
-            .slice(0, 4);
-
-          const cityNames = sortedHubs.map((h) => h.name).join(', ');
-          setActiveLocationLabel(cityNames);
-
-          const primaryHub = sortedHubs[0];
-          const matchCity = CITIES.find(
-            (c) =>
-              c.name.toLowerCase().includes(primaryHub.name.toLowerCase()) ||
-              primaryHub.name.toLowerCase().includes(c.id)
-          );
-          if (matchCity) {
-            setSelectedCity(matchCity.id);
-          }
-
-          // Fetch live jobs across all visible cities simultaneously
-          const hubPromises = sortedHubs.map((hub) =>
-            loadAggregatedJobs({
-              where: hub.name,
-              country: hub.country,
-              centerLat: hub.lat,
-              centerLng: hub.lng,
-              defaultWhat: hub.defaultWhat,
+        await loadFeedWithRefill(
+          {
+            keywords: searchQuery,
+            bbox: [region.getWest(), region.getSouth(), region.getEast(), region.getNorth()],
+          },
+          () => requestId === searchRequestRef.current,
+          (liveJobs) => {
+            fetchedRegionRef.current = region;
+            activeParamsRef.current = {
+              centerLat: center.lat,
+              centerLng: center.lng,
               query: searchQuery,
               lastPosted,
               page: 1,
-            })
-          );
-
-          const results = await Promise.all(hubPromises);
-          const seen = new Set<string>();
-          const combinedJobs: Job[] = [];
-          for (const list of results) {
-            for (const j of list) {
-              if (!seen.has(j.id)) {
-                seen.add(j.id);
-                combinedJobs.push(j);
-              }
-            }
-          }
-
-          activeParamsRef.current = {
-            where: primaryHub.name,
-            country: primaryHub.country,
-            centerLat: primaryHub.lat,
-            centerLng: primaryHub.lng,
-            defaultWhat: primaryHub.defaultWhat,
-            query: searchQuery,
-            lastPosted,
-            page: 1,
-          };
-          setCurrentPage(2);
-
-          if (combinedJobs.length > 0) {
-            setJobs(combinedJobs);
-          }
-        } else {
-          // Single hub or reverse geocode viewport center
-          const location = await resolveLocationFromCoords(center.lat, center.lng);
-          setActiveLocationLabel(location.displayLabel || `${location.name}, ${location.country.toUpperCase()}`);
-
-          if (location.name.toLowerCase().includes('luxembourg')) {
-            setSelectedCity('luxembourg');
-          } else if (location.name.toLowerCase().includes('brussel') || location.name.toLowerCase().includes('bruxelles')) {
-            setSelectedCity('brussels');
-          } else {
-            const matchCity = CITIES.find((c) => c.name.toLowerCase().includes(location.name.toLowerCase()) || location.name.toLowerCase().includes(c.id));
-            if (matchCity) {
-              setSelectedCity(matchCity.id);
-            }
-          }
-
-          const fetchParams = {
-            where: location.name,
-            country: location.country,
-            centerLat: center.lat,
-            centerLng: center.lng,
-            defaultWhat: location.defaultWhat,
-            query: searchQuery,
-            lastPosted,
-            page: 1,
-          };
-          activeParamsRef.current = fetchParams;
-          setCurrentPage(2);
-
-          // Fetch live jobs for this visible location
-          const liveJobs = await loadAggregatedJobs(fetchParams);
-
-          if (liveJobs.length > 0) {
+            };
+            setCurrentPage(2);
             setJobs(liveJobs);
+            setIsLoadingJobs(false);
           }
-        }
+        );
       } catch (err) {
-        console.error('Failed to load real Adzuna jobs on map move:', err);
+        console.error('Failed to load jobs on map move:', err);
+        if (requestId === searchRequestRef.current) {
+          setSearchError('Unable to refresh this area. Retry when the backend is available.');
+        }
       } finally {
-        setIsLoadingJobs(false);
+        if (requestId === searchRequestRef.current) setIsLoadingJobs(false);
       }
-    }, 250);
+
+      // Naming the area is cosmetic, so it never blocks the pins from appearing.
+      const visibleHubs = getVisibleHubsInBounds(bounds)
+        .sort(
+          (a, b) =>
+            Math.hypot(a.lat - center.lat, a.lng - center.lng) -
+            Math.hypot(b.lat - center.lat, b.lng - center.lng)
+        )
+        .slice(0, 4);
+      if (visibleHubs.length) {
+        setActiveLocationLabel(visibleHubs.map((h) => h.name).join(', '));
+      } else {
+        resolveLocationFromCoords(center.lat, center.lng)
+          .then((location) => {
+            if (requestId !== searchRequestRef.current) return;
+            setActiveLocationLabel(
+              location.displayLabel || `${location.name}, ${location.country.toUpperCase()}`
+            );
+          })
+          .catch(() => undefined);
+      }
+    }, 200);
   };
 
   // Search any European destination (via Enter key, suggested hub click, or Search button)
   const handleSearchDestination = async (destination: string) => {
     if (!destination.trim()) return;
+    if (mapMoveTimerRef.current) clearTimeout(mapMoveTimerRef.current);
+    const requestId = ++searchRequestRef.current;
+    fetchedRegionRef.current = null;
+    setSearchError('');
     const cleanDest = destination.trim();
     setActiveJobPage(null);
     setIsLoadingJobs(true);
@@ -345,12 +415,18 @@ export function App() {
         activeParamsRef.current = params;
         setCurrentPage(2);
 
-        const liveJobs = await loadAggregatedJobs(params);
-        setJobs(liveJobs);
+        await loadFeedWithRefill(
+          { keywords: params.query, city: params.cityId },
+          () => requestId === searchRequestRef.current,
+          (liveJobs) => {
+            setJobs(liveJobs);
+            setIsLoadingJobs(false);
+          }
+        );
       } catch (err) {
         console.error('Failed to load jobs for hub:', err);
       } finally {
-        setIsLoadingJobs(false);
+        if (requestId === searchRequestRef.current) setIsLoadingJobs(false);
       }
       return;
     }
@@ -369,6 +445,7 @@ export function App() {
           const lng = parseFloat(data[0].lon);
 
           const location = await resolveLocationFromCoords(lat, lng);
+          if (requestId !== searchRequestRef.current) return;
           const display = location.displayLabel || `${cleanDest}, ${location.country.toUpperCase()}`;
           setActiveLocationLabel(display);
           setMapBounds(null);
@@ -387,13 +464,14 @@ export function App() {
           activeParamsRef.current = fetchParams;
           setCurrentPage(2);
 
-          const liveJobs = await loadAggregatedJobs(fetchParams);
-
-          if (liveJobs.length > 0) {
-            setJobs(liveJobs);
-          } else {
-            showToast(`Found 0 jobs directly in ${cleanDest}. Expanding radius...`);
-          }
+          await loadFeedWithRefill(
+            { keywords: fetchParams.query, city: fetchParams.where },
+            () => requestId === searchRequestRef.current,
+            (liveJobs) => {
+              setJobs(liveJobs);
+              setIsLoadingJobs(false);
+            }
+          );
           return;
         }
       }
@@ -401,7 +479,8 @@ export function App() {
       console.warn('Geocoding error:', err);
     }
 
-    // 3. Fallback: Search Adzuna with destination string
+    // 3. Fallback: Search direct jobs with destination string
+    if (requestId !== searchRequestRef.current) return;
     try {
       setActiveLocationLabel(cleanDest);
       setMapBounds(null);
@@ -415,14 +494,18 @@ export function App() {
       activeParamsRef.current = fallbackParams;
       setCurrentPage(2);
 
-      const liveJobs = await loadAggregatedJobs(fallbackParams);
-      if (liveJobs.length > 0) {
-        setJobs(liveJobs);
-      }
+      await loadFeedWithRefill(
+        { keywords: fallbackParams.query, city: fallbackParams.where },
+        () => requestId === searchRequestRef.current,
+        (liveJobs) => {
+          setJobs(liveJobs);
+          setIsLoadingJobs(false);
+        }
+      );
     } catch (err) {
       console.error('Fallback destination search failed:', err);
     } finally {
-      setIsLoadingJobs(false);
+      if (requestId === searchRequestRef.current) setIsLoadingJobs(false);
     }
   };
 
@@ -430,10 +513,10 @@ export function App() {
   const [hoveredJobId, setHoveredJobId] = useState<string | null>(null);
   const [hoveredListJobId, setHoveredListJobId] = useState<string | null>(null);
 
-  const handleCardHover = (id: string | null) => {
+  const handleCardHover = useCallback((id: string | null) => {
     setHoveredJobId(id);
     setHoveredListJobId(id);
-  };
+  }, [setHoveredJobId, setHoveredListJobId]);
   // Check if URL has ?job= parameter on initial load (e.g. opened in a new tab)
   const [activeJobPage, setActiveJobPage] = useState<Job | null>(() => {
     try {
@@ -462,21 +545,12 @@ export function App() {
       return new Set();
     }
   });
+  // The live browser application, if one is running or waiting for approval.
+  const [applyRun, setApplyRun] = useState<BrowserApplyRun | null>(null);
+  const [isSubmittingForReal, setIsSubmittingForReal] = useState(false);
   const [isPostJobOpen, setIsPostJobOpen] = useState(false);
-  const [mobileView, setMobileView] = useState<'both' | 'map' | 'list'>('both');
+  const [mobileView, setMobileView] = useState<'both' | 'map' | 'list'>('list');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [liveActivity, setLiveActivity] = useState<string | null>(null);
-  const [isLiveAgentOpen, setIsLiveAgentOpen] = useState(false);
-
-  // Cancel any running autonomous application
-  const handleCancelApply = async () => {
-    try {
-      await fetch('http://127.0.0.1:8000/api/cancel', { method: 'POST' });
-    } catch {}
-    setApplyingJobId(null);
-    setLiveActivity(null);
-    showToast('Autonomous application stopped.');
-  };
 
   const handleUnmarkApplied = (id: string) => {
     setAppliedJobIds((prev) => {
@@ -490,112 +564,94 @@ export function App() {
     showToast('Status reset. You can now re-apply.');
   };
 
-  // Autonomous 1-Click Fast Apply: Direct ATS API (instant) or Browser PageAgent fallback
+  /** Records a job as applied to, and persists it across reloads. */
+  const markApplied = (job: Job) => {
+    setAppliedJobIds((prev) => {
+      const next = new Set(prev);
+      next.add(job.id);
+      try {
+        localStorage.setItem('mapjob_applied_ids', JSON.stringify(Array.from(next)));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+    setJobs((prev) =>
+      prev.map((j) => (j.id === job.id ? { ...j, applicantCount: (j.applicantCount || 0) + 1 } : j))
+    );
+  };
+
+  /** The job the open panel belongs to, so "Submit" can re-run the same one. */
+  const applyJobRef = useRef<Job | null>(null);
+
+  /**
+   * Applies by driving the employer's own form in a real browser.
+   *
+   * This used to POST to an ATS "apply API" that does not exist on any public
+   * board, so it could only ever answer `portal_required` and dump the
+   * candidate on the form to type it all themselves. Filling the real form is
+   * the mechanism that actually works.
+   *
+   * The first pass is always a rehearsal: it fills every field, stops before
+   * the submit button, and shows a screenshot of what it typed. Nothing reaches
+   * an employer until that has been read and approved.
+   */
   const handleFastApply = async (job: Job) => {
+    if (!job.applyUrl) {
+      showToast('This listing has no official application URL.');
+      return;
+    }
     if (applyingJobId) {
-      setIsLiveAgentOpen(true);
       showToast('An application is already running.');
       return;
     }
 
+    applyJobRef.current = job;
     setApplyingJobId(job.id);
 
-    // 100% Direct ATS API submission (Greenhouse, Ashby, Lever) - 0 browser / 0 human intervention!
-    if (job.canApplyViaApi) {
-      showToast(`⚡ Submitting application directly via ${job.atsProvider || 'ATS'} API...`);
-      try {
-        const result = await applyViaDirectAtsApi(job);
-        if (result.success) {
-          setAppliedJobIds((prev) => {
-            const next = new Set(prev);
-            next.add(job.id);
-            try {
-              localStorage.setItem('mapjob_applied_ids', JSON.stringify(Array.from(next)));
-            } catch {}
-            return next;
-          });
-          setJobs((prev) =>
-            prev.map((j) => (j.id === job.id ? { ...j, applicantCount: (j.applicantCount || 0) + 1 } : j))
-          );
-          showToast(`🎉 Applied to ${job.company} via official ${job.atsProvider || 'ATS'} API!`);
-        } else {
-          showToast(`⚠️ ATS API notice: ${result.message}`);
-        }
-      } catch (err: any) {
-        showToast(`❌ Direct API Apply error: ${err.message || 'Network error'}`);
-      } finally {
-        setApplyingJobId(null);
-      }
-      return;
-    }
-
-    // Fallback: Browser PageAgent for non-API web portals
-    setLiveActivity('Opening browser & navigating to portal...');
-    setIsLiveAgentOpen(true);
-    showToast(`⚡ Launching PageAgent browser for ${job.title}...`);
-
     try {
-      const targetUrl = job.applyUrl || '';
-      const response = await fetch('http://127.0.0.1:8000/api/apply', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url: targetUrl,
-          job_title: job.title,
-          company: job.company,
-          headless: false, // Visible Chrome browser window so user can watch actions live!
-        }),
-      });
-
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.detail || 'Could not start application bridge.');
-      }
-
-      showToast(`🤖 Browser opened! Autonomous PageAgent in progress...`);
-
-      // Stream live progress
-      const eventSource = new EventSource('http://127.0.0.1:8000/api/apply/stream');
-
-      eventSource.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.message) {
-            setLiveActivity(data.message);
-          }
-          if (data.done) {
-            eventSource.close();
-            setApplyingJobId(null);
-            setLiveActivity(null);
-            if (data.success) {
-              setAppliedJobIds((prev) => {
-                const next = new Set(prev);
-                next.add(job.id);
-                try {
-                  localStorage.setItem('mapjob_applied_ids', JSON.stringify(Array.from(next)));
-                } catch {}
-                return next;
-              });
-              setJobs((prev) =>
-                prev.map((j) => (j.id === job.id ? { ...j, applicantCount: j.applicantCount + 1 } : j))
-              );
-              showToast(`🎉 Application successfully submitted to ${job.company}!`);
-            } else {
-              showToast(`⚠️ Automation notice: ${data.message || 'Workflow finished.'}`);
-            }
-          }
-        } catch (e) {
-          console.error('SSE parse error:', e);
-        }
-      };
-
-      eventSource.onerror = () => {
-        eventSource.close();
-        setApplyingJobId(null);
-      };
+      const started = await startBrowserApply(job, true);
+      setApplyRun(started);
+      const final = await pollBrowserApply(started.id, setApplyRun);
+      setApplyRun(final);
     } catch (err: any) {
+      showToast(err?.message || 'The apply service is unreachable.');
+      setApplyRun(null);
+    } finally {
       setApplyingJobId(null);
-      showToast(`❌ ${err.message || 'Could not connect to automation server'}`);
+    }
+  };
+
+  /**
+   * Sends the application the candidate just read, for real. Only reachable
+   * from the review panel, after a dry run has shown the filled form.
+   */
+  const handleSubmitForReal = async () => {
+    const job = applyJobRef.current;
+    if (!job || isSubmittingForReal) return;
+
+    setIsSubmittingForReal(true);
+    try {
+      const started = await startBrowserApply(job, false);
+      setApplyRun(started);
+      const final = await pollBrowserApply(started.id, setApplyRun);
+      setApplyRun(final);
+
+      if (final.status === 'APPLIED') {
+        markApplied(job);
+        showToast(`Applied to ${job.company}. Their page confirmed it.`);
+      } else if (final.status === 'SUBMITTED_UNVERIFIED') {
+        // Sent, but unconfirmed. Marked applied so it is not sent twice, and
+        // said plainly so it can be checked rather than assumed.
+        markApplied(job);
+        showToast(`Sent to ${job.company}, but their page showed no confirmation. Worth checking.`);
+      } else {
+        showToast(final.message);
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'The submission could not be completed.');
+    } finally {
+      setIsSubmittingForReal(false);
     }
   };
 
@@ -696,7 +752,7 @@ export function App() {
   const handleAddJob = (newJob: Job) => {
     setJobs((prev) => {
       const updated = [newJob, ...prev];
-      const customJobs = updated.filter((j) => !j.id.startsWith('adzuna-'));
+      const customJobs = updated;
       localStorage.setItem('mapjob_custom_jobs', JSON.stringify(customJobs));
       return updated;
     });
@@ -755,14 +811,9 @@ export function App() {
       }
 
       // City filter (if map bounds are not constraining)
-      if (!searchAsMapMoves && job.city !== selectedCity) {
-        return false;
-      }
 
-      // Search keyword / role
-      // Note: Live jobs from Adzuna were already queried on server with searchQuery.
-      // Only filter custom/local jobs or match leniently so we never reject valid API results.
-      if (searchQuery.trim() && !job.id.startsWith('adzuna-')) {
+      // Search keyword / role matching
+      if (searchQuery.trim()) {
         const words = searchQuery
           .toLowerCase()
           .replace(/[()[\]{}"'’]/g, ' ')
@@ -777,7 +828,7 @@ export function App() {
 
       // Last posted timeframe filter
       if (lastPosted !== 'all') {
-        const days = job.postedDaysAgo ?? 2;
+        const days = job.postedDaysAgo ?? Infinity;
         if (lastPosted === '24h' && days > 1) return false;
         if (lastPosted === '3d' && days > 3) return false;
         if (lastPosted === '7d' && days > 7) return false;
@@ -815,7 +866,7 @@ export function App() {
       }
 
       // Min Salary
-      if (minSalary > 0 && job.salaryMax && job.salaryMax < minSalary) {
+      if (minSalary > 0 && (job.salaryMax ?? 0) < minSalary) {
         return false;
       }
 
@@ -824,8 +875,9 @@ export function App() {
         return false;
       }
 
-      // ⚡ 1-Click Direct ATS Filter (filters out aggregators like Apec, France Travail, HelloWork, Indeed, etc.)
-      if (directAtsOnly && !job.canApplyViaApi && !job.isDirectApply && !isDirectAts(job.atsProvider)) {
+      // Listings the agent can actually drive: a direct employer ATS form, not
+      // an aggregator redirect, and with an application URL to submit.
+      if (directAtsOnly && !(job.applyUrl && job.isDirectApply)) {
         return false;
       }
 
@@ -834,20 +886,16 @@ export function App() {
 
     // 2. Viewport bounds filtering when "Search as I move the map" is enabled
     if (searchAsMapMoves && mapBounds) {
-      // Pad bounds generously by 40% so surrounding industrial facilities are included
-      const paddedBounds = mapBounds.pad ? mapBounds.pad(0.4) : mapBounds;
-      const withinBounds = baseFiltered.filter((job) => paddedBounds.contains([job.lat, job.lng]));
-      // If user zoomed in very tight and none are directly in that 1km square,
-      // show the region's active jobs so the list never empties out while viewing that city
-      if (withinBounds.length > 0) {
-        return withinBounds;
-      }
+      // Unresolved locations remain in the list, never as invented map pins.
+      const reach = inViewOf(mapBounds);
+      return baseFiltered.filter(
+        (job) => !Number.isFinite(job.lat) || !Number.isFinite(job.lng) || reach(job)
+      );
     }
 
     return baseFiltered;
   }, [
     jobs,
-    selectedCity,
     searchQuery,
     selectedCategory,
     jobType,
@@ -859,37 +907,36 @@ export function App() {
     savedJobIds,
     searchAsMapMoves,
     mapBounds,
+    lastPosted,
   ]);
+
+  // The column and the map always show the same set: `filteredJobs`. The map
+  // used to be able to pin the list to one cluster's contents, which needed a
+  // separate `listedJobs`; it no longer has clusters, so that indirection is
+  // gone and both read the same value.
 
   const currentCity = CITIES.find((c) => c.id === selectedCity) || CITIES[0];
 
   return (
     <div className={`bg-white text-gray-900 font-sans antialiased ${activeJobPage ? 'min-h-screen flex flex-col overflow-y-auto' : 'h-screen flex flex-col overflow-hidden'}`}>
       
-      {/* Toast / Live Activity Notification Banner */}
-      {(toastMessage || liveActivity) && (
+      {/* Toast notification banner */}
+      {toastMessage && (
         <div className="fixed top-28 left-1/2 -translate-x-1/2 z-[100] bg-gray-900 text-white text-xs font-bold px-5 py-2.5 rounded-full shadow-2xl flex items-center gap-2.5 animate-in fade-in slide-in-from-top-4 duration-200">
           <Check className="w-4 h-4 text-emerald-400 shrink-0" />
-          <span className="max-w-[420px] truncate">{liveActivity || toastMessage}</span>
-          {applyingJobId && (
-            <button
-              type="button"
-              onClick={() => setIsLiveAgentOpen(true)}
-              className="ml-2 px-3 py-1 rounded-full bg-rose-600 hover:bg-rose-500 text-white text-[10px] font-extrabold uppercase tracking-wider transition cursor-pointer shrink-0 shadow flex items-center gap-1"
-            >
-              <span>👁 Live View</span>
-            </button>
-          )}
-          {(applyingJobId || (toastMessage && toastMessage.includes('already running'))) && (
-            <button
-              type="button"
-              onClick={handleCancelApply}
-              className="ml-1 px-2.5 py-1 rounded-full bg-gray-800 hover:bg-gray-700 text-rose-300 text-[10px] font-extrabold uppercase tracking-wider transition cursor-pointer shrink-0"
-            >
-              Stop
-            </button>
-          )}
+          <span className="max-w-[420px] truncate">{toastMessage}</span>
         </div>
+      )}
+
+      {/* The live application: what the browser is doing, the filled form, and
+          the only button that sends it. */}
+      {applyRun && (
+        <ApplyReviewPanel
+          run={applyRun}
+          isSubmitting={isSubmittingForReal}
+          onSubmitForReal={handleSubmitForReal}
+          onClose={() => setApplyRun(null)}
+        />
       )}
 
       {/* Top Airbnb Navbar with Menu (Jobs, Automated Emails, Interview Helper) & Search Bar */}
@@ -929,9 +976,7 @@ export function App() {
           onToggleSave={handleToggleSave}
           isApplying={applyingJobId === activeJobPage.id}
           isApplied={appliedJobIds.has(activeJobPage.id)}
-          liveActivity={applyingJobId === activeJobPage.id ? liveActivity : null}
           onUnmarkApplied={handleUnmarkApplied}
-          onOpenLiveInspector={() => setIsLiveAgentOpen(true)}
         />
       ) : activeTopTab === 'interview' ? (
         <InterviewHelperModal
@@ -975,16 +1020,17 @@ export function App() {
             <div>
               <div className="flex items-center gap-2.5">
                 <h2 className="text-2xl font-black text-[#222222] tracking-tight">
-                  {isLoadingJobs ? 'Searching jobs in map area...' : `${filteredJobs.length} mechanical engineering jobs`}
+                   {isLoadingJobs && !jobs.length ? 'Searching jobs...' : `${filteredJobs.length} jobs`}
                 </h2>
               </div>
               <p className="text-xs text-[#717171] mt-0.5">
-                {searchAsMapMoves ? `Showing offers in visible map area (${activeLocationLabel})` : `${currentCity.name} Engineering Corridor`}
+                 {searchAsMapMoves ? `Map area: ${activeLocationLabel}. Unmapped results are listed separately.` : `${currentCity.name} and nearby jobs`}
               </p>
             </div>
           </div>
 
-          {/* Cards Grid: When loading with no jobs yet, show skeletons; when jobs exist, maintain cards with smooth opacity */}
+           {searchError && <p role="alert" className="mb-4 rounded-xl bg-rose-50 p-3 text-sm text-rose-800">{searchError}</p>}
+           {/* Keep existing cards usable while refreshing the feed. */}
           {isLoadingJobs && jobs.length === 0 ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-8 animate-pulse">
               {[1, 2, 3, 4, 5, 6].map((n) => (
@@ -1005,8 +1051,8 @@ export function App() {
             </div>
           ) : filteredJobs.length > 0 ? (
             <div className="space-y-8">
-              <div className={`grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-8 transition-opacity duration-150 ${isLoadingJobs ? 'opacity-50 pointer-events-none' : 'opacity-100'}`}>
-                {filteredJobs.map((job) => (
+               <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-8">
+                 {filteredJobs.slice(0, visibleCardCount).map((job) => (
                   <JobCard
                     key={job.id}
                     job={job}
@@ -1037,7 +1083,7 @@ export function App() {
                     </>
                   ) : (
                     <>
-                      <span>Explore more jobs in this area (+50)</span>
+                       <span>{visibleCardCount < filteredJobs.length ? 'Show more jobs' : 'Refresh this area'}</span>
                     </>
                   )}
                 </button>
@@ -1074,7 +1120,13 @@ export function App() {
             mobileView === 'list' ? 'hidden md:block' : 'block'
           }`}
         >
-          <div className="w-full h-full rounded-3xl overflow-hidden border border-gray-200/90 shadow-sm relative">
+          {/*
+            `isolate` is load-bearing: Leaflet gives its internal panes z-index
+            400-800, and without a stacking context here those numbers compete
+            at the document root and paint straight over the navbar's search
+            dropdowns (which live inside a z-40 sticky header).
+          */}
+          <div className="w-full h-full rounded-3xl overflow-hidden border border-gray-200/90 shadow-sm relative isolate z-0">
             <JobMap
               jobs={filteredJobs}
               selectedCity={selectedCity}
@@ -1133,18 +1185,6 @@ export function App() {
       <AutomatedEmailsModal
         isOpen={activeTopTab === 'emails'}
         onClose={() => setActiveTopTab('jobs')}
-      />
-
-
-      {/* Autonomous PageAgent Live Inspector Modal & Picture-in-Picture */}
-      <LiveAgentModal
-        isOpen={isLiveAgentOpen}
-        onClose={() => setIsLiveAgentOpen(false)}
-        onStop={handleCancelApply}
-        onReapply={() => {
-          const currentJob = activeJobPage || jobs.find((j) => j.id === applyingJobId);
-          if (currentJob) handleFastApply(currentJob);
-        }}
       />
 
     </div>

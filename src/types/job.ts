@@ -13,6 +13,27 @@ export interface Job {
   category: string; // Engineering, Design, Product, Marketing, Sales, Operations, Healthcare
   location: string;
   address?: string;
+  locationPrecision?: 'exact' | 'city' | 'region' | 'unknown';
+  /**
+   * Where the map draws this pin, when that is not where the job is.
+   *
+   * A city-level listing has no address of its own, so it geocodes to the town
+   * centre along with every other job in that town — forty of them on one pixel,
+   * which no amount of zooming separates. The map offsets those by up to ~700m
+   * so each gets a pin, and keeps the result here rather than overwriting
+   * `lat`/`lng`: those stay as the feed published them, so nothing outside the
+   * map can mistake a spread-out pin for a real address.
+   *
+   * Never set for a job with `locationPrecision: 'exact'`.
+   */
+  mapLat?: number;
+  mapLng?: number;
+  /**
+   * Which feed this listing came from. 'adzuna' means an aggregator: the pin is
+   * a town centroid rather than the employer's address, and the apply link is a
+   * tracking redirect that has to be followed before a form exists.
+   */
+  source?: 'ats' | 'adzuna';
   city: string;
   lat: number;
   lng: number;
@@ -40,6 +61,12 @@ export interface Job {
   canApplyViaApi?: boolean;
   atsBoard?: string;
   jobId?: string;
+  /**
+   * False when the feed only shipped a snippet. The full text is fetched from
+   * /api/jobs/detail when the job is actually opened, which keeps the map feed
+   * roughly 25x smaller than sending every description to every client.
+   */
+  hasFullDescription?: boolean;
 }
 
 export type AtsProvider = 

@@ -35,3 +35,28 @@ __pycache__/
 *.pyc
 venv/
 .venv/
+
+# Browser profiles: these hold live signed-in sessions and auth cookies.
+# Committing one hands over the account it is signed into.
+.chrome_profile/
+.chrome_profile_test/
+agent_profile/
+
+# Cookie jars and saved sessions
+saved_cookies.json
+cookies_vault.json
+services/automation/saved_cookies.json
+services/automation/cookies_vault.json
+
+# Candidate documents (PII)
+*_CV.pdf
+Badreddine_Barki_CV.pdf
+
+# Debug artefacts from agent runs: screenshots and captured page HTML
+*.png
+*.jpg
+*.jpeg
+/*.html
+scratch/
+.claude/
+nul

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { 
   Search, 
   MapPin, 
@@ -13,6 +13,7 @@ import {
   ChevronRight
 } from 'lucide-react';
 import { CITIES } from '../data/mockJobs';
+import { searchJobTitles } from '../data/jobTitles';
 
 interface NavbarProps {
   searchQuery: string;
@@ -51,6 +52,11 @@ export const Navbar: React.FC<NavbarProps> = ({
   const searchBarRef = useRef<HTMLDivElement>(null);
 
   const [whereInput, setWhereInput] = useState('');
+
+  // Recomputed only when the text changes, not on every keystroke elsewhere in
+  // the bar. With the list this short the work is trivial either way; the memo
+  // is here so the popover does not re-render while the map is loading.
+  const titleSuggestions = useMemo(() => searchJobTitles(searchQuery), [searchQuery]);
 
   // Close dropdown on click outside
   useEffect(() => {
@@ -268,7 +274,10 @@ export const Navbar: React.FC<NavbarProps> = ({
 
                 {/* 2. JOB TITLE */}
                 <div
-                  onClick={() => setActiveSegment(activeSegment === 'title' ? null : 'title')}
+                  // Opens, never toggles. Clicking the input focuses it first,
+                  // and a toggle would read that focus as "already open" and
+                  // shut the list again on the very click meant to show it.
+                  onClick={() => setActiveSegment('title')}
                   className={`flex-[1.2] h-full px-6 flex flex-col justify-center rounded-full cursor-pointer transition-colors ${
                     activeSegment === 'title'
                       ? 'bg-[#F7F7F7]'
@@ -280,9 +289,31 @@ export const Navbar: React.FC<NavbarProps> = ({
                   </span>
                   <input
                     type="text"
-                    placeholder="Search titles, skills, roles"
+                    placeholder="Mechanical Engineer, Ingénieur Mécanique…"
                     value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onChange={(e) => {
+                      setSearchQuery(e.target.value);
+                      // Typing re-opens the list even if it was dismissed, so
+                      // the suggestions track what is in the box.
+                      setActiveSegment('title');
+                    }}
+                    onFocus={() => setActiveSegment('title')}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        // Take the top suggestion when the text is a prefix of
+                        // it and nothing has been picked; otherwise search the
+                        // literal text, which may be a title we do not list.
+                        const top = titleSuggestions[0];
+                        if (top && searchQuery.trim() && searchQuery !== top.title) {
+                          setSearchQuery(top.title);
+                        }
+                        setActiveSegment(null);
+                        e.currentTarget.blur();
+                      } else if (e.key === 'Escape') {
+                        setActiveSegment(null);
+                        e.currentTarget.blur();
+                      }
+                    }}
                     className="w-full bg-transparent text-[14px] font-medium text-[#222222] placeholder:text-[#717171] outline-none leading-tight"
                   />
                 </div>
@@ -593,37 +624,48 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </div>
               )}
 
-              {/* POPOVER 2: JOB TITLE (Mechanical Engineering Specializations) */}
-              {activeSegment === 'title' && (
-                <div className="absolute left-1/4 top-full mt-3 w-96 bg-white rounded-3xl shadow-[0_16px_40px_rgba(0,0,0,0.18)] border border-gray-100 p-6 z-50 animate-airbnb-pop">
-                  <div className="text-[11px] font-extrabold text-gray-500 uppercase tracking-wider mb-3">
-                    Mechanical Engineering Roles
+              {/* POPOVER 2: JOB TITLE (real titles, filtered as you type) */}
+              {activeSegment === 'title' && titleSuggestions.length > 0 && (
+                <div className="absolute left-1/4 top-full mt-3 w-96 bg-white rounded-3xl shadow-[0_16px_40px_rgba(0,0,0,0.18)] border border-gray-100 p-3 z-50 animate-airbnb-pop">
+                  <div className="text-[11px] font-extrabold text-gray-500 uppercase tracking-wider mb-2 px-3 pt-2">
+                    {searchQuery.trim() ? 'Matching Roles' : 'Popular Roles'}
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    {[
-                      'Mechanical Design (CATIA)',
-                      'Precision & Mechatronics',
-                      'FEA / Simulation (Ansys)',
-                      'Aerospace Structures',
-                      'CFD & Thermal Analysis',
-                      'Automotive Powertrain & EV',
-                      'Robotics & Automation',
-                      'Manufacturing / Industry 4.0',
-                    ].map((role) => (
+                  <div className="max-h-80 overflow-y-auto">
+                    {titleSuggestions.map((role) => (
                       <button
-                        key={role}
+                        key={role.title}
                         type="button"
-                        onClick={() => {
-                          setSearchQuery(role);
+                        // onMouseDown, not onClick: the input's blur fires first
+                        // on a click and closes the popover out from under the
+                        // pointer, so the click never lands on anything.
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          setSearchQuery(role.title);
                           setActiveSegment('posted');
                         }}
-                        className={`px-3.5 py-2 rounded-xl text-xs font-semibold border transition-all airbnb-spring active:scale-95 ${
-                          searchQuery === role
-                            ? 'bg-gray-900 text-white border-gray-900 shadow-sm'
-                            : 'bg-gray-50 border-gray-200 text-gray-800 hover:bg-gray-100'
+                        className={`w-full flex items-center justify-between gap-3 text-left px-3 py-2.5 rounded-2xl transition-all airbnb-spring active:scale-[0.98] ${
+                          searchQuery === role.title
+                            ? 'bg-gray-900 text-white'
+                            : 'hover:bg-gray-100 text-gray-900'
                         }`}
                       >
-                        {role}
+                        <span className="flex items-center gap-2.5 min-w-0">
+                          <Search
+                            className={`w-3.5 h-3.5 shrink-0 ${
+                              searchQuery === role.title ? 'text-white' : 'text-gray-400'
+                            }`}
+                          />
+                          <span className="text-sm font-semibold truncate">{role.title}</span>
+                        </span>
+                        <span
+                          className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md shrink-0 ${
+                            searchQuery === role.title
+                              ? 'bg-white/20 text-white'
+                              : 'bg-gray-100 text-gray-500'
+                          }`}
+                        >
+                          {role.lang}
+                        </span>
                       </button>
                     ))}
                   </div>

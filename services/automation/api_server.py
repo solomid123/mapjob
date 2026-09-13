@@ -51,6 +51,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.on_event("startup")
+def _warm_caches() -> None:
+    """Crawl the ATS boards while the server boots, not while someone waits.
+
+    Without this the very first search of the day pays for all 33 boards. The
+    crawl runs on a daemon thread, so a slow or unreachable board delays nothing
+    -- the server is accepting requests the whole time, and until the crawl
+    lands those requests are answered from the aggregator alone.
+    """
+    try:
+        from services.automation.direct_ats_client import warm_job_cache
+        warm_job_cache()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Could not warm the ATS cache at startup: %s", e)
+
 log_queue = queue.Queue()
 active_agent_status = {
     "is_running": False,

@@ -126,6 +126,9 @@ _lock = threading.Lock()
 # Cache keys whose deeper pages are being fetched right now, so two map moves a
 # second apart do not start the same twelve calls twice.
 _filling: set = set()
+# Keys whose stale entry is being renewed in the background. Separate from
+# `_filling`, which tracks the first-load deep pages: the two can overlap.
+_refreshing: set = set()
 
 # Every job this process has seen, by id. The search response is slimmed down,
 # so opening a job needs somewhere to read the full record back from; without
@@ -434,6 +437,61 @@ def _fill_deeper(
             _filling.discard(key)
 
 
+def _refresh_entry(
+    key: str,
+    countries: tuple,
+    pages: int,
+    keywords: str,
+    city: str,
+    distance_km: Optional[int] = None,
+) -> None:
+    """Re-fetch a stale entry and swap it in, off the request path.
+
+    This replaces the entry rather than merging into it, which is the one thing
+    `_merge` must not do here: merging only ever adds, so an entry refreshed
+    every five minutes would accumulate every posting Adzuna has ever shown for
+    this search and never drop the ones that closed.
+    """
+    try:
+        first = _first_wave(countries, pages)
+        jobs = _fetch_pages(
+            countries, range(1, first + 1), keywords, city, distance_km=distance_km
+        )
+        if not jobs:
+            # A bad minute on the network is not a reason to empty the map.
+            # Keep the old entry and try again sooner than a full TTL.
+            with _lock:
+                entry = _cache.get(key)
+                if entry:
+                    entry["at"] = time.time() - CACHE_TTL_S // 2
+            return
+
+        with _lock:
+            _cache[key] = {
+                "at": time.time(),
+                "jobs": list(jobs),
+                "ids": {job["id"] for job in jobs},
+                "complete": first >= pages,
+            }
+            for job in jobs:
+                _by_id[job["id"]] = job
+            deepen = pages > first and key not in _filling
+            if deepen:
+                _filling.add(key)
+
+        if deepen:
+            _fill_deeper(key, countries, first, pages, keywords, city, distance_km)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Adzuna refresh failed for %s: %s", key, exc)
+        with _lock:
+            entry = _cache.get(key)
+            if entry:
+                entry["at"] = time.time() - CACHE_TTL_S // 2
+    finally:
+        with _lock:
+            _refreshing.discard(key)
+
+
 def fetch_adzuna_feed(
     keywords: str = "",
     city: str = "",
@@ -478,9 +536,19 @@ def fetch_adzuna_feed(
 
     with _lock:
         hit = _cache.get(key)
-        if hit and time.time() - hit["at"] >= CACHE_TTL_S:
-            hit = None
-            _cache.pop(key, None)
+        stale = bool(hit) and time.time() - hit["at"] >= CACHE_TTL_S
+        if hit and stale and key not in _refreshing:
+            # Expiry used to drop the entry, which made the next request pay a
+            # full round trip with an empty map in front of it -- the same
+            # five-minute cliff the ATS cache had. Serve what we have and renew
+            # it behind the request instead. Job postings do not change in the
+            # seconds this saves.
+            _refreshing.add(key)
+            threading.Thread(
+                target=_refresh_entry,
+                args=(key, countries, pages, keywords, city, distance_km),
+                daemon=True,
+            ).start()
         if hit:
             # Either it is finished, or a fill is already running and the right
             # thing to do is serve what has landed rather than start it again.

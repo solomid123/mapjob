@@ -370,6 +370,12 @@ _JOB_CACHE: Dict[str, Any] = {
     "jobs": []
 }
 CACHE_TTL = 300  # 5 minutes
+# Guards the refresh, not the cache. Readers never take it: they read a list
+# reference under the GIL, and the refresher swaps in a new list rather than
+# mutating the old one, so a reader either sees the whole previous crawl or the
+# whole next one and never a half-filled list.
+_REFRESH_LOCK = threading.Lock()
+_REFRESHING = False
 NEARBY_RADIUS_KM = 50  # Consistent city-search radius, independent of result count.
 COUNTRY_ALIASES = {
     "FR": ("fr", "france"),
@@ -1396,26 +1402,34 @@ EINDHOVEN_TITANS_JOBS: List[Dict[str, Any]] = [
 ]
 
 
-def get_all_cached_jobs() -> List[Dict[str, Any]]:
-    """Cached bulk fetch across all registered ATS boards with 5-min TTL."""
-    global _JOB_CACHE
-    now = time.time()
-    if _JOB_CACHE["jobs"] and (now - _JOB_CACHE["timestamp"] < CACHE_TTL):
-        return _JOB_CACHE["jobs"]
+def _crawl_all_boards() -> List[Dict[str, Any]]:
+    """One pass over every registered ATS board, all of them at once.
 
-    all_jobs = []
-    with ThreadPoolExecutor(max_workers=12) as executor:
-        futures = []
-        for b in VERIFIED_ATS_BOARDS:
-            if b["provider"] == "greenhouse":
-                futures.append(executor.submit(fetch_greenhouse_board, b))
-            elif b["provider"] == "ashby":
-                futures.append(executor.submit(fetch_ashby_board, b))
-            elif b["provider"] == "smartrecruiters":
-                futures.append(executor.submit(fetch_smartrecruiters_board, b))
-            elif b["provider"] == "lever":
-                futures.append(executor.submit(fetch_lever_board, b))
+    A worker per board rather than a fixed twelve, so the crawl is one wave
+    instead of three. Measured, this is worth almost nothing -- 11.1s against
+    11.8s, inside the run-to-run noise -- because the crawl is not bound by the
+    pool at all. The median board answers in 3.8s, but Bosch, Eurofins and Alten
+    each take about eleven on their own (they paginate internally), so the whole
+    crawl is as slow as they are however many workers are waiting on sockets.
 
+    It is kept because one wave is the honest shape of the thing and cannot be
+    slower. What actually took the wait off the map is the caching in
+    `get_all_cached_jobs` and warming this at startup, not the thread count.
+    """
+    all_jobs: List[Dict[str, Any]] = []
+    fetchers = {
+        "greenhouse": fetch_greenhouse_board,
+        "ashby": fetch_ashby_board,
+        "smartrecruiters": fetch_smartrecruiters_board,
+        "lever": fetch_lever_board,
+    }
+
+    with ThreadPoolExecutor(max_workers=max(4, len(VERIFIED_ATS_BOARDS))) as executor:
+        futures = [
+            executor.submit(fetchers[b["provider"]], b)
+            for b in VERIFIED_ATS_BOARDS
+            if b["provider"] in fetchers
+        ]
         for f in as_completed(futures):
             try:
                 res = f.result()
@@ -1424,9 +1438,107 @@ def get_all_cached_jobs() -> List[Dict[str, Any]]:
             except Exception as e:
                 logger.error(f"Error gathering ATS board: {e}")
 
-    _JOB_CACHE["timestamp"] = now
-    _JOB_CACHE["jobs"] = all_jobs
     return all_jobs
+
+
+def _refresh_cache_in_background() -> None:
+    """Re-crawl off the request path, at most one at a time."""
+    global _REFRESHING
+    try:
+        jobs = _crawl_all_boards()
+        if jobs:
+            # Swapped wholesale, and only when the crawl actually returned
+            # something. A crawl that came back empty means the network is
+            # having a bad minute, and replacing 6,700 good jobs with nothing
+            # would empty the map for everyone.
+            _JOB_CACHE["jobs"] = jobs
+            _JOB_CACHE["timestamp"] = time.time()
+            logger.info("ATS cache refreshed: %d jobs.", len(jobs))
+        else:
+            # Back off a little rather than hammer a failing network on every
+            # request: pretend the existing data is half a TTL younger.
+            _JOB_CACHE["timestamp"] = time.time() - CACHE_TTL // 2
+            logger.warning("ATS refresh returned nothing; keeping the previous %d jobs.",
+                           len(_JOB_CACHE["jobs"]))
+    except Exception as e:  # noqa: BLE001
+        logger.error("ATS cache refresh failed: %s", e)
+        _JOB_CACHE["timestamp"] = time.time() - CACHE_TTL // 2
+    finally:
+        with _REFRESH_LOCK:
+            _REFRESHING = False
+
+
+def get_all_cached_jobs() -> List[Dict[str, Any]]:
+    """Every ATS job we know about, served from memory, refreshed behind you.
+
+    The cache used to expire hard: for five minutes every request was a tenth of
+    a second, and then one unlucky request paid ten seconds to re-crawl 33
+    boards while the map sat empty in front of whoever sent it. Which request
+    got the bill was pure chance, so the map felt broken at random.
+
+    Now an expired cache is still served -- immediately -- and the re-crawl runs
+    on a background thread. The data can be up to a few minutes stale, which for
+    job postings that were written days ago is not a meaningful difference; the
+    ten-second stall it removes very much is. Only a genuinely cold start, with
+    nothing cached at all, still blocks, and the server warms that at startup.
+    """
+    global _REFRESHING
+    now = time.time()
+    cached = _JOB_CACHE["jobs"]
+    fresh = cached and (now - _JOB_CACHE["timestamp"] < CACHE_TTL)
+
+    if fresh:
+        return cached
+
+    if cached:
+        # Stale but usable: hand it over and start the refresh behind it.
+        with _REFRESH_LOCK:
+            start = not _REFRESHING
+            if start:
+                _REFRESHING = True
+        if start:
+            threading.Thread(
+                target=_refresh_cache_in_background,
+                name="ats-cache-refresh",
+                daemon=True,
+            ).start()
+        return cached
+
+    # Nothing cached at all. This one has to wait.
+    with _REFRESH_LOCK:
+        already = _REFRESHING
+        if not already:
+            _REFRESHING = True
+
+    if already:
+        # Another thread is doing the first crawl. Wait for it rather than
+        # start a second one; 33 boards do not need crawling twice.
+        for _ in range(300):
+            time.sleep(0.1)
+            if _JOB_CACHE["jobs"]:
+                return _JOB_CACHE["jobs"]
+        return []
+
+    try:
+        jobs = _crawl_all_boards()
+        _JOB_CACHE["jobs"] = jobs
+        _JOB_CACHE["timestamp"] = time.time()
+        return jobs
+    finally:
+        with _REFRESH_LOCK:
+            _REFRESHING = False
+
+
+def warm_job_cache() -> None:
+    """Start the first crawl at boot so no user request ever pays for it."""
+    with _REFRESH_LOCK:
+        if _REFRESHING:
+            return
+    threading.Thread(
+        target=get_all_cached_jobs,
+        name="ats-cache-warm",
+        daemon=True,
+    ).start()
 
 
 def fetch_all_direct_ats_jobs(

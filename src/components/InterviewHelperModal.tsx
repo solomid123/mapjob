@@ -77,14 +77,22 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
   // than down at a list of cards.
   const [teleprompterOpen, setTeleprompterOpen] = useState(false);
   /** How much of the call behind the HUD stays visible: 70%, 85% or 95% opaque. */
-  const [hudOpacity, setHudOpacity] = useState<'low' | 'med' | 'high'>('med');
-  const [promptFontSize, setPromptFontSize] = useState(22);
+  const [hudOpacity, setHudOpacity] = useState<'low' | 'med' | 'high'>('low');
+  const [promptFontSize, setPromptFontSize] = useState(36);
   /**
-   * Auto-scroll inside the HUD. Separate from the transcript's own auto-scroll
-   * and off by default: it starts moving text under someone who is mid-sentence.
+   * Auto-scroll inside the HUD, on from the moment an answer appears.
+   *
+   * It starts moving text under someone who is mid-sentence, which is why it
+   * used to default off; but an answer that needs scrolling at all is one you
+   * are already reading aloud, and reaching for a button mid-sentence costs
+   * more than the occasional unwanted nudge. Space pauses it instantly.
    */
-  const [tpAutoScroll, setTpAutoScroll] = useState(false);
-  const [scrollSpeed, setScrollSpeed] = useState(1);
+  const [tpAutoScroll, setTpAutoScroll] = useState(true);
+  /**
+   * Slower than reading speed on purpose: the text should arrive just under
+   * where the eye already is, not race it.
+   */
+  const [scrollSpeed, setScrollSpeed] = useState(0.7);
   /** Which answer the HUD is showing; null means "the newest one". */
   const [activeAnswerIdx, setActiveAnswerIdx] = useState<number | null>(null);
   const [autoOpenTeleprompter, setAutoOpenTeleprompter] = useState(true);
@@ -552,6 +560,9 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
     if (autoOpenTeleprompter) setTeleprompterOpen(true);
     // A new answer starts at its beginning, however far down the last one was read.
     if (promptScrollRef.current) promptScrollRef.current.scrollTop = 0;
+    // Re-arm the scroll. Reaching the bottom of the previous answer switched it
+    // off, and without this every answer after the first would sit still.
+    setTpAutoScroll(true);
     if (sessionIdRef.current) {
       void recordInterviewQA(sessionIdRef.current, question, answer, model);
     }
@@ -571,7 +582,7 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
 
     let raf: number;
     let last = performance.now();
-    // Kept as a float: at 0.25x a frame moves less than a pixel, and rounding
+    // Kept as a float: at 0.5x a frame moves less than a pixel, and rounding
     // that into scrollTop every frame rounds it away to a standstill.
     let pos = el.scrollTop;
 
@@ -1085,7 +1096,7 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
                     </button>
 
                     <div className="flex items-center bg-white/90 rounded-xl border border-gray-200/80 overflow-hidden text-xs font-bold shadow-2xs">
-                      {[0.25, 0.5, 1, 1.5, 2].map((speed) => (
+                      {[0.5, 0.7, 1, 1.5, 2].map((speed) => (
                         <button
                           key={speed}
                           type="button"

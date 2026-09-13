@@ -933,9 +933,12 @@ export const JobMap: React.FC<JobMapProps> = ({
          * 0.5 — measured, and stable whether the mouse reports 100 or 120 per
          * notch. Two notches per level instead of one.
          *
-         * Fractional zoom costs nothing in sharpness here because the tiles are
-         * `@2x` in a 512px box: at zoom x.5 Leaflet draws the nearest whole level
-         * scaled by at most 1.41, against 2x the pixels, so it stays supersampled.
+         * Fractional zoom is close to free in sharpness: the `@2x` tile arrives
+         * 1024px for the 1024px box below, so a whole level is drawn 1:1 and a
+         * half level is stretched by at most 1.41. That is a hair softer than it
+         * was when the same tile sat in a 512px box and had 2x the pixels to
+         * spare, and it is the price of the doubled labels — Mapbox only serves
+         * 256 and 512 tiles, so there is no 2048px image to supersample from.
          * `zoomDelta` is left at 1 so the +/- buttons and the keyboard still move
          * a full, definite step.
          */
@@ -949,16 +952,40 @@ export const JobMap: React.FC<JobMapProps> = ({
         className="w-full h-full"
         style={{ background: '#e8e6e1' }}
       >
+        {/*
+          * Place names were too small to read: town and district labels are
+          * baked into the raster tile, so no amount of CSS reaches them.
+          *
+          * The only knob a raster layer has is which zoom level it paints and
+          * how large it paints it, and the two are locked together -- Leaflet's
+          * scale is `256 * 2^zoom` CSS pixels to the world, so a layer lines up
+          * only while `tileSize * 2^zoomOffset === 256`. That admits
+          * (256, 0), (512, -1), (1024, -2)... and each step along it draws a
+          * tile from one level further out at twice the size, which is exactly
+          * "make everything, labels included, twice as big".
+          *
+          * So this is (1024, -2): every label doubles. What it costs is one
+          * level of detail -- at a given view you now see the cartography
+          * Mapbox drew for one zoom out, so a few minor streets thin out before
+          * they otherwise would. For a map whose job is "which town is this
+          * pin in", legible names are worth more than those streets.
+          *
+          * It stays sharp because the URL is still `@2x`: the tile arrives
+          * 1024px for a 1024px box, so it is drawn about 1:1 rather than
+          * stretched.
+          */}
         <TileLayer
           url={`https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/512/{z}/{x}/{y}@2x?access_token=${MAPBOX_TOKEN}`}
-          tileSize={512}
-          zoomOffset={-1}
+          tileSize={1024}
+          zoomOffset={-2}
           detectRetina={false}
-          // Skip intermediate tile requests mid-gesture and keep a generous ring
-          // of off-screen tiles so panning never exposes grey.
+          // Skip intermediate tile requests mid-gesture and keep a ring of
+          // off-screen tiles so panning never exposes grey. Two rings rather
+          // than four now: each tile covers four times the area it used to, so
+          // the same ring costs four times the memory for no more coverage.
           updateWhenZooming={false}
           updateWhenIdle
-          keepBuffer={4}
+          keepBuffer={2}
           maxZoom={18}
         />
 

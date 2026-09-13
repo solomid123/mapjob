@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "BOJ Tool - Fill Application",
+  "version": "0.3.8",
+  "description": "Fills the job application form on the current tab using your BOJ Tool tailored CV/cover letter.",
+  "permissions": ["activeTab", "scripting", "tabs", "storage", "alarms", "webNavigation"],
+  "host_permissions": ["http://localhost/*", "http://127.0.0.1/*", "https://*/*", "http://*/*"],
+  "externally_connectable": {
+    "matches": ["http://localhost/*", "http://127.0.0.1/*"]
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://localhost/*", "http://127.0.0.1/*"],
+      "js": ["content-bridge.js"]
+    }
+  ],
+  "action": {
+    "default_title": "Fill this application (BOJ Tool)"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}

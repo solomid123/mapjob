@@ -380,9 +380,6 @@ const pillIcon = (label: string, isActive: boolean, isSaved: boolean) => {
   );
 };
 
-const FALLBACK_IMAGE =
-  'https://images.unsplash.com/photo-1581092160607-ee22621dd758?w=1000&auto=format&fit=crop&q=85';
-
 /**
  * The card that opens off a pin.
  *
@@ -406,57 +403,57 @@ const JobPreviewCard = React.memo<{
   const approximate = job.locationPrecision && job.locationPrecision !== 'exact';
 
   return (
+    /* No cover image. On the map the photograph was the largest thing in the
+     * card and it carried no information -- it is a stock shot, not the
+     * office. What the reader is comparing between pins is company, role and
+     * pay, so the card is now only those. It also lets the popup match the
+     * translucent tiles in the list instead of being a white box on a dark
+     * page, and halves its height, which matters when it has to sit over the
+     * pin it belongs to without covering its neighbours. */
     <div
       onClick={() => onSelectJob(job)}
-      className="w-[272px] cursor-pointer font-sans overflow-hidden"
+      className="w-[268px] cursor-pointer font-sans p-3.5"
     >
-      <div className="relative aspect-[16/10] w-full overflow-hidden bg-gray-100">
-        <img
-          src={job.images?.[0] || FALLBACK_IMAGE}
-          alt=""
-          loading="lazy"
-          className="w-full h-full object-cover"
-          onError={(e) => {
-            e.currentTarget.src = FALLBACK_IMAGE;
-          }}
-        />
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleSave(job.id);
-          }}
-          className="absolute top-2.5 right-2.5 p-1.5 rounded-full bg-black/25 hover:bg-black/45 backdrop-blur-sm transition"
-          aria-label={isSaved ? 'Remove from saved jobs' : 'Save job'}
-        >
-          <Heart className={`w-4 h-4 ${isSaved ? 'fill-rose-500 text-rose-500' : 'text-white'}`} />
-        </button>
-        {isNew && (
-          <span className="absolute bottom-2.5 left-2.5 px-2 py-0.5 rounded-full bg-white/95 text-[10.5px] font-bold text-gray-900 shadow-sm">
-            New
-          </span>
-        )}
+      <div className="flex items-baseline justify-between gap-2 pr-6">
+        <span className="text-[13px] font-semibold text-[#f5f5f7] truncate">{job.company}</span>
+        <span className="text-[11.5px] text-[rgba(235,235,245,0.42)] shrink-0">{job.postedAt}</span>
       </div>
 
-      <div className="p-3.5">
-        <div className="flex items-baseline justify-between gap-2">
-          <span className="text-[13px] font-bold text-[#222222] truncate">{job.company}</span>
-          <span className="text-[11.5px] font-medium text-[#717171] shrink-0">{job.postedAt}</span>
-        </div>
+      <h4 className="mt-1 text-[13.5px] font-medium text-[#f5f5f7] leading-snug line-clamp-2">
+        {job.title}
+      </h4>
 
-        <h4 className="mt-0.5 text-[13.5px] font-semibold text-[#222222] leading-snug line-clamp-2">
-          {job.title}
-        </h4>
+      <p className="mt-1 text-[12px] text-[rgba(235,235,245,0.62)] truncate">
+        {job.location}
+        {approximate ? ' · approximate' : ''}
+      </p>
 
-        <p className="mt-1 text-[12px] text-[#717171] truncate">
-          {job.location}
-          {approximate ? ' · approximate' : ''}
-        </p>
+      {isNew && (
+        <span className="inline-flex mt-2 px-2 py-0.5 rounded-full bg-white/[0.14] text-[10.5px] font-semibold text-[#f5f5f7]">
+          New
+        </span>
+      )}
 
-        <div className="mt-2.5 pt-2.5 border-t border-gray-100 flex items-center justify-between gap-2">
-          <span className="text-[13px] font-bold text-[#222222] truncate">
+      <div className="mt-2.5 pt-2.5 border-t border-white/[0.09] flex items-center justify-between gap-2">
+          <span className="text-[13px] font-semibold text-[#f5f5f7] truncate">
             {job.salaryDisplay || 'Salary not published'}
           </span>
+
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleSave(job.id);
+            }}
+            className="shrink-0 p-1.5 rounded-full hover:bg-white/[0.12] transition"
+            aria-label={isSaved ? 'Remove from saved jobs' : 'Save job'}
+          >
+            <Heart
+              className={`w-4 h-4 ${
+                isSaved ? 'fill-rose-500 text-rose-500' : 'text-[rgba(235,235,245,0.62)]'
+              }`}
+            />
+          </button>
 
           {job.applyUrl && onApplyJob ? (
             <button
@@ -465,9 +462,9 @@ const JobPreviewCard = React.memo<{
                 e.stopPropagation();
                 onApplyJob(job);
               }}
-              className="shrink-0 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-bold text-white bg-[#222222] hover:bg-black transition active:scale-95"
+              className="shrink-0 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-semibold text-white bg-[#0a84ff] hover:bg-[#3b9bff] transition active:scale-95"
             >
-              <Zap className="w-3 h-3 text-amber-400 fill-amber-400" />
+              <Zap className="w-3 h-3 fill-white" />
               Apply
             </button>
           ) : job.applyUrl ? (
@@ -476,13 +473,12 @@ const JobPreviewCard = React.memo<{
               target="_blank"
               rel="noopener noreferrer"
               onClick={(e) => e.stopPropagation()}
-              className="shrink-0 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-bold text-white bg-[#222222] hover:bg-black transition active:scale-95"
+              className="shrink-0 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-semibold text-white bg-[#0a84ff] hover:bg-[#3b9bff] transition active:scale-95"
             >
               Apply
               <ArrowUpRight className="w-3 h-3" />
             </a>
           ) : null}
-        </div>
       </div>
     </div>
   );
@@ -953,31 +949,32 @@ export const JobMap: React.FC<JobMapProps> = ({
         style={{ background: '#e8e6e1' }}
       >
         {/*
-          * Place names were too small to read: town and district labels are
-          * baked into the raster tile, so no amount of CSS reaches them.
+          * (512, -1) -- Mapbox's own pairing for its 512px raster tiles, and
+          * the plain one.
           *
-          * The only knob a raster layer has is which zoom level it paints and
-          * how large it paints it, and the two are locked together -- Leaflet's
-          * scale is `256 * 2^zoom` CSS pixels to the world, so a layer lines up
-          * only while `tileSize * 2^zoomOffset === 256`. That admits
-          * (256, 0), (512, -1), (1024, -2)... and each step along it draws a
-          * tile from one level further out at twice the size, which is exactly
-          * "make everything, labels included, twice as big".
+          * A raster layer lines up only while `tileSize * 2^zoomOffset === 256`,
+          * which admits (256, 0), (512, -1), (1024, -2)... and each step along
+          * that list draws a tile from one zoom level further out at twice the
+          * size. This was set to (1024, -2) to make place names bigger, and it
+          * worked, but it doubles *everything* on the tile and buys the size by
+          * throwing away a zoom level of cartography.
           *
-          * So this is (1024, -2): every label doubles. What it costs is one
-          * level of detail -- at a given view you now see the cartography
-          * Mapbox drew for one zoom out, so a few minor streets thin out before
-          * they otherwise would. For a map whose job is "which town is this
-          * pin in", legible names are worth more than those streets.
+          * That turned out to cost more than the minor streets noted at the
+          * time. Mapbox only draws points of interest -- shops, stations,
+          * schools, the icons that tell you what a neighbourhood actually is --
+          * from roughly z14 up. Requesting two levels out meant the map asked
+          * for tiles that have no POI layer drawn on them at all, so at any
+          * normal viewing zoom there were none to be had. The same doubling is
+          * why the labels then shouted.
           *
-          * It stays sharp because the URL is still `@2x`: the tile arrives
-          * 1024px for a 1024px box, so it is drawn about 1:1 rather than
-          * stretched.
+          * Back to (512, -1): labels return to the size Mapbox designed them,
+          * and the POI icons come back with them. Still `@2x`, so a 1024px
+          * image fills a 512px box and stays sharp on a retina display.
           */}
         <TileLayer
           url={`https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/512/{z}/{x}/{y}@2x?access_token=${MAPBOX_TOKEN}`}
-          tileSize={1024}
-          zoomOffset={-2}
+          tileSize={512}
+          zoomOffset={-1}
           detectRetina={false}
           // Skip intermediate tile requests mid-gesture and keep a ring of
           // off-screen tiles so panning never exposes grey. Two rings rather

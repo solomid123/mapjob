@@ -507,14 +507,19 @@ html[data-wallpaper='sage'] {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 5px 11px;
+  /* Was 13.5px at weight 800 -- heavier and larger than any text in the app,
+   * including the page headings, so a screen full of pins shouted over both
+   * the map underneath and the list beside it. A map label is an annotation,
+   * not a headline: it should be legible at a glance and otherwise stay out of
+   * the way. 11.5px at 600 is the size Apple and Google both use for this. */
+  padding: 4px 9px;
   background-color: #ffffff;
   color: #111111;
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-weight: 800;
-  font-size: 13.5px;
+  font-weight: 600;
+  font-size: 11.5px;
   line-height: 1.15;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.01em;
   border-radius: 9999px;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.14), 0 0 0 1px rgba(0, 0, 0, 0.1);
   white-space: nowrap;
@@ -589,35 +594,12 @@ html[data-wallpaper='sage'] {
   background: rgba(255, 255, 255, 0.38);
 }
 
-/* Clean custom Leaflet popup styling */
-.leaflet-popup-content-wrapper {
-  padding: 0 !important;
-  border-radius: 16px !important;
-  overflow: hidden !important;
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18) !important;
-}
-
-.leaflet-popup-content {
-  margin: 0 !important;
-  line-height: 1.4 !important;
-}
-
-.leaflet-container a.leaflet-popup-close-button {
-  top: 8px !important;
-  right: 8px !important;
-  background: rgba(255, 255, 255, 0.9) !important;
-  color: #333 !important;
-  border-radius: 50% !important;
-  width: 24px !important;
-  height: 24px !important;
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  font-size: 14px !important;
-  padding: 0 !important;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.2) !important;
-  z-index: 10 !important;
-}
+/* The generic `.leaflet-popup-*` overrides that used to sit here are gone.
+ * They set the white bubble, its radius, shadow and a light close button, and
+ * every declaration carried `!important` -- so they beat the more specific
+ * `.job-map-popup` rules further down and silently discarded the dark styling
+ * applied there. There is only one popup in this application and it is
+ * `.job-map-popup`, so the generic copy was duplicate work as well as a trap. */
 
 /* Hide scrollbars on category tabs while allowing scroll */
 .no-scrollbar::-webkit-scrollbar {
@@ -687,22 +669,43 @@ html[data-wallpaper='sage'] {
 }
 /* The card that hangs off a pin. Leaflet's default is a 300px box with 13px of
  * padding and a 12px radius; this is the app's own card surface instead. */
+/* The popup is the same object as a tile in the list, just anchored to a pin,
+ * so it gets the same surface, radius and raised-block edge. Leaflet paints a
+ * white bubble by default, which on this canvas read as a different
+ * application. Unlike the sixty tiles in the list this one CAN afford a
+ * backdrop blur -- there is only ever one open, and it sits over map imagery
+ * that is busy enough for plain alpha to look dirty. */
 .job-map-popup .leaflet-popup-content-wrapper {
   width: max-content;
   padding: 0;
   overflow: hidden;
-  border-radius: 16px;
-  box-shadow: 0 6px 26px rgba(0, 0, 0, 0.22), 0 0 0 1px rgba(0, 0, 0, 0.06);
+  border-radius: var(--radius-tile);
+  background: var(--tile);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  color: var(--ink);
+  box-shadow: var(--shadow-pop), var(--tile-edge);
 }
 .job-map-popup .leaflet-popup-content {
   width: auto !important;
   margin: 0;
   line-height: inherit;
 }
+/* The little arrow is a rotated square that Leaflet fills white. It has to be
+ * the tile colour, but NOT blurred: it is a separate element from the bubble,
+ * so its own backdrop-filter samples the map underneath it rather than
+ * continuing the bubble's, and the seam showed as a brighter notch. Opaque-ish
+ * tile colour is close enough at 17px across. */
 .job-map-popup .leaflet-popup-tip {
+  background: var(--tile);
   box-shadow: none;
 }
-.job-map-popup .leaflet-popup-close-button {
+/* Leaflet styles its own close button as `.leaflet-container a.leaflet-popup-
+ * close-button`, which outranks a plain `.job-map-popup .leaflet-popup-close-
+ * button`. Matching its shape and adding one class wins on specificity without
+ * an !important -- which is what the deleted block used, and why it flattened
+ * everything else. */
+.leaflet-container .job-map-popup a.leaflet-popup-close-button {
   top: 8px;
   right: 8px;
   width: 24px;
@@ -711,16 +714,15 @@ html[data-wallpaper='sage'] {
   align-items: center;
   justify-content: center;
   border-radius: 9999px;
-  background: rgba(0, 0, 0, 0.25);
-  backdrop-filter: blur(4px);
-  color: #ffffff;
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--ink);
   font-size: 17px;
   font-weight: 600;
   transition: background-color 0.15s;
 }
-.job-map-popup .leaflet-popup-close-button:hover {
-  background: rgba(0, 0, 0, 0.45);
-  color: #ffffff;
+.leaflet-container .job-map-popup a.leaflet-popup-close-button:hover {
+  background: rgba(255, 255, 255, 0.22);
+  color: var(--ink);
 }
 
 /* iOS Safe Area & Airbnb App Utilities */

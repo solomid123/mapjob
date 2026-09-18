@@ -228,6 +228,21 @@ html[data-wallpaper='violet'] {
     linear-gradient(150deg, #4c2c7f 0%, #3a1c66 46%, #0e062b 100%);
 }
 
+/* Teal: the same silk as Violet, cut in deep sea-green. Lighter overall than
+ * the other two -- the crest reaches #74bab1 -- so it is the one dark theme
+ * where white body text sits on a mid tone rather than a near-black one.
+ * Sampled: crest #74bab1, body #3a7970, field #2b645e, corners #032121 /
+ * #05191a. */
+html[data-wallpaper='teal'] {
+  --wallpaper: url('/wallpaper-teal.jpg');
+  --canvas-base: #2b645e;
+  --canvas-scrim: linear-gradient(168deg, rgba(3,20,20,0.2) 0%, rgba(3,17,17,0.32) 55%, rgba(2,12,12,0.46) 100%);
+  --canvas-under: radial-gradient(130% 100% at 10% 0%, #123f3a 0%, rgba(18,63,58,0) 54%),
+    radial-gradient(110% 120% at 64% 46%, #74bab1 0%, rgba(116,186,177,0) 58%),
+    radial-gradient(140% 120% at 38% 112%, #05191a 0%, rgba(5,25,26,0) 68%),
+    linear-gradient(150deg, #3a7970 0%, #2b645e 46%, #032121 100%);
+}
+
 /* Apple tightens tracking as type grows and loosens it as type shrinks. One
  * class per role so a card is not a pile of arbitrary letter-spacings. */
 .ic-title {

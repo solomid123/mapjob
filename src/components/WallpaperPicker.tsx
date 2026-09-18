@@ -10,13 +10,15 @@ import { Check, Palette } from 'lucide-react';
  * property. So the switch is one attribute write and the CSS does the rest --
  * no re-render, and nothing to keep in sync.
  */
-export type WallpaperId = 'mist' | 'azure' | 'crimson' | 'sage';
+export type WallpaperId = 'mist' | 'slate' | 'azure' | 'violet' | 'crimson' | 'sage';
 
 const STORAGE_KEY = 'mapjob.wallpaper';
 
 const WALLPAPERS: { id: WallpaperId; name: string; swatch: string }[] = [
   { id: 'mist', name: 'Mist', swatch: 'linear-gradient(135deg,#e3ebe6,#b3bfb7 52%,#8b9c95)' },
+  { id: 'slate', name: 'Slate', swatch: 'linear-gradient(135deg,#868ea9,#4a5164 55%,#1b1d28)' },
   { id: 'azure', name: 'Azure', swatch: 'linear-gradient(135deg,#2d7bef,#0a2e8f 55%,#05164a)' },
+  { id: 'violet', name: 'Violet', swatch: 'linear-gradient(135deg,#8a5ebf,#4c2c7f 55%,#0e062b)' },
   { id: 'crimson', name: 'Crimson', swatch: 'linear-gradient(135deg,#a03050,#4a1226 55%,#1c0510)' },
   { id: 'sage', name: 'Sage', swatch: 'linear-gradient(135deg,#8a9c8b,#3d4c41 55%,#151f18)' },
 ];

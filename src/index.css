@@ -198,6 +198,36 @@ html[data-wallpaper='sage'] {
     linear-gradient(150deg, #72856f 0%, #3d4c41 48%, #151f18 100%);
 }
 
+/* Slate: the coolest of the dark set -- blue-grey silk, lit from the top right
+ * and falling away to near-black at the bottom corner. The stops below are
+ * sampled from the JPEG itself (top-right #727c97, lightest #868ea9, body
+ * #4a5164, bottom corner #292c3d) so the gradient that paints before the image
+ * arrives is the image, near enough that the swap does not read as a flash. */
+html[data-wallpaper='slate'] {
+  --wallpaper: url('/wallpaper-slate.jpg');
+  --canvas-base: #4a5164;
+  --canvas-scrim: linear-gradient(168deg, rgba(10,13,24,0.2) 0%, rgba(8,11,20,0.32) 55%, rgba(6,8,15,0.46) 100%);
+  --canvas-under: radial-gradient(130% 100% at 8% 0%, #6c7592 0%, rgba(108,117,146,0) 56%),
+    radial-gradient(100% 120% at 96% 10%, #868ea9 0%, rgba(134,142,169,0) 60%),
+    radial-gradient(140% 120% at 66% 112%, #14161f 0%, rgba(20,22,31,0) 70%),
+    linear-gradient(150deg, #737c98 0%, #4a5164 48%, #1b1d28 100%);
+}
+
+/* Violet: the deepest of the set -- amethyst silk with the light caught on the
+ * crest through the middle and both bottom corners falling to near-black.
+ * Sampled like the others: crest #8a5ebf, body #4c2c7f, upper field #3a1c66,
+ * corners #0e062b / #090520. The scrim stays light because the photo is
+ * already dark; a heavier one turns the whole canvas to ink. */
+html[data-wallpaper='violet'] {
+  --wallpaper: url('/wallpaper-violet.jpg');
+  --canvas-base: #3a1c66;
+  --canvas-scrim: linear-gradient(168deg, rgba(12,6,28,0.18) 0%, rgba(10,5,24,0.3) 55%, rgba(6,3,16,0.44) 100%);
+  --canvas-under: radial-gradient(130% 100% at 12% 0%, #2a1153 0%, rgba(42,17,83,0) 56%),
+    radial-gradient(110% 120% at 62% 46%, #8a5ebf 0%, rgba(138,94,191,0) 58%),
+    radial-gradient(140% 120% at 40% 112%, #090520 0%, rgba(9,5,32,0) 68%),
+    linear-gradient(150deg, #4c2c7f 0%, #3a1c66 46%, #0e062b 100%);
+}
+
 /* Apple tightens tracking as type grows and loosens it as type shrinks. One
  * class per role so a card is not a pile of arbitrary letter-spacings. */
 .ic-title {

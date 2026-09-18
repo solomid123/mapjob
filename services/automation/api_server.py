@@ -37,6 +37,7 @@ from services.automation.ai_dom_agent import AIDOMAgent
 from services.automation.candidate_profile import CANDIDATE_PROFILE
 from services.automation.page_agent_manager import PageAgentManager
 from services.automation import agent_profile
+from services.automation.outcome_ledger import OUTCOMES, read_outcomes, record_outcome
 from services.automation.config import FUELIX_PAGE_AGENT as PAGE_AGENT_MODEL
 from services.automation.chrome_launcher import launch_chrome
 import undetected_chromedriver as uc
@@ -261,6 +262,39 @@ def resolve_direct_portal(url: str) -> str:
         print(f"[Resolver] Notice: {e}")
     return url
 
+def classify_outcome(result: Dict[str, Any], dry_run: bool) -> str:
+    """
+    Which of the ledger's words describes how this run ended.
+
+    One place, so that the sentence shown on screen, the line written to the
+    ledger and the state the UI moves into can never disagree about whether an
+    application was sent -- which is the whole of what the candidate needs to
+    know and the one thing that used to be left to whichever branch got there
+    first.
+    """
+    if result.get("success"):
+        return "awaiting_review" if dry_run else "applied"
+    if result.get("sent_unconfirmed"):
+        return "sent_unconfirmed"
+    if result.get("barrier"):
+        return "blocked"
+    if result.get("browser_closed"):
+        return "error"
+    return "not_sent"
+
+
+def log_outcome(outcome: str, *, job_title: str, company: str, url: str,
+                job_id: Optional[str], message: str, evidence: str = "",
+                dry_run: bool = False, started_at: Optional[float] = None,
+                extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Records the run in the ledger and says so in the log, in plain words."""
+    record = record_outcome(outcome, company=company, job_title=job_title, url=url,
+                            job_id=job_id, message=message, evidence=evidence,
+                            dry_run=dry_run, started_at=started_at, extra=extra)
+    if outcome not in ("awaiting_review", "cancelled"):
+        push_log(f"Tracked as: {OUTCOMES.get(outcome, outcome)}.", step=10)
+    return record
+
 def finalize_submission(job_title: str, company: str, portal_url: str, evidence: str,
                         job_id: Optional[str], notify_email: Optional[str],
                         started_at: float) -> Dict[str, Any]:
@@ -451,6 +485,8 @@ def run_agent_thread(target_url: str, job_title: str = "Candidate Position", com
             threading.Thread(target=expire_pending_review, args=(pending_review["expires_at"],),
                              name="review-expiry", daemon=True).start()
             push_log(f"✅ Form filled and left for your review: {msg}", step=10, done=True, success=True)
+            log_outcome("awaiting_review", job_title=job_title, company=company, url=target_url,
+                        job_id=job_id, message=msg, dry_run=True, started_at=started_at)
         elif success:
             push_log(f"🎉 Application Submitted & Verified: {msg}", step=10, success=True)
             receipt = finalize_submission(
@@ -465,13 +501,26 @@ def run_agent_thread(target_url: str, job_title: str = "Candidate Position", com
             push_log("Application recorded and receipt processed.", step=10, done=True, success=True)
         elif barrier:
             push_log(f"⚠️ Portal Barrier: {msg}", step=10, done=True, success=False)
+        elif res.get("sent_unconfirmed"):
+            push_log(f"Sent, but unconfirmed: {msg}", step=10, done=True, success=False)
         else:
             push_log(f"⚠️ Application Incomplete: {msg}", step=10, done=True, success=False)
+
+        # Every ending is written down, not just the good one. A failure that
+        # leaves no record is the one that gets silently applied to twice.
+        outcome = classify_outcome(res, dry_run)
+        if outcome != "awaiting_review":
+            log_outcome(outcome, job_title=job_title, company=company, url=target_url,
+                        job_id=job_id, message=msg, evidence=res.get("evidence") or "",
+                        dry_run=dry_run, started_at=started_at)
 
         active_agent_status["last_result"] = {
             "success": success,
             "barrier": barrier,
             "message": msg,
+            "outcome": outcome,
+            "sent": outcome in ("applied", "sent_unconfirmed"),
+            "sent_unconfirmed": bool(res.get("sent_unconfirmed")),
             "receipt": receipt,
             "dry_run": dry_run,
             "submitted": bool(success and not dry_run),
@@ -489,8 +538,12 @@ def run_agent_thread(target_url: str, job_title: str = "Candidate Position", com
         detail = error_detail(e)
         print(f"[Engine] run failed: {detail}", flush=True)
         push_log(friendly, step=99, done=True, success=False)
+        log_outcome("error", job_title=job_title, company=company, url=target_url,
+                    job_id=job_id, message=friendly, dry_run=dry_run, started_at=started_at,
+                    extra={"detail": detail})
         active_agent_status["last_result"] = {
             "success": False, "message": friendly, "detail": detail, "dry_run": dry_run,
+            "outcome": "error", "sent": False,
         }
         agent_state["last_result"] = active_agent_status["last_result"]
     finally:
@@ -678,6 +731,11 @@ def submit_pending_thread():
             # the candidate can see for themselves what the page is showing.
             push_log(f"⚠️ Not sent, or not confirmed: {msg}", step=10, done=True, success=False)
 
+        outcome = classify_outcome(res, dry_run=False)
+        log_outcome(outcome, job_title=job_title, company=company, url=target_url,
+                    job_id=pending_review.get("job_id"), message=msg,
+                    evidence=res.get("evidence") or "", started_at=started_at)
+
         agent_state["last_result"] = {
             "success": success,
             "barrier": barrier,
@@ -685,6 +743,9 @@ def submit_pending_thread():
             "receipt": receipt,
             "dry_run": False,
             "submitted": bool(success),
+            "outcome": outcome,
+            "sent": outcome in ("applied", "sent_unconfirmed"),
+            "sent_unconfirmed": bool(res.get("sent_unconfirmed")),
         }
         active_agent_status["last_result"] = agent_state["last_result"]
     except Exception as e:
@@ -692,8 +753,12 @@ def submit_pending_thread():
         detail = error_detail(e)
         print(f"[Engine] submission failed: {detail}", flush=True)
         push_log(friendly, step=99, done=True, success=False)
+        log_outcome("error", job_title=job_title, company=company, url=target_url,
+                    job_id=pending_review.get("job_id"), message=friendly, started_at=started_at,
+                    extra={"detail": detail})
         agent_state["last_result"] = {
             "success": False, "dry_run": False, "message": friendly, "detail": detail,
+            "outcome": "error", "sent": False,
         }
         active_agent_status["last_result"] = agent_state["last_result"]
     finally:
@@ -732,6 +797,14 @@ def cancel_application():
         current_driver_container["driver"] = None
     current_manager_container["manager"] = None
     push_log("Application cancelled by user.", done=True, success=False)
+    # Recorded like any other ending. "I stopped it myself" is a perfectly good
+    # answer to "what happened with this job", and the absence of a line is not.
+    record_outcome("cancelled", company=agent_state.get("company", ""),
+                   job_title=agent_state.get("job_title", ""),
+                   url=agent_state.get("target_url", ""),
+                   job_id=agent_state.get("job_id", ""),
+                   message="Stopped from the panel before it finished.",
+                   started_at=agent_state.get("started_at"))
     return {"status": "cancelled"}
 
 
@@ -823,6 +896,25 @@ def get_apply_screenshot(seq: int = 0):
         raise HTTPException(status_code=404, detail="That screenshot could not be read.")
     body, media_type = _as_web_frame(png)
     return Response(content=body, media_type=media_type, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/applications")
+def list_applications(limit: int = 50, job_id: str = ""):
+    """
+    What happened to every application that has been run, newest first.
+
+    The panel only ever knows about the run it is watching, and it forgets even
+    that when it closes. This is the durable answer to "did that one go
+    through?" -- including, and especially, for the runs that did not.
+    """
+    records = read_outcomes(limit=max(1, min(limit, 500)), job_id=job_id)
+    return {
+        "count": len(records),
+        "vocabulary": OUTCOMES,
+        "applications": records,
+        "sent": sum(1 for r in records if r.get("sent")),
+        "confirmed": sum(1 for r in records if r.get("confirmed")),
+    }
 
 
 @app.get("/api/apply/state")

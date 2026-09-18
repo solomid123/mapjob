@@ -438,6 +438,13 @@ interface AgentState {
     fields_filled?: number;
     resume_attached?: boolean;
     unexpected_submit?: boolean;
+    /** The backend's own word for how it ended: applied, sent_unconfirmed,
+     *  blocked, not_sent, error, awaiting_review, cancelled. */
+    outcome?: string;
+    /** Whether anything actually left the browser. */
+    sent?: boolean;
+    /** The form went, but the employer's page never confirmed it. */
+    sent_unconfirmed?: boolean;
     /** The raw driver error, when the run died on one. */
     detail?: string;
   } | null;
@@ -461,6 +468,12 @@ function agentStatus(state: AgentState): BrowserApplyStatus {
   if (result.submitted) return 'APPLIED';
   if (result.success && result.dry_run) return 'DRY_RUN_COMPLETED';
   if (result.success) return 'SUBMITTED_UNVERIFIED';
+  // Sent, with nothing from the employer to prove it. This used to collapse
+  // into FAILED, which is the one reading that is definitely wrong: it invites
+  // a second application to a company that already has the first.
+  if (result.sent_unconfirmed || result.outcome === 'sent_unconfirmed') {
+    return 'SUBMITTED_UNVERIFIED';
+  }
   if (result.barrier) return 'NEEDS_CHECKPOINT';
   return 'FAILED';
 }
@@ -594,4 +607,39 @@ export async function pollBrowserApply(
     }
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
+}
+
+/**
+ * How the last attempt at a job ended, in the words the UI needs rather than
+ * the backend's. Kept here beside the run types because the panel, the card
+ * and the toast all have to agree on what "sent" means.
+ */
+export interface ApplyOutcome {
+  status: BrowserApplyStatus;
+  /** True only when something actually left the browser. */
+  sent: boolean;
+  /** One short line, safe to show: no URLs, no addresses. */
+  note: string;
+  /** ISO timestamp of the attempt. */
+  at: string;
+}
+
+const OUTCOME_NOTE: Partial<Record<BrowserApplyStatus, string>> = {
+  APPLIED: 'Applied — their page confirmed it',
+  SUBMITTED_UNVERIFIED: 'Sent, but never confirmed',
+  DRY_RUN_COMPLETED: 'Filled and waiting for you',
+  NEEDS_CHECKPOINT: 'Blocked by the site',
+  WAITING_FOR_HUMAN: 'Needs you',
+  FAILED: 'Not sent',
+  SKIPPED: 'Skipped',
+};
+
+/** Reads a finished run as an outcome worth remembering. */
+export function runOutcome(run: BrowserApplyRun): ApplyOutcome {
+  return {
+    status: run.status,
+    sent: run.status === 'APPLIED' || run.status === 'SUBMITTED_UNVERIFIED',
+    note: OUTCOME_NOTE[run.status] || 'Attempted',
+    at: new Date().toISOString(),
+  };
 }

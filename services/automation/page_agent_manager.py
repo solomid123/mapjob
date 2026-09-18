@@ -16,6 +16,14 @@ from .config import (
     PORTAL_SIGNUP_PASSWORD,
     portal_password_is_google_password,
 )
+from .portal_accounts import known_account, remember_account
+from .form_reading import (
+    LANGUAGE_NAMES,
+    form_plan,
+    language_brief,
+    read_fields_script,
+    sniff_language,
+)
 
 # Set once the shared-password warning has been given, so it is said clearly
 # the first time it matters rather than on every job.
@@ -90,11 +98,17 @@ def access_brief(company: str) -> str:
             'call done(success=false, "sign-in required") and stop.'
         )
 
+    signup_password = signup_password_for_new_accounts()
     signup = (
-        f"   c. Still stuck? Create an account: {PORTAL_EMAIL} with the password "
-        f"{PORTAL_SIGNUP_PASSWORD}. Registering often ends on a \"your account is ready, please "
-        f"sign in\" page rather than signing you in -- if so, log in with that same password.\n"
-        if PORTAL_SIGNUP_PASSWORD else ""
+        f"   c. Both passwords rejected? Then there is no account here yet, so MAKE ONE. This is "
+        f"not the end of the road and it is not a decision to escalate -- it is the next rung.\n"
+        f"      Register with {PORTAL_EMAIL} and the password {signup_password}. Look for "
+        f"\"Create an account\", \"Register\", \"S'inscrire\", \"Registreren\", \"Konto erstellen\" "
+        f"-- often a tab or a small link beside the sign-in form.\n"
+        f"      Registering usually ends on \"your account is ready, please sign in\" rather than "
+        f"signing you in, so when it does, log in with that same password and carry on with the "
+        f"application. A brand new account is a working account.\n"
+        if signup_password else ""
     )
     second = (
         f"      If it is rejected, try ONCE more with {PORTAL_PASSWORD_SECONDARY}. Never a third "
@@ -117,9 +131,16 @@ def access_brief(company: str) -> str:
       keep going there: click the {PORTAL_EMAIL} tile in the account chooser, accept any
       "share your profile" consent screen, and Google will send you back to {company} signed in.
       Screens with no form on them are steps to click through, not reasons to stop.
+      "Continue with Google" is also how you REGISTER on most sites -- there is no separate
+      Google sign-up, the same button makes the account the first time and signs you in every
+      time after. So it is worth clicking even on a registration form.
    b. If Google is not offered or does not complete, sign in with {PORTAL_EMAIL} and the password
       {PORTAL_PASSWORD_PRIMARY}.
 {second}{signup}
+   NEVER end the run at "the password did not work". A rejected password means you do not have an
+   account on this site yet, which is a thing you can fix in about thirty seconds by making one.
+   Only after (a), (b) and (c) have all genuinely been tried is this site actually shut to you.
+
 3. WHERE PASSWORDS MAY GO: only ever into a field the page presents as a password input, on a
    sign-in or registration form. Never into a name, message, cover-letter, search or "anything else
    we should know" box. A password typed into a free-text field gets emailed to a stranger.
@@ -131,12 +152,29 @@ def access_brief(company: str) -> str:
    Google and use option (b) instead. That account is the candidate's mailbox and a failed
    automated login can get it locked.
 
-5. If the site emails a verification code, you cannot read email. Call
-   done(success=false, "needs email code") and it will be fetched and handed to you.
+5. If the site emails a verification code -- which registering very often triggers -- you cannot
+   read email yourself. Say so and it will be fetched from the mailbox and handed straight back to
+   you: call done(success=false, "needs email code"). That is a pause, not a failure, and the run
+   continues from where you left off. Do not guess a code and do not abandon the registration.
 """
 
 
-def build_agent_prompt(job_title: str, company: str, candidate: dict, submit: bool = False) -> str:
+def signup_password_for_new_accounts() -> str:
+    """
+    The password used when an account has to be created from scratch.
+
+    Falls back to the sign-in password when no dedicated one is configured,
+    because the alternative -- no registration rung at all -- is how a run ends
+    at "that password was not accepted" on a site where nobody has ever had an
+    account. A password we choose ourselves is strictly better here (it keeps
+    the mailbox password off employers' servers), so `PORTAL_SIGNUP_PASSWORD`
+    wins whenever it is set.
+    """
+    return PORTAL_SIGNUP_PASSWORD or PORTAL_PASSWORD_PRIMARY
+
+
+def build_agent_prompt(job_title: str, company: str, candidate: dict, submit: bool = False,
+                       page_note: str = "") -> str:
     """The agent's brief. `submit=False` is a rehearsal and is the default.
 
     A rehearsal fills the form and stops in front of the Submit button, so the
@@ -187,7 +225,7 @@ def build_agent_prompt(job_title: str, company: str, candidate: dict, submit: bo
 page now. Whatever stands between here and a completed form -- an Apply button, a cookie banner, a
 multi-step wizard, a sign-in wall, a registration form -- is part of your job, not a reason to stop.
 
-{access_brief(company)}
+{page_note}{access_brief(company)}
 
 CANDIDATE PROFILE:
 - First Name / Prénom / Voornaam: {first_name}
@@ -418,6 +456,15 @@ class PageAgentManager:
         # dies with it and only this side of the wire still remembers the task.
         self.active_prompt = ""
         self.active_label = ""
+        # Rebuilds the application brief for whatever page is on screen now.
+        # Held as a factory rather than a string because half the brief -- the
+        # language of the page and the list of fields on it -- describes the
+        # page, and the page changes several times in a normal run.
+        self.prompt_factory = None
+        self.application_prompt = ""
+        # The language last reported to the candidate, so a five-page Dutch
+        # portal says "Dutch" once rather than on every navigation.
+        self.reported_language = ""
         self.remounts = 0
         # A login wall can appear part-way through a form, not just at the door.
         # Capped, because a site that keeps demanding a sign-in after a
@@ -1033,8 +1080,26 @@ class PageAgentManager:
                         "message": f"This portal wants you signed in to a candidate account before it will "
                                    f"take an application.{detail}"}
             if res.get("submitStillVisible"):
-                return {"success": False, "message": f"Application form remains open (Submit button '{res.get('match')}' still standing)."}
-            return {"success": False, "message": "Application cycle concluded without confirmation evidence."}
+                # The button that sends it is still there and still clickable,
+                # so nothing left the browser. This is the one outcome that can
+                # be reported as "not sent" without qualification.
+                return {"success": False, "sent": False,
+                        "message": f"The application was not sent: the form is still open with "
+                                   f"'{res.get('match')}' unclicked."}
+            # No confirmation, and no form left to submit either. Plenty of
+            # portals end on a bare page, an email-only acknowledgement or a
+            # dashboard, and calling that a failure has a real cost: the
+            # candidate applies again by hand to an employer who already has
+            # their application. So the agent's own account of what it did is
+            # worth something here -- not enough to claim success, enough to
+            # say "sent, unconfirmed" and let a person check.
+            if self.agent_claimed_submission():
+                return {"success": False, "sent_unconfirmed": True,
+                        "message": ("The form was sent, but the page never showed a confirmation, "
+                                    "so there is no proof it was received. Worth checking your "
+                                    "email before applying again.")}
+            return {"success": False, "sent": False,
+                    "message": "The application was not completed, and nothing was sent."}
         except Exception as e:
             return {"success": False, "message": str(e)}
 
@@ -1276,9 +1341,13 @@ class PageAgentManager:
                 return True
         return False
 
-    # One rescue per run. A site still demanding a sign-in after the ladder
-    # succeeded is not going to yield to a second lap of the same steps.
-    MAX_SIGNIN_RECOVERIES = 1
+    # Two rescues per run, not one. The first is usually "sign in"; on a site
+    # where no account existed yet it ends in a freshly registered one, and the
+    # form behind it is frequently a longer, multi-step affair that asks to be
+    # signed in again at the point of sending. Refusing that second trip threw
+    # away an account that had just been created and verified. A third is not
+    # offered: by then the same steps are being repeated rather than advanced.
+    MAX_SIGNIN_RECOVERIES = 2
 
     def agent_lost_its_page(self) -> Optional[str]:
         """
@@ -1378,6 +1447,13 @@ class PageAgentManager:
         self.dismiss_cookie_overlays()
         self.inject_cv_file()
 
+        # The field list in the brief describes the page it was written for,
+        # and that page is gone. Handing it to the agent on a new document is
+        # worse than handing it nothing: it reads as authoritative and every
+        # line of it is about somewhere else.
+        if self.active_prompt == self.application_prompt:
+            self.active_prompt = self.refresh_application_brief()
+
         self.start_agent_task(self.active_prompt, self.active_label)
         return True
 
@@ -1434,6 +1510,69 @@ class PageAgentManager:
                 "It was removed before the form could be sent.", step=6)
         return wiped
 
+    # ------------------------------------------------------- reading the page
+
+    def read_page_form(self) -> dict:
+        """The visible controls on this page, each with its label resolved."""
+        try:
+            return self.driver.execute_script(read_fields_script()) or {}
+        except Exception:
+            return {}
+
+    def page_note(self, candidate: dict) -> str:
+        """
+        What this particular page is, in its own words, for the top of the brief.
+
+        Two things the agent cannot reliably work out from its own snapshot:
+        which language it is reading, and which box is which. Both are cheap to
+        answer from here -- the language from the text, the boxes from the DOM's
+        own label relationships -- and both are the difference between filling a
+        Dutch form and guessing at one.
+
+        Deliberately rebuilt for every page rather than once per run. A brief
+        describing the fields of a page the browser left two navigations ago is
+        worse than no brief: it reads as authoritative and it is wrong.
+        """
+        page = self.read_page_form()
+        if not page:
+            return ""
+
+        language = sniff_language(page.get("lang", ""), page.get("text", ""))
+        note = language_brief(language)
+        if language != self.reported_language:
+            self.reported_language = language
+            fields = len(page.get("fields") or [])
+            if note:
+                self.log_callback(
+                    f"Reading this page in {LANGUAGE_NAMES.get(language, language)}"
+                    f"{f' ({fields} fields)' if fields else ''}.", step=5)
+
+        values = {
+            "first_name": candidate.get("first_name", "Badreddine"),
+            "last_name": candidate.get("last_name", "Barki"),
+            "full_name": f"{candidate.get('first_name', 'Badreddine')} "
+                         f"{candidate.get('last_name', 'Barki')}".strip(),
+            "email": candidate.get("email", PORTAL_EMAIL),
+            "phone": "0033745768010",
+            "address": candidate.get("full_address", "14 Rue de la 2e D.B., 80000 Amiens, France"),
+            "city": candidate.get("city", "Amiens"),
+            "postal": candidate.get("postal_code", "80000"),
+            "country": "France",
+            "linkedin": candidate.get("linkedin", ""),
+            "gender": "Male",
+        }
+        plan = form_plan(page.get("fields") or [], values)
+        if plan:
+            note = f"{note}\n{plan}" if note else plan
+        return f"{note}\n" if note else ""
+
+    def refresh_application_brief(self) -> str:
+        """The application brief, rewritten for the page currently on screen."""
+        if self.prompt_factory is None:
+            return self.active_prompt
+        self.application_prompt = self.prompt_factory()
+        return self.application_prompt
+
     def hit_signin_wall(self) -> bool:
         """
         Whether the agent stopped because the page demanded an account.
@@ -1441,18 +1580,36 @@ class PageAgentManager:
         Read from its parting words rather than from the DOM: the agent is the
         one that saw the wall, and by the time this is asked the page may have
         scrolled, re-rendered, or redirected.
+
+        The phrase list is wide on purpose, and "the password was refused" is
+        on it. A run that ends there has not found a locked door, it has found
+        an unlocked one it does not have a key to yet -- the ladder's answer to
+        that is to register, which is the rung that never got reached while
+        this only recognised the words "sign-in required".
         """
         note = (self.agent_done_note() or "").lower()
         if any(phrase in note for phrase in
                ("sign-in required", "sign in required", "signin required",
                 "login required", "log-in required", "account required",
                 "requires an account", "needs an account", "must be logged in",
-                "must log in", "connexion requise")):
+                "must log in", "connexion requise",
+                # No account yet, rather than no way in.
+                "password rejected", "password was rejected", "wrong password",
+                "incorrect password", "invalid password", "invalid credentials",
+                "could not sign in", "couldn't sign in", "unable to sign in",
+                "sign-in failed", "sign in failed", "login failed", "no account",
+                "register", "registration", "create an account", "sign up")):
             return True
         # Corroborated against the page for the cases where the agent worded it
-        # some other way.
+        # some other way -- or said nothing at all, which is what a timeout
+        # leaves behind. A live password box on a page that is not signed in
+        # and holds no application form is a wall whether or not anyone
+        # described it as one.
         state = self.page_access_state()
-        return bool(state.get("wall") and not state.get("signed_in"))
+        if state.get("wall") and not state.get("signed_in"):
+            return True
+        return bool(state.get("password_fields") and not state.get("signed_in")
+                    and not self.can_apply_without_account())
 
     def agent_done_note(self) -> str:
         """
@@ -1477,6 +1634,26 @@ class PageAgentManager:
                     return f"The agent noted: “{note}”."
                 return ""
         return ""
+
+    def agent_claimed_submission(self) -> bool:
+        """
+        Whether the agent says it pressed the button that files the application.
+
+        Read from the raw step log rather than from `agent_done_note`, which
+        deliberately swallows the stock endings -- "submitted application" is
+        exactly the sentence wanted here.
+        """
+        try:
+            steps = self.driver.execute_script("return window.__BOJ_STEPS || [];") or []
+        except Exception:
+            return False
+        claims = ("submitted", "submit application", "sent the application", "application sent",
+                  "envoyé", "envoyee", "candidature envoy", "verstuurd", "verzonden", "abgeschickt")
+        for line in reversed(steps[-12:]):
+            text = str(line).lower()
+            if text.startswith("action: done") and any(c in text for c in claims):
+                return True
+        return False
 
     def pending_question(self) -> Optional[str]:
         """
@@ -1737,7 +1914,23 @@ class PageAgentManager:
             self.log_callback(f"This site requires an account: “{state['wall']}”.", step=3)
 
         email = PORTAL_EMAIL
+        host = self._host()
         attempts = [p for p in (PORTAL_PASSWORD_PRIMARY, PORTAL_PASSWORD_SECONDARY) if p]
+
+        # An account we made here on an earlier run goes to the front of the
+        # queue. Without this the ladder works down from the top every time,
+        # fails both passwords on a site where neither was ever the right one,
+        # and then tries to register an email address the site already knows --
+        # which is refused, and reads as "registration did not work".
+        remembered = known_account(host)
+        if remembered and remembered["password"] not in attempts:
+            attempts.insert(0, remembered["password"])
+        elif remembered:
+            attempts.remove(remembered["password"])
+            attempts.insert(0, remembered["password"])
+        if remembered:
+            self.log_callback(f"Using the account created here on "
+                              f"{remembered['created_at'] or 'an earlier run'}.", step=3)
 
         # Said once per process, at the moment it stops being theoretical.
         global _WARNED_SHARED_PASSWORD
@@ -1768,17 +1961,25 @@ class PageAgentManager:
                       # reveals a fuller sign-in page than the one first shown.
                       lambda s: s.get("has_google")))
 
-        if PORTAL_SIGNUP_PASSWORD:
+        # Registration is not conditional on anything. It used to be skipped
+        # whenever no dedicated sign-up password was configured, which is the
+        # shape of the complaint that started this: both passwords refused, and
+        # the run ended there -- on a site where nobody had ever had an account
+        # and thirty seconds of registering would have got in. A password we
+        # choose is better hygiene, so it is still preferred when it exists,
+        # but its absence is no longer a reason to stop.
+        signup_password = signup_password_for_new_accounts()
+        if signup_password:
             rungs.append(("new_account",
                           f"Creating a candidate account on {company}...",
-                          lambda: build_signup_prompt(email, PORTAL_SIGNUP_PASSWORD, company),
+                          lambda: build_signup_prompt(email, signup_password, company),
                           None))
             # Registering frequently leaves you on a "your account is ready,
             # please log in" page rather than signed in, so the ladder closes
             # the loop and logs in with the password it just set.
             rungs.append(("post_signup_login",
                           "Logging in with the account that was just created...",
-                          lambda: build_login_prompt(email, PORTAL_SIGNUP_PASSWORD, company),
+                          lambda: build_login_prompt(email, signup_password, company),
                           None))
 
         for index, (method, announcement, make_prompt, precondition) in enumerate(rungs):
@@ -1807,20 +2008,48 @@ class PageAgentManager:
                                      max_wait_seconds=int(min(share, remaining)))
 
             note = str(res.get("message") or "").lower()
-            if "verification" in note or "code" in note or "confirm your email" in note:
+            # Two ways to find out a code was emailed: the agent says so, or
+            # the page says so. Only the first was ever checked, and it is the
+            # less reliable of the two -- a registration that ends by
+            # navigating to a "check your email" screen takes the agent down
+            # with it, so there is nobody left to report anything.
+            wants_code = ("verification" in note or "code" in note
+                          or "confirm your email" in note or self.awaiting_email_code())
+            if wants_code:
                 code = self.fetch_emailed_code()
                 if code:
                     res = self.run_auth_task(build_verification_prompt(code),
                                              "Entering the emailed verification code",
                                              max_wait_seconds=60)
+                    if method in ("new_account", "post_signup_login"):
+                        remember_account(host, email, "signup", verified=True)
 
             if res.get("success") or self.looks_signed_in():
                 self.log_callback("Signed in." if method.startswith("password")
                                   else f"Success via {method.replace('_', ' ')}.", step=3)
+                # Written down before the cookies are saved, because cookies
+                # expire and this does not: it is what lets the next run at
+                # this employer go straight to the password that works.
+                if method in ("new_account", "post_signup_login"):
+                    remember_account(host, email, "signup", verified=wants_code,
+                                     note=f"created while applying at {company}")
+                    self.log_callback(f"Account created on {company} and remembered for next time.",
+                                      step=3)
+                elif remembered and method.startswith("password"):
+                    remember_account(host, email, remembered["password_kind"])
                 if self.save_session_cookies(self._site_label()):
                     self.log_callback(f"Saved this session, so future {company} jobs skip the "
                                       f"sign-in.", step=3)
                 return {"success": True, "method": method}
+
+            # Registering with an address the site already holds is not a
+            # failure to register, it is confirmation that an account exists.
+            # The useful move is to go back and sign in with it, not to carry
+            # on down a ladder whose remaining rung does the same thing again.
+            if method == "new_account" and self.account_already_exists():
+                self.log_callback("That email already has an account here, so signing in with it "
+                                  "instead.", step=3)
+                remember_account(host, email, "signup", note="found already registered")
 
             self.log_callback({
                 "google": "The Google session did not carry through.",
@@ -1828,10 +2057,73 @@ class PageAgentManager:
                 "post_signup_login": "The new account did not let us in.",
             }.get(method, "That password was not accepted."), step=3)
 
+        tried = ", ".join(
+            {"google": "Continue with Google", "new_account": "creating a new account",
+             "post_signup_login": "signing in with the new account"}.get(m, "your saved password")
+            for m, _a, _p, _c in rungs)
         return {"success": False, "reason": f"LOGIN_REQUIRED:{company}",
-                "message": (f"{company} needs an account and none of the sign-in attempts worked. "
-                            f"The browser is open on their sign-in page — one manual sign-in there "
-                            f"is remembered for every future job at this employer.")}
+                "message": (f"{company} needs an account and every way in was tried — {tried} — "
+                            f"without getting through. The browser is open on their sign-in page: "
+                            f"one manual sign-in there is remembered for every future job at this "
+                            f"employer.")}
+
+    def _host(self) -> str:
+        """The bare hostname of the page in front of us, e.g. 'tue.varbi.com'."""
+        try:
+            return (self.driver.execute_script("return location.hostname;") or "").lower()
+        except Exception:
+            return ""
+
+    def awaiting_email_code(self) -> bool:
+        """
+        Whether the page is sitting on "we sent you a code".
+
+        Asked of the page rather than of the agent because registering usually
+        navigates, and a navigation kills the agent: the screen that says a
+        code is on its way is very often the first screen with nobody left to
+        read it.
+        """
+        try:
+            return bool(self.driver.execute_script(PAGE_TEXT_JS + r"""
+                const text = __bojPageText(4000).toLowerCase();
+                const said = [
+                    "verification code", "confirmation code", "security code", "one-time code",
+                    "code we sent", "we sent you a code", "we have sent you a code",
+                    "check your email", "check your inbox", "verify your email",
+                    "code de vérification", "code de confirmation", "vérifiez votre e-mail",
+                    "verificatiecode", "bevestigingscode", "controleer je e-mail",
+                    "bestätigungscode", "bestätigen sie ihre e-mail",
+                ].some((p) => text.includes(p));
+                if (!said) return false;
+                // Corroborated by somewhere to type it, so that an ordinary
+                // "we will email you" footnote is not read as a challenge.
+                const boxes = Array.from(document.querySelectorAll(
+                    'input:not([type=hidden]):not([type=submit]):not([type=button])'
+                )).filter((el) => {
+                    if (__bojIsOurs(el)) return false;
+                    const r = el.getBoundingClientRect();
+                    return r.width > 0 && r.height > 0 && el.type !== "password";
+                });
+                return boxes.length > 0 && boxes.length <= 8;
+            """))
+        except Exception:
+            return False
+
+    def account_already_exists(self) -> bool:
+        """Whether the page just said this email address is already registered."""
+        try:
+            return bool(self.driver.execute_script(PAGE_TEXT_JS + r"""
+                const text = __bojPageText(4000).toLowerCase();
+                return [
+                    "already exists", "already registered", "already in use", "already taken",
+                    "already have an account", "account with this email",
+                    "existe déjà", "déjà utilisé", "compte existe",
+                    "bestaat al", "al geregistreerd", "al in gebruik",
+                    "bereits vergeben", "bereits registriert", "existiert bereits",
+                ].some((p) => text.includes(p));
+            """))
+        except Exception:
+            return False
 
     def _site_label(self) -> str:
         """A vault key for the current site, e.g. 'portal:tue.varbi.com'."""
@@ -1992,8 +2284,14 @@ class PageAgentManager:
 
         self.capture_screenshot()
 
-        prompt_text = build_agent_prompt(job_title, company, candidate, submit=submit)
-        self.start_agent_task(prompt_text, f"Starting autonomous page control for {job_title}")
+        # The brief is built per page, not per run: which language the form is
+        # written in and which box is which are facts about the document in
+        # front of the agent, and it crosses several of them on the way to a
+        # submitted application.
+        self.prompt_factory = lambda: build_agent_prompt(
+            job_title, company, candidate, submit=submit, page_note=self.page_note(candidate))
+        self.start_agent_task(self.refresh_application_brief(),
+                              f"Starting autonomous page control for {job_title}")
 
         start_time = time.time()
         last_step_count = 0
@@ -2140,7 +2438,18 @@ class PageAgentManager:
                         self.log_callback("The form asked for an account part-way through. "
                                           "Signing in, then picking up where it stopped.", step=3)
                         saved_prompt, saved_label = self.active_prompt, self.active_label
-                        access = self.ensure_access(company)
+                        # Getting in is not filling in. The ladder is given its
+                        # own budget and the run's clocks are pushed back by
+                        # what it spends, because the alternative is what kept
+                        # happening: a ladder that signed in successfully after
+                        # four minutes handed back a run whose deadline had
+                        # passed, so the loop exited on the next line and the
+                        # application was abandoned one keystroke from being
+                        # typed.
+                        ladder_started = time.time()
+                        access = self.ensure_access(company, max_wait_seconds=240)
+                        spent = time.time() - ladder_started
+                        hard_deadline += spent
                         if not access.get("success"):
                             self.capture_screenshot(hide_agent_ui=True)
                             return {"success": False, "barrier": True,
@@ -2149,6 +2458,10 @@ class PageAgentManager:
                         self.advance_to_application_form()
                         self.cv_attached = False   # a new form needs the CV again
                         self.inject_cv_file()
+                        # Signed in, so the form on screen is usually a longer
+                        # one than the form the brief was written for.
+                        if saved_prompt == self.application_prompt:
+                            saved_prompt = self.refresh_application_brief()
                         self.start_agent_task(saved_prompt, saved_label)
                         last_step_count = 0
                         deadline = min(time.time() + max_wait_seconds, hard_deadline)

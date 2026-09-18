@@ -48,6 +48,16 @@ const RULES: Array<[RegExp, string]> = [
 
   // Accounts
   [/sign-?in page/i, 'Signing in'],
+  [/reading this page in/i, 'Reading the form'],
+  [/signing in as|logging in with the account/i, 'Signing in'],
+  [/trying the google sign-in/i, 'Trying Google'],
+  [/creating a candidate account/i, 'Creating account'],
+  [/account created on .* and remembered/i, 'Account created'],
+  [/already has an account here/i, 'Account exists'],
+  [/using the account created here/i, 'Known account'],
+  [/that password was not accepted|did not carry through/i, 'Password refused'],
+  [/could not complete registration|did not let us in/i, 'Sign-up failed'],
+  [/tracked as:/i, 'Recorded'],
   [/back on the employer/i, 'Back on track'],
   [/apply without an account/i, 'No account needed'],
   [/already signed in/i, 'Already signed in'],
@@ -103,8 +113,13 @@ export function progressPhrase(line: string): string {
  * Consecutive repeats collapse, because six "Filling the form" lines in a row
  * is one thing happening, not six. `limit` keeps the rail short enough to read
  * at a glance rather than scroll.
+ *
+ * Two, not five. Five phrases is a changelog, and a changelog under a live
+ * video of the same events is the events told twice. What is wanted here is
+ * where it is now and the one step it came from -- enough to see it moving,
+ * short enough to take in without reading.
  */
-export function progressTrail(steps: string[], limit = 5): string[] {
+export function progressTrail(steps: string[], limit = 2): string[] {
   const out: string[] = [];
   for (const step of steps || []) {
     const phrase = progressPhrase(step);

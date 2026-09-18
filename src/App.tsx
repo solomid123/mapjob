@@ -25,6 +25,8 @@ import {
   startBrowserApply,
   submitReviewedForm,
   pollBrowserApply,
+  runOutcome,
+  type ApplyOutcome,
   type BrowserApplyRun,
   type FetchJobsOptions,
 } from './services/directAtsApi';
@@ -591,6 +593,35 @@ export function App() {
   const [mobileView, setMobileView] = useState<'both' | 'map' | 'list'>('list');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  /**
+   * What the last attempt at each job came to, kept across reloads.
+   *
+   * `appliedJobIds` only ever remembered the wins, so a job that was tried and
+   * blocked looked exactly like a job nobody had touched -- and the only way
+   * to find out was to run the whole thing again and watch it fail again. The
+   * failures are the ones worth writing down: a success announces itself.
+   */
+  const [applyOutcomes, setApplyOutcomes] = useState<Record<string, ApplyOutcome>>(() => {
+    try {
+      const saved = localStorage.getItem('mapjob_apply_outcomes');
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const rememberOutcome = (job: Job, outcome: ApplyOutcome) => {
+    setApplyOutcomes((prev) => {
+      const next = { ...prev, [job.id]: outcome };
+      try {
+        localStorage.setItem('mapjob_apply_outcomes', JSON.stringify(next));
+      } catch {
+        // A full quota is not worth losing the run over.
+      }
+      return next;
+    });
+  };
+
   const handleUnmarkApplied = (id: string) => {
     setAppliedJobIds((prev) => {
       const next = new Set(prev);
@@ -633,14 +664,22 @@ export function App() {
    * enough to be checked rather than assumed.
    */
   const reportApplyOutcome = (job: Job, final: BrowserApplyRun) => {
+    // Written down first, whatever happened. The toast is gone in four seconds
+    // and the panel closes; this is the part that is still there tomorrow.
+    rememberOutcome(job, runOutcome(final));
+
     if (final.status === 'APPLIED') {
       markApplied(job);
       showToast(`Applied to ${job.company}. Their page confirmed it.`);
     } else if (final.status === 'SUBMITTED_UNVERIFIED') {
       markApplied(job);
       showToast(`Sent to ${job.company}, but their page showed no confirmation. Worth checking.`);
+    } else if (final.status === 'NEEDS_CHECKPOINT') {
+      showToast(`Not sent — ${job.company}'s site blocked the application.`);
+    } else if (final.status === 'DRY_RUN_COMPLETED') {
+      showToast(`Form filled for ${job.company}. Nothing sent yet.`);
     } else {
-      showToast(final.message);
+      showToast(`Not sent to ${job.company}. ${final.message}`.trim());
     }
   };
 
@@ -1146,6 +1185,7 @@ export function App() {
                     isSelected={false}
                     isSaved={savedJobIds.has(job.id)}
                     isApplied={appliedJobIds.has(job.id)}
+                    applyOutcome={applyOutcomes[job.id]}
                     onHover={handleCardHover}
                     onSelect={handleOpenJobPage}
                     onToggleSave={handleToggleSave}

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Heart, ChevronLeft, ChevronRight, Zap, ArrowUpRight, Star } from 'lucide-react';
 import type { Job } from '../types/job';
+import type { ApplyOutcome } from '../services/directAtsApi';
 
 interface JobCardProps {
   job: Job;
@@ -8,6 +9,8 @@ interface JobCardProps {
   isSelected: boolean;
   isSaved: boolean;
   isApplied?: boolean;
+  /** How the last auto-apply attempt ended, when there has been one. */
+  applyOutcome?: ApplyOutcome;
   onHover: (id: string | null) => void;
   onSelect: (job: Job) => void;
   onToggleSave: (id: string) => void;
@@ -76,6 +79,7 @@ export const JobCard: React.FC<JobCardProps> = ({
   isSelected,
   isSaved,
   isApplied,
+  applyOutcome,
   onHover,
   onSelect,
   onToggleSave,
@@ -266,8 +270,18 @@ export const JobCard: React.FC<JobCardProps> = ({
           </div>
 
           {isApplied ? (
-            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-400/15 text-emerald-200 border border-emerald-300/25">
-              ✓ Applied
+            // Sent but unconfirmed is still applied -- applying twice is the
+            // expensive mistake -- but it says so, because "confirmed by the
+            // employer" and "we think it went" are not the same claim.
+            <span
+              title={applyOutcome?.note}
+              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold ${
+                applyOutcome?.status === 'SUBMITTED_UNVERIFIED'
+                  ? 'bg-amber-400/15 text-amber-200 border border-amber-300/25'
+                  : 'bg-emerald-400/15 text-emerald-200 border border-emerald-300/25'
+              }`}
+            >
+              {applyOutcome?.status === 'SUBMITTED_UNVERIFIED' ? 'Sent · unconfirmed' : '✓ Applied'}
             </span>
           ) : job.applyUrl && onApply ? (
             // Offered on every listing that has a form, not just the handful of
@@ -281,10 +295,18 @@ export const JobCard: React.FC<JobCardProps> = ({
                 onApply(job);
               }}
               className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap px-2.5 py-1 rounded-full text-[11.5px] font-semibold tracking-[-0.01em] text-white cursor-pointer bg-[#0a84ff] hover:bg-[#3b9bff] active:scale-[0.96] transition-[background-color,transform] duration-200 ease-apple-spring"
-              title="Fill this employer's form from your profile, then show you the result before anything is sent"
+              title={
+                applyOutcome && !applyOutcome.sent
+                  ? `Last attempt: ${applyOutcome.note.toLowerCase()}. This runs it again.`
+                  : "Fill this employer's form from your profile, then show you the result before anything is sent"
+              }
             >
               <Zap className="w-3 h-3 text-white fill-white" />
-              <span>Auto apply</span>
+              {/* A job that was tried and did not go says so on the button.
+                * Without it a blocked application is indistinguishable from
+                * one nobody ever ran, which is how the same wall gets walked
+                * into twice. */}
+              <span>{applyOutcome && !applyOutcome.sent ? 'Try again' : 'Auto apply'}</span>
             </button>
           ) : job.applyUrl ? (
             // No handler wired in this context, so link straight out. A plain

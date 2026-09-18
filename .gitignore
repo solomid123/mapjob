@@ -70,3 +70,8 @@ scratch/
 !/index.html
 .claude/
 nul
+
+# The agent's own memory: which portals it has registered on, and what every
+# run came to. Both are personal and neither is source.
+services/automation/portal_accounts.json
+services/automation/applications.jsonl

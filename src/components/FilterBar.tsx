@@ -1,16 +1,16 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { 
-  SlidersHorizontal, 
-  X, 
-  Zap, 
+import {
+  SlidersHorizontal,
+  X,
+  Zap,
   Briefcase,
   Cpu,
   Rocket,
   Layers,
   Activity,
   Bot,
-  Shield
+  Shield,
 } from 'lucide-react';
 import { CATEGORIES } from '../data/mockJobs';
 
@@ -32,32 +32,31 @@ interface FilterBarProps {
   hasActiveFilters: boolean;
 }
 
-const renderCategoryIcon = (iconName: string, isActive: boolean) => {
-  const iconClass = `w-6 h-6 transition-all duration-150 ${
-    isActive ? 'text-[#f5f5f7] stroke-[2.4]' : 'text-[rgba(235,235,245,0.42)] group-hover:text-[#f5f5f7] stroke-[1.8]'
-  }`;
-
-  switch (iconName) {
-    case 'Cpu':
-      return <Cpu className={iconClass} />;
-    case 'Rocket':
-      return <Rocket className={iconClass} />;
-    case 'Layers':
-      return <Layers className={iconClass} />;
-    case 'Activity':
-      return <Activity className={iconClass} />;
-    case 'Zap':
-      return <Zap className={iconClass} />;
-    case 'Bot':
-      return <Bot className={iconClass} />;
-    case 'Shield':
-      return <Shield className={iconClass} />;
-    case 'Briefcase':
-    default:
-      return <Briefcase className={iconClass} />;
-  }
+const CATEGORY_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
+  Cpu,
+  Rocket,
+  Layers,
+  Activity,
+  Zap,
+  Bot,
+  Shield,
+  Briefcase,
 };
 
+/**
+ * Every filter in the app, behind one glyph.
+ *
+ * This used to be a 118px island holding a horizontal carousel of eight
+ * disciplines and a row of seven pills -- about a fifth of the window,
+ * permanently, to show choices that are almost always left alone. iCloud does
+ * not do that: the toolbar is a handful of glyphs and the options live behind
+ * them.
+ *
+ * So the strip is gone and this is one round button beside the result count,
+ * in the same vocabulary as the ribbon glyphs above it. Nothing was dropped on
+ * the way: the discipline picker and the 1-Click Apply toggle moved into the
+ * sheet, which already held work location, employment type, salary and visa.
+ */
 export const FilterBar: React.FC<FilterBarProps> = ({
   selectedCategory,
   setSelectedCategory,
@@ -75,338 +74,224 @@ export const FilterBar: React.FC<FilterBarProps> = ({
   onResetFilters,
   hasActiveFilters,
 }) => {
-  const [showFilterDropdown, setShowFilterDropdown] = useState(false);
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
 
-  /* The arrow buttons are gone -- a trackpad swipes this strip sideways on its
-   * own. A plain wheel mouse cannot, though, so a vertical wheel over the strip
-   * is translated into horizontal scroll. Bound by hand rather than with
-   * onWheel because React's wheel listener is passive and cannot preventDefault,
-   * which is what stops the page scrolling at the same time. */
+  // A sheet this size over the whole window needs the key everyone reaches for
+  // first. Clicking the scrim works too, but it is not always visible.
   useEffect(() => {
-    const el = scrollContainerRef.current;
-    if (!el) return;
-
-    const onWheel = (e: WheelEvent) => {
-      // A trackpad's horizontal gesture already works; leave it alone.
-      if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
-      if (el.scrollWidth <= el.clientWidth) return;
-      e.preventDefault();
-      el.scrollLeft += e.deltaY;
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
     };
-
-    el.addEventListener('wheel', onWheel, { passive: false });
-    return () => el.removeEventListener('wheel', onWheel);
-  }, []);
-
-  const hasPillFilters = Boolean(
-    jobType ||
-    remoteType ||
-    minSalary > 0 ||
-    visaSponsorshipOnly ||
-    directAtsOnly
-  );
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open]);
 
   return (
-    <div className="ic-header select-none">
-      {/* Padding matched to the search island above rather than to the old
-        * page gutters: this is a card now, not a full-bleed strip, and the
-        * lg:px-8 it used to carry left 32px of dead glass inside its own
-        * rounded corner. */}
-      <div className="px-3 py-2">
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        title="Filters"
+        aria-label="Filters"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        className={`ic-fill ic-glass w-9 h-9 rounded-full flex items-center justify-center relative shrink-0 cursor-pointer text-[rgba(235,235,245,0.78)] hover:text-[#f5f5f7] ${
+          hasActiveFilters ? 'is-on' : ''
+        }`}
+      >
+        <SlidersHorizontal className="w-[17px] h-[17px] stroke-[1.8]" />
+        {/* With the strip gone this dot is the only thing left saying that a
+          * filter is narrowing the list. Ringed in the tile colour so it reads
+          * as sitting on the button rather than punched into it. */}
+        {hasActiveFilters && (
+          <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-[#FF385C] ring-2 ring-[rgba(9,15,33,0.9)]" />
+        )}
+      </button>
 
-        {/* ROW 1: Signature Airbnb Category Icon Carousel */}
-        <div className="relative flex items-center pb-1">
-          
-          {/* Category Carousel Scroll Area */}
+      {/* Portalled to <body>. Anything carrying a backdrop-filter becomes the
+        * containing block for its fixed-position descendants, and this sheet
+        * has already been laid out inside a header strip and stacked under the
+        * map once because of it. */}
+      {open && createPortal(
+        <div
+          className="fixed inset-0 z-[200] bg-black/50 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => setOpen(false)}
+        >
           <div
-            ref={scrollContainerRef}
-            className="flex items-center gap-1 overflow-x-auto no-scrollbar scroll-smooth w-full px-1"
+            role="dialog"
+            aria-label="Job filters"
+            className="ic-popover rounded-3xl w-full max-w-md max-h-[86vh] overflow-y-auto custom-scrollbar p-6 animate-in fade-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
           >
-            {CATEGORIES.map((cat) => {
-              const isActive = selectedCategory === cat.id;
-              // Short friendly display name
-              const shortName = cat.name.split('(')[0].trim();
+            <div className="flex items-center justify-between pb-4 border-b border-white/10">
+              <h3 className="text-base font-bold text-[#f5f5f7]">Job Filters</h3>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                aria-label="Close"
+                className="ic-fill w-8 h-8 rounded-full flex items-center justify-center cursor-pointer text-[rgba(235,235,245,0.62)] hover:text-[#f5f5f7]"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
 
-              return (
+            <div className="py-5 space-y-5">
+              {/* Discipline. This was the carousel across the top of the page;
+                * it is one grid here and costs nothing while the sheet is
+                * shut. */}
+              <div>
+                <label className="block text-xs font-bold text-[rgba(235,235,245,0.42)] uppercase tracking-wider mb-2">
+                  Discipline
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  {CATEGORIES.map((cat) => {
+                    const Icon = CATEGORY_ICONS[cat.icon] ?? Briefcase;
+                    const isActive = selectedCategory === cat.id;
+                    return (
+                      <button
+                        type="button"
+                        key={cat.id}
+                        onClick={() => setSelectedCategory(cat.id)}
+                        className={`ic-press-wide flex items-center gap-2 px-3 py-2.5 text-[12px] font-medium rounded-xl text-left cursor-pointer ${
+                          isActive
+                            ? 'bg-[#0a84ff] text-white'
+                            : 'bg-white/[0.06] text-[rgba(235,235,245,0.62)] hover:bg-white/[0.12]'
+                        }`}
+                      >
+                        <Icon className="w-4 h-4 shrink-0" />
+                        <span className="truncate">{cat.name.split('(')[0].trim()}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 1-Click Apply. Was a bolt-marked pill in the strip. */}
+              {setDirectAtsOnly && (
                 <button
-                  key={cat.id}
                   type="button"
-                  onClick={() => setSelectedCategory(cat.id)}
-                  /* A selected item is a filled rounded rect, not a 2px rule under
-                    * the label. The underline is a browser-tab metaphor; Apple
-                    * marks selection by filling the control's own shape. */
-                  className={`ic-press-wide group flex flex-col items-center gap-1 px-3 py-2 rounded-xl shrink-0 cursor-pointer ${
-                    isActive
-                      ? 'bg-white/[0.14] text-[#f5f5f7]'
-                      /* 0.13, not 0.07: this utility owns the hover fill,
-                         because it outranks .ic-press-wide:hover by source
-                         order and would quietly undo a fill set there. */
-                      : 'text-[rgba(235,235,245,0.42)] hover:text-[#f5f5f7] hover:bg-white/[0.13]'
+                  onClick={() => setDirectAtsOnly(!directAtsOnly)}
+                  className={`ic-press-wide w-full flex items-center gap-3 px-3.5 py-3 rounded-xl text-left cursor-pointer ${
+                    directAtsOnly
+                      ? 'bg-[#0a84ff] text-white'
+                      : 'bg-white/[0.06] text-[rgba(235,235,245,0.62)] hover:bg-white/[0.12]'
                   }`}
                 >
-                  {renderCategoryIcon(cat.icon, isActive)}
+                  <Zap className={`w-4 h-4 shrink-0 ${directAtsOnly ? 'fill-white' : 'fill-current'}`} />
+                  <span className="text-xs font-bold">1-Click Apply only</span>
                   <span
-                    className={`text-[11px] tracking-[-0.01em] whitespace-nowrap ${
-                      isActive ? 'font-semibold' : 'font-normal'
+                    className={`ml-auto text-[11px] font-medium ${
+                      directAtsOnly ? 'text-white/70' : 'text-[rgba(235,235,245,0.42)]'
                     }`}
                   >
-                    {shortName}
+                    Straight into the ATS
                   </span>
                 </button>
-              );
-            })}
-          </div>
+              )}
 
-        </div>
-
-        {/* ROW 2: Filter Pills Strip (Desktop only - mobile uses search pill filter button) */}
-        <div className="hidden md:flex items-center gap-2 pt-2.5 overflow-x-auto no-scrollbar">
-          
-          {/* All Filters Button - Clean Airbnb White Pill */}
-          <button
-            type="button"
-            onClick={() => setShowFilterDropdown(!showFilterDropdown)}
-            className={`ic-chip flex items-center gap-2 px-3.5 py-1.5 text-xs shrink-0 cursor-pointer ${
-              hasActiveFilters ? 'is-on' : ''
-            }`}
-          >
-            <SlidersHorizontal className="w-3.5 h-3.5 stroke-[2.2]" />
-            <span>Filters</span>
-            {hasActiveFilters && (
-              <span className="w-1.5 h-1.5 rounded-full bg-[#FF385C]" />
-            )}
-          </button>
-
-          {/* ⚡ API Apply Only Toggle Pill */}
-          {setDirectAtsOnly && (
-            <button
-              type="button"
-              onClick={() => setDirectAtsOnly(!directAtsOnly)}
-              // No longer green. It is a filter like the five beside it, and a
-              // second accent colour in the same row just split the reader's
-              // attention. The bolt still says what it does.
-              className={`ic-chip flex items-center gap-1.5 px-3 py-1.5 text-xs shrink-0 cursor-pointer ${
-                directAtsOnly ? 'is-on' : ''
-              }`}
-            >
-              <Zap className={`w-3.5 h-3.5 ${directAtsOnly ? 'text-white fill-white' : 'fill-current'}`} />
-              <span>1-Click Apply</span>
-            </button>
-          )}
-
-          {/* Remote */}
-          <button
-            type="button"
-            onClick={() => setRemoteType(remoteType === 'Remote' ? '' : 'Remote')}
-            className={`ic-chip px-3.5 py-1.5 text-xs shrink-0 cursor-pointer ${
-              remoteType === 'Remote'
-                ? 'is-on'
-                : ''
-            }`}
-          >
-            Remote
-          </button>
-
-          {/* Hybrid */}
-          <button
-            type="button"
-            onClick={() => setRemoteType(remoteType === 'Hybrid' ? '' : 'Hybrid')}
-            className={`ic-chip px-3.5 py-1.5 text-xs shrink-0 cursor-pointer ${
-              remoteType === 'Hybrid'
-                ? 'is-on'
-                : ''
-            }`}
-          >
-            Hybrid
-          </button>
-
-          {/* Full-time */}
-          <button
-            type="button"
-            onClick={() => setJobType(jobType === 'Full-time' ? '' : 'Full-time')}
-            className={`ic-chip px-3.5 py-1.5 text-xs shrink-0 cursor-pointer ${
-              jobType === 'Full-time'
-                ? 'is-on'
-                : ''
-            }`}
-          >
-            Full-time
-          </button>
-
-          {/* Visa Sponsorship */}
-          <button
-            type="button"
-            onClick={() => setVisaSponsorshipOnly(!visaSponsorshipOnly)}
-            className={`ic-chip px-3.5 py-1.5 text-xs shrink-0 cursor-pointer ${
-              visaSponsorshipOnly
-                ? 'is-on'
-                : ''
-            }`}
-          >
-            Visa Support
-          </button>
-
-          {/* €60k+ */}
-          <button
-            type="button"
-            onClick={() => setMinSalary(minSalary === 60000 ? 0 : 60000)}
-            className={`ic-chip px-3.5 py-1.5 text-xs shrink-0 cursor-pointer ${
-              minSalary === 60000
-                ? 'is-on'
-                : ''
-            }`}
-          >
-            €60k+
-          </button>
-
-          {/* Reset Filters */}
-          {hasPillFilters && (
-            <button
-              type="button"
-              onClick={() => {
-                setJobType('');
-                setRemoteType('');
-                setMinSalary(0);
-                setVisaSponsorshipOnly(false);
-                if (setDirectAtsOnly) setDirectAtsOnly(false);
-              }}
-              className="flex items-center gap-1 text-xs font-bold text-[rgba(235,235,245,0.62)] hover:text-[#f5f5f7] underline ml-auto shrink-0 px-2 cursor-pointer"
-            >
-              <X className="w-3.5 h-3.5" />
-              <span>Reset</span>
-            </button>
-          )}
-
-        </div>
-
-        {/* Filter Popover Modal / Dropdown.
-          *
-          * Portalled to <body>. This bar is `.ic-header`, which carries a
-          * backdrop-filter, and a filtered element becomes the containing
-          * block for its fixed-position descendants -- so `fixed inset-0`
-          * was laying out inside the header strip and stacking below the
-          * map instead of covering the window. */}
-        {showFilterDropdown && createPortal(
-          <div className="fixed inset-0 z-[200] bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-            <div className="ic-popover rounded-3xl w-full max-w-md p-6 animate-in fade-in zoom-in-95 duration-150">
-              <div className="flex items-center justify-between pb-4 border-b border-white/10">
-                <h3 className="text-base font-bold text-[#f5f5f7]">Job Filters</h3>
-                <button
-                  type="button"
-                  onClick={() => setShowFilterDropdown(false)}
-                  className="p-1.5 text-[rgba(235,235,245,0.42)] hover:text-[#f5f5f7] rounded-full"
-                >
-                  <X className="w-5 h-5" />
-                </button>
+              {/* Workplace Format */}
+              <div>
+                <label className="block text-xs font-bold text-[rgba(235,235,245,0.42)] uppercase tracking-wider mb-2">
+                  Work Location
+                </label>
+                <div className="grid grid-cols-4 gap-2">
+                  {['', 'Remote', 'Hybrid', 'On-site'].map((type) => (
+                    <button
+                      type="button"
+                      key={type || 'all'}
+                      onClick={() => setRemoteType(type)}
+                      className={`ic-press-wide px-2 py-2 text-xs font-semibold rounded-xl text-center cursor-pointer ${
+                        remoteType === type
+                          ? 'bg-[#0a84ff] text-white'
+                          : 'bg-white/[0.06] text-[rgba(235,235,245,0.62)] hover:bg-white/[0.12]'
+                      }`}
+                    >
+                      {type || 'All'}
+                    </button>
+                  ))}
+                </div>
               </div>
 
-              <div className="py-5 space-y-5">
-                {/* Workplace Format */}
-                <div>
-                  <label className="block text-xs font-bold text-[rgba(235,235,245,0.42)] uppercase tracking-wider mb-2">
-                    Work Location
-                  </label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {['', 'Remote', 'Hybrid', 'On-site'].map((type) => (
-                      <button
-                        type="button"
-                        key={type || 'all'}
-                        onClick={() => setRemoteType(type)}
-                        className={`px-3 py-2 text-xs font-semibold rounded-xl border text-center transition ${
-                          remoteType === type
-                            ? 'bg-[#0a84ff] text-white border-transparent'
-                            : 'border-white/15 text-[rgba(235,235,245,0.62)] hover:bg-white/[0.08]'
-                        }`}
-                      >
-                        {type || 'All'}
-                      </button>
-                    ))}
-                  </div>
+              {/* Employment Type */}
+              <div>
+                <label className="block text-xs font-bold text-[rgba(235,235,245,0.42)] uppercase tracking-wider mb-2">
+                  Employment Type
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {['', 'Full-time', 'Contract'].map((type) => (
+                    <button
+                      type="button"
+                      key={type || 'any'}
+                      onClick={() => setJobType(type)}
+                      className={`ic-press-wide px-3 py-2 text-xs font-semibold rounded-xl text-center cursor-pointer ${
+                        jobType === type
+                          ? 'bg-[#0a84ff] text-white'
+                          : 'bg-white/[0.06] text-[rgba(235,235,245,0.62)] hover:bg-white/[0.12]'
+                      }`}
+                    >
+                      {type || 'All'}
+                    </button>
+                  ))}
                 </div>
-
-                {/* Employment Type */}
-                <div>
-                  <label className="block text-xs font-bold text-[rgba(235,235,245,0.42)] uppercase tracking-wider mb-2">
-                    Employment Type
-                  </label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {['', 'Full-time', 'Contract'].map((type) => (
-                      <button
-                        type="button"
-                        key={type || 'any'}
-                        onClick={() => setJobType(type)}
-                        className={`px-3 py-2 text-xs font-semibold rounded-xl border text-center transition ${
-                          jobType === type
-                            ? 'bg-[#0a84ff] text-white border-transparent'
-                            : 'border-white/15 text-[rgba(235,235,245,0.62)] hover:bg-white/[0.08]'
-                        }`}
-                      >
-                        {type || 'All'}
-                      </button>
-                    ))}
-                  </div>
+              </div>
+              {/* Salary */}
+              <div>
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-xs font-bold text-[rgba(235,235,245,0.42)] uppercase tracking-wider">
+                    Minimum Salary
+                  </span>
+                  <span className="text-sm font-extrabold text-[#FF385C]">
+                    {minSalary > 0 ? `\u20AC${minSalary / 1000}k / year` : 'Any salary'}
+                  </span>
                 </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="200000"
+                  step="10000"
+                  value={minSalary}
+                  onChange={(e) => setMinSalary(Number(e.target.value))}
+                  className="w-full h-1.5 bg-white/20 rounded-lg appearance-none cursor-pointer accent-[#FF385C]"
+                />
+              </div>
 
-                {/* Salary slider */}
-                <div>
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="text-xs font-bold text-[rgba(235,235,245,0.42)] uppercase tracking-wider">
-                      Minimum Salary
-                    </span>
-                    <span className="text-sm font-extrabold text-[#FF385C]">
-                      {minSalary > 0 ? `€${(minSalary / 1000)}k / year` : 'Any salary'}
-                    </span>
-                  </div>
+              {/* Visa Sponsorship */}
+              <div>
+                <label className="flex items-center gap-3 cursor-pointer select-none">
                   <input
-                    type="range"
-                    min="0"
-                    max="200000"
-                    step="10000"
-                    value={minSalary}
-                    onChange={(e) => setMinSalary(Number(e.target.value))}
-                    className="w-full h-1.5 bg-white/20 rounded-lg appearance-none cursor-pointer accent-[#FF385C]"
+                    type="checkbox"
+                    checked={visaSponsorshipOnly}
+                    onChange={(e) => setVisaSponsorshipOnly(e.target.checked)}
+                    className="w-4 h-4 text-[#FF385C] rounded border-white/25 bg-transparent focus:ring-[#FF385C]"
                   />
-                </div>
-
-                {/* Visa Sponsorship */}
-                <div>
-                  <label className="flex items-center gap-3 cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={visaSponsorshipOnly}
-                      onChange={(e) => setVisaSponsorshipOnly(e.target.checked)}
-                      className="w-4 h-4 text-[#FF385C] rounded border-white/25 bg-transparent focus:ring-[#FF385C]"
-                    />
-                    <span className="text-xs font-bold text-[#f5f5f7]">
-                      Visa Sponsorship Available
-                    </span>
-                  </label>
-                </div>
-              </div>
-
-              <div className="pt-4 border-t border-white/10 flex items-center justify-between">
-                <button
-                  type="button"
-                  onClick={onResetFilters}
-                  className="text-xs font-bold text-[rgba(235,235,245,0.62)] hover:text-[#f5f5f7] underline"
-                >
-                  Clear all
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowFilterDropdown(false)}
-                  className="px-6 py-2.5 bg-[#0a84ff] text-white rounded-xl text-xs font-bold hover:bg-[#3b9bff] transition"
-                >
-                  Show {totalResults} Jobs
-                </button>
+                  <span className="text-xs font-bold text-[#f5f5f7]">
+                    Visa Sponsorship Available
+                  </span>
+                </label>
               </div>
             </div>
-          </div>,
-          document.body,
-        )}
 
-      </div>
-    </div>
+            <div className="pt-4 border-t border-white/10 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={onResetFilters}
+                className="text-xs font-bold text-[rgba(235,235,245,0.62)] hover:text-[#f5f5f7] underline"
+              >
+                Clear all
+              </button>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="px-6 py-2.5 bg-[#0a84ff] text-white rounded-xl text-xs font-bold hover:bg-[#3b9bff] transition"
+              >
+                Show {totalResults} Jobs
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+    </>
   );
 };

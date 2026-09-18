@@ -322,15 +322,10 @@ html[data-wallpaper='sage'] {
   }
 }
 
-/* Inside an island the bars are pure layout -- the slab owns the surface.
- * Two stacked backdrop filters would also double the blur cost of the header
- * for no visible gain. */
-.ic-header {
-  background: none;
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-  box-shadow: none;
-}
+/* `.ic-header` used to neutralise the surface of a bar nested inside an
+ * island, so the two would not stack backdrop filters. The only bar that was
+ * ever nested is gone with the filter strip, so the class went too.
+ */
 /* Safari and Firefox without backdrop-filter get the solid colour instead of a
  * transparent bar with text showing through it. */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
@@ -505,6 +500,43 @@ html[data-wallpaper='sage'] {
   background: rgba(255, 255, 255, 0.26);
 }
 
+/* The same glyph, but standing on the wallpaper instead of inside the chrome.
+ *
+ * .ic-fill is an 11%-white wash, which only reads because there is dark glass
+ * behind it. The filter button sits beside the result count, out on the
+ * picture, and on the pale wallpapers it vanished entirely -- I could hit-test
+ * it but not see it. So it brings its own scrap of glass: the island's own
+ * surface, edge and shadow, shrunk to 36px.
+ *
+ * Another specificity ladder, for the same reason as the ribbon's above: the
+ * plain :hover and .is-on rules further down the file match at (0,2,0) and
+ * would otherwise strip the shadow back off on the first hover. */
+.ic-fill.ic-glass {
+  background: var(--tile);
+  -webkit-backdrop-filter: saturate(180%) blur(24px);
+  backdrop-filter: saturate(180%) blur(24px);
+  box-shadow: var(--shadow-rest), var(--tile-edge);
+}
+.ic-fill.ic-glass:hover {
+  background: var(--tile-hover);
+  box-shadow: var(--shadow-lift), var(--tile-edge);
+}
+.ic-fill.ic-glass:active {
+  box-shadow: var(--shadow-rest), var(--tile-edge);
+}
+/* Active filters do not repaint this one. The ribbon uses a lit fill for "you
+ * are here" because there is always exactly one selected app; here the state
+ * is a count that is usually zero, and the red dot on the corner says it more
+ * precisely than a brighter circle would. */
+.ic-fill.ic-glass.is-on {
+  background: var(--tile-hover);
+  color: #ffffff;
+  box-shadow: var(--shadow-rest), var(--tile-edge);
+}
+.ic-fill.ic-glass.is-on:hover {
+  box-shadow: var(--shadow-lift), var(--tile-edge);
+}
+
 /* The press response, shared by every round control in the chrome.
  *
  * .ic-fill already listed `transform` in its transition above, but nothing
@@ -588,11 +620,9 @@ html[data-wallpaper='sage'] {
   .ic-fill:hover,
   .ic-press:hover,
   .ic-press-wide:hover,
-  .ic-chip:hover,
   .ic-fill:active,
   .ic-press:active,
-  .ic-press-wide:active,
-  .ic-chip:active {
+  .ic-press-wide:active {
     transform: none;
   }
   .ic-tile:hover,
@@ -640,51 +670,18 @@ html[data-wallpaper='sage'] {
   background: rgba(0, 0, 0, 0.3);
 }
 
-/* A filter pill. Off: hairline ring, no fill. On: solid ink. Apple never puts
- * a 1px solid #ddd border on a control -- it uses a half-pixel ring at 12%,
- * which is why their chrome looks drawn rather than boxed. */
-.ic-chip {
-  border-radius: 9999px;
-  font-weight: 500;
-  letter-spacing: -0.01em;
-  color: var(--ink);
-  background: var(--fill);
-  transition:
-    background-color var(--dur-fast) var(--ease-apple-out),
-    box-shadow var(--dur-fast) var(--ease-apple-out),
-    color var(--dur-fast) var(--ease-apple-out),
-    transform var(--dur-base) var(--ease-apple-spring);
-}
-/* Same lift as the discipline tabs above. The chip already had an active
- * scale, but at --dur-fast the spring's overshoot is gone inside three frames,
- * so the press landed flat and hover did nothing at all. */
-.ic-chip:hover {
-  background: var(--fill-hover);
-  transform: translateY(-2px) scale(1.05);
-  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.18),
-    inset 0 0.5px 0 rgba(255, 255, 255, 0.28);
-}
-.ic-chip:active {
-  transform: translateY(0) scale(0.96);
-  box-shadow: none;
-  transition-duration: var(--dur-fast);
-}
-/* Selected is the accent, not black. Apple marks a chosen filter by tinting it;
- * a black pill is a different vocabulary and it is Airbnb's. */
-.ic-chip.is-on {
-  color: #ffffff;
-  background: var(--tint);
-}
-.ic-chip.is-on:hover {
-  background: #3b9bff;
-}
+/* The filter pill (.ic-chip) lived here. Its only markup was the row of
+ * seven toggles under the search bar, and that row is gone -- the filters are
+ * behind one glyph now -- so the rules went with it rather than sitting here
+ * matching nothing. `git log -S .ic-chip` if a pill is ever wanted again.
+ */
 
 /* A popover surface: no border, a deep soft shadow plus the hairline ring.
  *
- * Near-opaque on purpose. These panels are children of `.ic-header`, which has
+ * Near-opaque on purpose. These panels open inside the chrome, which carries
  * a backdrop-filter of its own and therefore its own stacking context, so the
- * popover's blur samples the wrong thing and the category strip showed through
- * it crisp and unblurred -- a menu you have to read past. 0.98 keeps the faint
+ * popover's blur samples the wrong thing and whatever is behind it showed
+ * through crisp and unblurred -- a menu you have to read past. 0.98 keeps the faint
  * translucency Apple's menus have without ever costing legibility. */
 .ic-popover {
   background: rgba(24, 30, 52, 0.9);
@@ -1006,30 +1003,12 @@ html[data-wallpaper='sage'] {
   background: var(--tile);
   box-shadow: none;
 }
-/* Leaflet styles its own close button as `.leaflet-container a.leaflet-popup-
- * close-button`, which outranks a plain `.job-map-popup .leaflet-popup-close-
- * button`. Matching its shape and adding one class wins on specificity without
- * an !important -- which is what the deleted block used, and why it flattened
- * everything else. */
-.leaflet-container .job-map-popup a.leaflet-popup-close-button {
-  top: 8px;
-  right: 8px;
-  width: 24px;
-  height: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 9999px;
-  background: rgba(255, 255, 255, 0.14);
-  color: var(--ink);
-  font-size: 17px;
-  font-weight: 600;
-  transition: background-color 0.15s;
-}
-.leaflet-container .job-map-popup a.leaflet-popup-close-button:hover {
-  background: rgba(255, 255, 255, 0.22);
-  color: var(--ink);
-}
+/* The popup's close button is switched off in JobMap, so the block that used
+ * to style it lives on only in the history. Leaflet's own close button is
+ * selected as `.leaflet-container a.leaflet-popup-close-button`, which
+ * outranks a plain `.job-map-popup .leaflet-popup-close-button` -- worth
+ * remembering if one is ever wanted again, because the obvious selector
+ * silently loses and the fix people reach for is !important. */
 
 /* iOS Safe Area & Airbnb App Utilities */
 .safe-area-top {

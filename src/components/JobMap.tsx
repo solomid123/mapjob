@@ -689,7 +689,12 @@ const MarkerLayer: React.FC<{
           ref={popupRef}
           position={openPosition}
           offset={POPUP_OFFSET}
-          closeButton
+          /* No close button. It was a grey circle sitting on the card's own
+           * title, and it was the only chrome on an otherwise clean preview.
+           * Leaflet already closes a popup on a click anywhere on the map, on
+           * Escape, and on opening another pin -- all three are defaults and
+           * all three are left on, so nothing is lost but the button. */
+          closeButton={false}
           autoPan={false}
           className="job-map-popup"
         >

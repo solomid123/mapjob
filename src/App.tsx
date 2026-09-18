@@ -10,6 +10,7 @@ import {
 import { daysAgo, parsePostedRange } from './utils/postedRange';
 import { Navbar } from './components/Navbar';
 import { FilterBar } from './components/FilterBar';
+import { SiteFooter } from './components/SiteFooter';
 import { JobCard } from './components/JobCard';
 import { JobMap } from './components/JobMap';
 import { JobPage } from './components/JobPage';
@@ -1039,27 +1040,6 @@ export function App() {
           activeTopTab={activeTopTab}
           setActiveTopTab={setActiveTopTab}
         />
-        {activeTopTab !== 'interview' && (
-          <div className="ic-island mx-3 mt-2.5">
-          <FilterBar
-            selectedCategory={selectedCategory}
-            setSelectedCategory={setSelectedCategory}
-            jobType={jobType}
-            setJobType={setJobType}
-            remoteType={remoteType}
-            setRemoteType={setRemoteType}
-            minSalary={minSalary}
-            setMinSalary={setMinSalary}
-            visaSponsorshipOnly={visaSponsorshipOnly}
-            setVisaSponsorshipOnly={setVisaSponsorshipOnly}
-            directAtsOnly={directAtsOnly}
-            setDirectAtsOnly={setDirectAtsOnly}
-            totalResults={filteredJobs.length}
-            onResetFilters={handleResetFilters}
-            hasActiveFilters={hasActiveFilters}
-          />
-          </div>
-        )}
         </div>
       )}
 
@@ -1082,8 +1062,6 @@ export function App() {
         />
       ) : (
         <>
-          {/* The filter bar now lives in the .ic-chrome island above, beside the
-            * navbar, so that the two share one shadow and one backdrop pass. */}
 
           {/* MAIN SPLIT LAYOUT (Matches English Airbnb: Cards on Left, Map on Right) */}
           <main className="flex-1 max-w-[1760px] w-full mx-auto px-4 sm:px-6 lg:px-8 pt-2 pb-3 flex flex-col md:flex-row gap-6 xl:gap-8 overflow-hidden min-h-0 relative">
@@ -1094,13 +1072,35 @@ export function App() {
                 mobileView === 'map' ? 'hidden md:block' : 'block'
               }`}
             >
-          {/* Subheader (Desktop only - mobile cards start immediately like Airbnb) */}
-          <div className="hidden md:flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5 pt-1">
+          {/* Subheader. It used to be desktop-only, because the filter strip
+            * above the map carried the controls on a phone. That strip is gone,
+            * so this row is now the only way to reach the filters and it shows
+            * at every width. */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 md:mb-5 pt-1">
             <div>
               <div className="flex items-center gap-2.5">
-                <h2 className="text-[28px] font-semibold text-[#f5f5f7] tracking-[-0.028em]">
+                <h2 className="text-[22px] md:text-[28px] font-semibold text-[#f5f5f7] tracking-[-0.028em]">
                    {isLoadingJobs && !jobs.length ? 'Searching jobs...' : `${filteredJobs.length} jobs`}
                 </h2>
+                {/* The whole filter strip, folded into the glyph beside the
+                  * count -- same vocabulary as the ribbon icons up top. */}
+                <FilterBar
+                  selectedCategory={selectedCategory}
+                  setSelectedCategory={setSelectedCategory}
+                  jobType={jobType}
+                  setJobType={setJobType}
+                  remoteType={remoteType}
+                  setRemoteType={setRemoteType}
+                  minSalary={minSalary}
+                  setMinSalary={setMinSalary}
+                  visaSponsorshipOnly={visaSponsorshipOnly}
+                  setVisaSponsorshipOnly={setVisaSponsorshipOnly}
+                  directAtsOnly={directAtsOnly}
+                  setDirectAtsOnly={setDirectAtsOnly}
+                  totalResults={filteredJobs.length}
+                  onResetFilters={handleResetFilters}
+                  hasActiveFilters={hasActiveFilters}
+                />
               </div>
               <p className="text-[13px] text-[rgba(235,235,245,0.42)] mt-1 tracking-[-0.01em]">
                  {searchAsMapMoves ? `Map area: ${activeLocationLabel}. Unmapped results are listed separately.` : `${currentCity.name} and nearby jobs`}
@@ -1255,6 +1255,11 @@ export function App() {
 
         </>
       )}
+
+      {/* Last row of the flex column: shrink-0, so it takes its 32px and leaves
+        * the rest to the map and the list. Carries the Mapbox/OpenStreetMap
+        * credit that the map itself no longer shows. */}
+      <SiteFooter />
 
       {/* Signature Airbnb Mobile Bottom Tab Bar (Always accessible so user never gets stuck) */}
       <BottomTabBar

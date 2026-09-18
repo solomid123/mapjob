@@ -1,7 +1,9 @@
 import os
+import io
 import sys
 import time
 import json
+import base64
 import queue
 import logging
 import threading
@@ -764,23 +766,63 @@ def latest_frame() -> Optional[str]:
     return agent_state.get("screenshot")
 
 
+def _as_web_frame(png: bytes) -> tuple[bytes, str]:
+    """
+    A frame small enough to be a frame.
+
+    A maximised Chrome window screenshots to about four megabytes of PNG, and
+    the panel asks for a new one roughly every second -- so the "live view"
+    would have been four megabytes a second of localhost traffic, each frame
+    arriving slowly enough to land as a slideshow. The panel renders it at
+    around 700px wide, so most of those bytes are being thrown away by the
+    scaler anyway.
+
+    JPEG at 1280px wide is about fifty times smaller and indistinguishable at
+    the size it is shown. Falls back to the original PNG if Pillow is not
+    installed, because a heavy live view still beats none.
+    """
+    try:
+        from PIL import Image
+    except Exception:
+        return png, "image/png"
+    try:
+        img = Image.open(io.BytesIO(png))
+        if img.width > 1280:
+            img = img.resize((1280, round(img.height * 1280 / img.width)), Image.LANCZOS)
+        img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=72, optimize=True)
+        return buf.getvalue(), "image/jpeg"
+    except Exception as e:
+        print(f"[Engine] frame resize failed, serving the original: {e}", flush=True)
+        return png, "image/png"
+
+
 @app.get("/api/apply/screenshot")
 def get_apply_screenshot(seq: int = 0):
     """
-    The live view of the browser, as PNG bytes.
+    The live view of the browser.
 
-    Kept out of the state payload on purpose: a full-page screenshot runs to
-    megabytes, and the state is polled about once a second. `seq` only exists
-    to make each frame a distinct URL, so the browser fetches the new one.
+    Kept out of the state payload on purpose: a screenshot runs to megabytes
+    and the state is polled about once a second. `seq` only exists to make
+    each frame a distinct URL, so the browser fetches the new one.
     """
     frame = latest_frame()
     if not frame or "," not in frame:
         raise HTTPException(status_code=404, detail="No screenshot has been captured yet.")
     try:
         png = base64.b64decode(frame.split(",", 1)[1])
-    except Exception:
+    except Exception as e:
+        # Logged rather than swallowed. `base64` was not imported at module
+        # scope for a long time, so every single frame request raised NameError
+        # in here and went out as a tidy 404 that read like "there is no
+        # picture" -- which is why the live view had never once worked and
+        # nothing anywhere said so. An except that turns a bug into a plausible
+        # empty state is worse than no except at all.
+        print(f"[Engine] frame decode failed: {e.__class__.__name__}: {e}", flush=True)
         raise HTTPException(status_code=404, detail="That screenshot could not be read.")
-    return Response(content=png, media_type="image/png", headers={"Cache-Control": "no-store"})
+    body, media_type = _as_web_frame(png)
+    return Response(content=body, media_type=media_type, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/apply/state")

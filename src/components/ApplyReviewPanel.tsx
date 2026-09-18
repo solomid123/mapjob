@@ -4,6 +4,7 @@ import {
 } from 'lucide-react';
 import type { BrowserApplyRun } from '../services/directAtsApi';
 import { browserApplyScreenshotUrl, readableFailure } from '../services/directAtsApi';
+import { progressPhrase, progressTrail, outcomeSentence } from '../services/applyProgress';
 
 interface ApplyReviewPanelProps {
   run: BrowserApplyRun;
@@ -105,24 +106,57 @@ const TechnicalDetail: React.FC<{ trace: string }> = ({ trace }) => (
  * grey text in an empty box, which on a slow employer site is the longest and
  * least reassuring minute of the run.
  *
- * So: the incoming frame is decoded off-screen and swapped in only once it is
- * ready, which makes the sequence continuous; and until there is one, the
- * stage shows what the run is doing under a pulse, so the emptiness reads as
- * "not yet" rather than "nothing is happening".
+ * So: each frame is fetched as a blob and swapped in only once it is decoded,
+ * which makes the sequence continuous rather than a flicker; frame n-1 is
+ * revoked as frame n goes up, so a long run does not leave a heap of
+ * full-size bitmaps behind it; and until the first one arrives, the stage
+ * shows a pulse, so the emptiness reads as "not yet" rather than "nothing is
+ * happening".
  */
 const LiveView: React.FC<{ src: string; live: boolean; caption: string; placeholder: string }> = ({
   src, live, caption, placeholder,
 }) => {
   const [shown, setShown] = React.useState('');
+  // The object URL currently on screen. Kept in a ref rather than state
+  // because revoking is cleanup, not rendering, and it must happen exactly
+  // once per frame no matter how the component re-renders.
+  const showing = React.useRef('');
 
   React.useEffect(() => {
-    if (!src) { setShown(''); return; }
+    if (!src) return;
     let cancelled = false;
-    const img = new Image();
-    img.onload = () => { if (!cancelled) setShown(src); };
-    img.src = src;
-    return () => { cancelled = true; };
+    const abort = new AbortController();
+
+    (async () => {
+      try {
+        // Fetched as a blob rather than handed to an `img` as a URL, so the
+        // frame is an object this code owns and can destroy. Frame n-1 is
+        // revoked the moment frame n is on screen: every frame is a distinct
+        // URL (`?seq=N`), so without this a three-minute run leaves a couple
+        // of hundred full-size bitmaps alive behind the panel.
+        const res = await fetch(src, { signal: abort.signal, cache: 'no-store' });
+        if (!res.ok) return;
+        const blob = await res.blob();
+        if (cancelled) return;
+        const next = URL.createObjectURL(blob);
+        const previous = showing.current;
+        showing.current = next;
+        setShown(next);
+        if (previous) URL.revokeObjectURL(previous);
+      } catch {
+        // An aborted or failed frame is not an error worth showing: the next
+        // poll brings another one, and the last good frame stays up meanwhile.
+      }
+    })();
+
+    return () => { cancelled = true; abort.abort(); };
   }, [src]);
+
+  // The last frame goes with the panel.
+  React.useEffect(() => () => {
+    if (showing.current) URL.revokeObjectURL(showing.current);
+    showing.current = '';
+  }, []);
 
   return (
     <figure className="space-y-2.5">
@@ -182,14 +216,6 @@ export const ApplyReviewPanel: React.FC<ApplyReviewPanelProps> = ({
   const missing = run.missing_required || [];
   const steps = run.steps || [];
 
-  // Keep the newest line in view, so a long run reads like a feed rather than
-  // something the reader has to chase with the scrollbar.
-  const logRef = React.useRef<HTMLDivElement>(null);
-  React.useEffect(() => {
-    const el = logRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [steps.length]);
-
   // Escape closes it, like every other sheet in the app.
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -207,8 +233,19 @@ export const ApplyReviewPanel: React.FC<ApplyReviewPanelProps> = ({
   // The headline, and separately the evidence. The server translates its own
   // driver failures now, but this is the last gate before a stack frame could
   // reach a person, so it stays.
-  const headline = readableFailure(run.message);
-  const trace = run.detail || headline.trace;
+  const readable = readableFailure(run.message);
+  const trace = run.detail || readable.trace;
+
+  // While it runs, the headline is two or three words. `run.message` is the
+  // newest backend log line, which means it was printing whole tracking URLs
+  // across three wrapped lines of the modal. An ending is a sentence, because
+  // an ending has something to say.
+  const headline = run.done || isWaitingOnYou
+    ? outcomeSentence(readable.text)
+    : progressPhrase(readable.text);
+
+  // The rail under it: the same lines, as phrases, de-duplicated.
+  const trail = progressTrail(steps);
 
   return (
     <div
@@ -252,7 +289,7 @@ export const ApplyReviewPanel: React.FC<ApplyReviewPanelProps> = ({
           )}
           <div className="min-w-0">
             <p className={`text-[14px] font-semibold leading-snug ${run.done || isWaitingOnYou ? tone.text : 'text-[#f5f5f7]'}`}>
-              {headline.text}
+              {headline}
             </p>
             {/* The run has not failed and has not stalled -- it is paused, on
                 purpose, and it will pick itself back up. Saying so is the
@@ -311,39 +348,43 @@ export const ApplyReviewPanel: React.FC<ApplyReviewPanelProps> = ({
           </div>
         )}
 
-        {/* What it is doing, while it does it. A run takes the better part of
-            a minute; before this there was a spinner and one word, and the
-            honest complaint was that you could not tell it apart from a hang. */}
-        {steps.length > 0 && (
-          <div className="mx-6 mt-3 shrink-0 rounded-2xl bg-black/20 shadow-[inset_0_0_0_0.5px_rgba(255,255,255,0.08)] overflow-hidden">
-            <div
-              ref={logRef}
-              className="max-h-40 overflow-y-auto custom-scrollbar px-4 py-3 space-y-1"
-            >
-              {steps.map((step, i) => {
-                const skipped = /^left .* empty/i.test(step);
-                const isLast = i === steps.length - 1;
-                // A log line can be a driver error too, and one of those runs
-                // to forty lines. Same treatment as the headline.
-                const line = readableFailure(step).text;
+        {/* What it is doing, while it does it -- as a rail of phrases, not a
+            log. This was the backend's own step list rendered verbatim, which
+            meant a wrapped tracking URL twice over and lines like "Configuring
+            browser with anti-detect and session parameters...". Nobody
+            watching their own application needs either. Each line maps to two
+            or three words, consecutive repeats collapse, and only the last
+            few are kept: enough to see it moving, which is the whole job. */}
+        {trail.length > 0 && (
+          <div className="mx-6 mt-3 shrink-0 rounded-2xl bg-black/20 shadow-[inset_0_0_0_0.5px_rgba(255,255,255,0.08)] px-4 py-3">
+            <ol className="space-y-1.5">
+              {trail.map((phrase, i) => {
+                const isTip = i === trail.length - 1;
+                const active = isTip && !run.done;
                 return (
-                  <p
-                    key={`${i}-${step.slice(0, 24)}`}
-                    className={`text-[12.5px] leading-snug flex gap-2 ${
-                      skipped ? 'text-amber-300/90' : 'text-[rgba(235,235,245,0.62)]'
+                  <li
+                    key={`${i}-${phrase}`}
+                    className={`flex items-center gap-2.5 text-[13px] leading-none transition-opacity duration-300 ${
+                      active
+                        ? 'text-[#f5f5f7] font-medium'
+                        : 'text-[rgba(235,235,245,0.42)]'
                     }`}
                   >
-                    <span
-                      className={`shrink-0 mt-[6px] w-1.5 h-1.5 rounded-full ${
-                        skipped ? 'bg-amber-400' : isLast && !run.done ? 'bg-sky-400 animate-pulse' : 'bg-white/25'
-                      }`}
-                      aria-hidden
-                    />
-                    <span className="min-w-0 break-words">{line}</span>
-                  </p>
+                    <span className="relative flex w-1.5 h-1.5 shrink-0">
+                      {active && (
+                        <span className="absolute inline-flex w-full h-full rounded-full bg-sky-400/70 animate-ping" />
+                      )}
+                      <span
+                        className={`relative inline-flex w-1.5 h-1.5 rounded-full ${
+                          active ? 'bg-sky-400' : 'bg-white/25'
+                        }`}
+                      />
+                    </span>
+                    {phrase}
+                  </li>
                 );
               })}
-            </div>
+            </ol>
           </div>
         )}
 
@@ -358,8 +399,8 @@ export const ApplyReviewPanel: React.FC<ApplyReviewPanelProps> = ({
             }
             placeholder={
               run.done
-                ? 'No frame was captured before this run ended.'
-                : readableFailure(run.message).text || 'A Chrome window is opening on the form.'
+                ? 'The run ended before there was anything to show.'
+                : 'Warming up the live view...'
             }
           />
         </div>

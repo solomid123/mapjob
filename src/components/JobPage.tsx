@@ -183,9 +183,18 @@ export const JobPage: React.FC<JobPageProps> = ({
   return (
     <div className="min-h-screen text-[#f5f5f7] font-sans pb-24 animate-in fade-in duration-200">
       
-      {/* Top Airbnb Navigation / Header */}
-      <div className="border-b border-white/[0.09] sticky top-0 z-30 bg-[var(--tile)] backdrop-blur-md backdrop-saturate-150 pt-[max(env(safe-area-inset-top,0px),1rem)]">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex items-center justify-between">
+      {/* THE RIBBON — the same one the search page wears.
+        *
+        * This was a bar of its own: tile-coloured instead of the ribbon's
+        * glass, 1rem of safe-area padding plus py-3.5 against a flat 48px, and
+        * a max-w-7xl centre line where the rest of the app runs to 1760px. Set
+        * beside the home page it read as a different site's header — narrower
+        * content, taller bar, different surface. Same classes as
+        * `Navbar`'s header now, so the two are the same object by
+        * construction and stay that way. */}
+      <header className="ic-ribbon sticky top-0 z-50 select-none safe-area-top">
+        <div className="max-w-[1760px] mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-12 gap-2">
           <div className="flex items-center gap-3 sm:gap-6">
             {/* The same lockup the ribbon carries, from the same file. This
               * used to be a local copy -- an outline pin in a rose rounded
@@ -226,9 +235,13 @@ export const JobPage: React.FC<JobPageProps> = ({
               <span>{isSaved ? 'Saved' : 'Save'}</span>
             </button>
           </div>
+          </div>
         </div>
-      </div>
+      </header>
 
+      {/* The page itself stays at 1280: a job is a document, and a line of
+        * description stretched to 1760px is unreadable. Only the chrome runs
+        * the full width, exactly as it does on the search page. */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 space-y-6">
         
         {/* Title & Metadata Header.

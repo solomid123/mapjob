@@ -1,6 +1,6 @@
 import type { Job } from '../types/job';
 
-const BACKEND_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
+const BACKEND_URL = import.meta.env.VITE_API_BASE_URL || (typeof window !== 'undefined' ? `http://${window.location.hostname || 'localhost'}:8000` : 'http://localhost:8000');
 
 export interface DirectApplyResult {
   success: boolean;
@@ -459,33 +459,54 @@ function toRun(state: AgentState): BrowserApplyRun {
 
 /**
  * Opens the employer's form in a real browser and lets the in-page agent fill
- * it from the stored profile. `dryRun` defaults to true: the run stops with the
- * form filled and the submit button untouched, so it can be read before it is
- * sent. The browser stays open on that form until it is approved or dropped.
+ * it from the stored profile.
+ *
+ * `dryRun` defaults to **false**: the agent goes all the way through and presses
+ * Submit itself. It used to default to true — fill everything, then stop dead on
+ * the last button and wait to be told to press it — which turned every
+ * application into two rounds of attention for no added safety: the run had
+ * already typed real answers into a real employer's form by then, and a human
+ * skimming a screenshot catches very little the verifier does not.
+ *
+ * Pass `true` to get the old rehearsal, which leaves the browser parked on the
+ * filled form for `submitReviewedForm` to send.
  */
-export async function startBrowserApply(job: Job, dryRun = true): Promise<BrowserApplyRun> {
-  // A real send continues in the browser that is already open on the reviewed
-  // form. Filling a fresh one would send a form nobody had read.
-  const endpoint = dryRun ? '/api/apply' : '/api/apply/submit';
-  const res = await fetch(`${BACKEND_URL}${endpoint}`, {
+export async function startBrowserApply(job: Job, dryRun = false): Promise<BrowserApplyRun> {
+  const res = await fetch(`${BACKEND_URL}/api/apply`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: dryRun
-      ? JSON.stringify({
-          url: job.applyUrl,
-          job_id: job.id,
-          company: job.company,
-          job_title: job.title,
-          dry_run: true,
-        })
-      : '{}',
+    body: JSON.stringify({
+      url: job.applyUrl,
+      job_id: job.id,
+      company: job.company,
+      job_title: job.title,
+      dry_run: dryRun,
+    }),
   });
   if (!res.ok) {
     const detail = await res.json().catch(() => null);
     throw new Error(detail?.detail || `Could not start the browser (HTTP ${res.status}).`);
   }
-  if (dryRun) {
-    agentJob = { id: job.id, url: job.applyUrl || '', company: job.company, title: job.title };
+  agentJob = { id: job.id, url: job.applyUrl || '', company: job.company, title: job.title };
+  return await getBrowserApply(AGENT_RUN_ID);
+}
+
+/**
+ * Sends a form a rehearsal run left filled and waiting.
+ *
+ * It continues in the browser that is already open on that form rather than
+ * filling a fresh one, because the model does not fill a page identically
+ * twice — a second pass would send something nobody had read.
+ */
+export async function submitReviewedForm(): Promise<BrowserApplyRun> {
+  const res = await fetch(`${BACKEND_URL}/api/apply/submit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => null);
+    throw new Error(detail?.detail || `Could not send that form (HTTP ${res.status}).`);
   }
   return await getBrowserApply(AGENT_RUN_ID);
 }

@@ -21,11 +21,13 @@ import {
   fetchDirectAtsJobs,
   fetchJobFeed,
   startBrowserApply,
+  submitReviewedForm,
   pollBrowserApply,
   type BrowserApplyRun,
   type FetchJobsOptions,
 } from './services/directAtsApi';
 import { ApplyReviewPanel } from './components/ApplyReviewPanel';
+import { BottomTabBar, type BottomTabType } from './components/BottomTabBar';
 
 /**
  * Below this fraction of the loaded region's width, a viewport is refetched even
@@ -185,6 +187,21 @@ export function App() {
   const activeParamsRef = useRef<JobSearchParams>({ cityId: 'eindhoven' });
   const searchRequestRef = useRef(0);
   const [searchError, setSearchError] = useState('');
+  const [activeBottomTab, setActiveBottomTab] = useState<BottomTabType>('explore');
+
+  const handleSelectBottomTab = (tab: BottomTabType) => {
+    setActiveBottomTab(tab);
+    setActiveJobPage(null);
+    if (tab === 'explore') {
+      setShowSavedOnly(false);
+      setActiveTopTab('jobs');
+    } else if (tab === 'wishlists') {
+      setShowSavedOnly(true);
+      setActiveTopTab('jobs');
+    } else if (tab === 'profile') {
+      setIsPostJobOpen(true);
+    }
+  };
 
   // Live aggregated job fetching for initial/dropdown selection
   useEffect(() => {
@@ -585,6 +602,27 @@ export function App() {
   const applyJobRef = useRef<Job | null>(null);
 
   /**
+   * Says what a finished run actually achieved, and marks the job applied when
+   * something left the browser.
+   *
+   * `SUBMITTED_UNVERIFIED` is marked applied too. It means the form went but the
+   * page showed no confirmation, and the expensive mistake there is applying
+   * twice, not failing to notice once — so it is recorded, and said plainly
+   * enough to be checked rather than assumed.
+   */
+  const reportApplyOutcome = (job: Job, final: BrowserApplyRun) => {
+    if (final.status === 'APPLIED') {
+      markApplied(job);
+      showToast(`Applied to ${job.company}. Their page confirmed it.`);
+    } else if (final.status === 'SUBMITTED_UNVERIFIED') {
+      markApplied(job);
+      showToast(`Sent to ${job.company}, but their page showed no confirmation. Worth checking.`);
+    } else {
+      showToast(final.message);
+    }
+  };
+
+  /**
    * Applies by driving the employer's own form in a real browser.
    *
    * This used to POST to an ATS "apply API" that does not exist on any public
@@ -592,9 +630,13 @@ export function App() {
    * candidate on the form to type it all themselves. Filling the real form is
    * the mechanism that actually works.
    *
-   * The first pass is always a rehearsal: it fills every field, stops before
-   * the submit button, and shows a screenshot of what it typed. Nothing reaches
-   * an employer until that has been read and approved.
+   * The run goes all the way through: it fills every field and presses Submit
+   * itself, then reports what the employer's page said back. It used to stop on
+   * the last button and wait for a second click, which bought nothing — by that
+   * point it had already typed real answers into a real employer's form, and the
+   * page's own confirmation is better evidence than a human skimming a
+   * screenshot. The panel still streams every step, so a bad run can be watched
+   * and killed while it happens.
    */
   const handleFastApply = async (job: Job) => {
     if (!job.applyUrl) {
@@ -610,10 +652,11 @@ export function App() {
     setApplyingJobId(job.id);
 
     try {
-      const started = await startBrowserApply(job, true);
+      const started = await startBrowserApply(job);
       setApplyRun(started);
       const final = await pollBrowserApply(started.id, setApplyRun);
       setApplyRun(final);
+      reportApplyOutcome(job, final);
     } catch (err: any) {
       showToast(err?.message || 'The apply service is unreachable.');
       setApplyRun(null);
@@ -632,22 +675,11 @@ export function App() {
 
     setIsSubmittingForReal(true);
     try {
-      const started = await startBrowserApply(job, false);
+      const started = await submitReviewedForm();
       setApplyRun(started);
       const final = await pollBrowserApply(started.id, setApplyRun);
       setApplyRun(final);
-
-      if (final.status === 'APPLIED') {
-        markApplied(job);
-        showToast(`Applied to ${job.company}. Their page confirmed it.`);
-      } else if (final.status === 'SUBMITTED_UNVERIFIED') {
-        // Sent, but unconfirmed. Marked applied so it is not sent twice, and
-        // said plainly so it can be checked rather than assumed.
-        markApplied(job);
-        showToast(`Sent to ${job.company}, but their page showed no confirmation. Worth checking.`);
-      } else {
-        showToast(final.message);
-      }
+      reportApplyOutcome(job, final);
     } catch (err: any) {
       showToast(err?.message || 'The submission could not be completed.');
     } finally {
@@ -1011,12 +1043,12 @@ export function App() {
             
             {/* Left: Job Listings Column (Scrolls independently with slim custom scrollbar) */}
             <div
-              className={`flex-1 h-full overflow-y-auto custom-scrollbar pr-2 pb-16 ${
+              className={`flex-1 h-full overflow-y-auto custom-scrollbar pr-2 pb-36 md:pb-16 ${
                 mobileView === 'map' ? 'hidden md:block' : 'block'
               }`}
             >
-          {/* Subheader matching exact Airbnb screenshot layout */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6 pb-2 border-b border-gray-100">
+          {/* Subheader (Desktop only - mobile cards start immediately like Airbnb) */}
+          <div className="hidden md:flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6 pb-2 border-b border-gray-100">
             <div>
               <div className="flex items-center gap-2.5">
                 <h2 className="text-2xl font-black text-[#222222] tracking-tight">
@@ -1151,27 +1183,39 @@ export function App() {
 
       </main>
 
-      {/* Floating Toggle for Mobile Screens (Map vs List) */}
-      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-30 md:hidden">
-        <button
-          onClick={() => setMobileView(mobileView === 'map' ? 'list' : 'map')}
-          className="flex items-center gap-2 px-5 py-3 rounded-full bg-gray-900 hover:bg-black text-white font-bold text-xs shadow-2xl transition"
-        >
-          {mobileView === 'map' ? (
-            <>
-              <ListFilter className="w-4 h-4" />
-              <span>Show List</span>
-            </>
-          ) : (
-            <>
-              <MapIcon className="w-4 h-4" />
-              <span>Show Map</span>
-            </>
-          )}
-        </button>
-      </div>
+      {/* Floating Toggle for Mobile Screens (Map vs List) - Airbnb floating pill */}
+      {activeBottomTab === 'explore' && (
+        <div className="fixed bottom-[96px] left-1/2 -translate-x-1/2 z-30 md:hidden pointer-events-auto">
+          <button
+            type="button"
+            onClick={() => setMobileView(mobileView === 'map' ? 'list' : 'map')}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-[#222222] hover:bg-black text-white font-medium text-xs shadow-[0_4px_16px_rgba(0,0,0,0.22)] active:scale-95 transition-all cursor-pointer"
+          >
+            {mobileView === 'map' ? (
+              <>
+                <ListFilter className="w-3.5 h-3.5 stroke-[2]" />
+                <span>List</span>
+              </>
+            ) : (
+              <>
+                <MapIcon className="w-3.5 h-3.5 stroke-[2]" />
+                <span>Map</span>
+              </>
+            )}
+          </button>
+        </div>
+      )}
+
         </>
       )}
+
+      {/* Signature Airbnb Mobile Bottom Tab Bar (Always accessible so user never gets stuck) */}
+      <BottomTabBar
+        activeTab={activeBottomTab}
+        setActiveTab={handleSelectBottomTab}
+        savedCount={savedJobIds.size}
+        onOpenPostJob={() => setIsPostJobOpen(true)}
+      />
 
       {/* Post a Job Modal (Employer) */}
       <PostJobModal

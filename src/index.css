@@ -337,33 +337,50 @@
        of it. */
     background-color: #0a2e8f;
     background-image:
-      /* Soft diagonal ribbons, top layer. An unbroken blue field is hard to
-       * look at for any length of time -- there is nothing for the eye to
-       * settle on, so it keeps hunting. Apple's wallpaper breaks it with wide
-       * bands of slightly lighter and slightly darker blue. The ramps are long
-       * (140px+) and the alphas tiny: any harder and it stops being a surface
-       * and becomes stripes. Two passes at different angles and periods so the
-       * spacing never reads as a repeat. */
-      repeating-linear-gradient(
-        104deg,
-        rgba(255, 255, 255, 0) 0px,
-        rgba(255, 255, 255, 0.05) 150px,
-        rgba(255, 255, 255, 0) 320px,
-        rgba(0, 0, 0, 0.05) 500px,
-        rgba(255, 255, 255, 0) 680px
+      /* Wide sweeping arcs, the way Apple's wallpaper is actually built.
+       *
+       * The straight repeating gradients I tried first were wrong: the bands
+       * in the reference are *curved*, huge shallow arcs crossing the whole
+       * screen, and no linear gradient can bend. These are enormous ellipses
+       * (150-260% of the viewport) centred well off-canvas, so only a small
+       * slice of each circumference crosses the page -- and a small slice of a
+       * very large circle is exactly that long, lazy curve.
+       *
+       * Each one is a single edge, not a ring: opaque out to a radius, then a
+       * feather of a few percent to nothing. The feather is what separates a
+       * band of light from a hard rim. Alphas stay under 0.1 -- these are
+       * meant to be felt rather than seen.
+       *
+       * The feather is expressed in percent of a radius that is itself ~2x the
+       * viewport, so 45% -> 53% is not a soft edge, it is several hundred
+       * pixels of mush -- my first attempt dissolved into a plain blur. Under
+       * two points of spread is what actually draws a band. */
+      radial-gradient(
+        ellipse 170% 140% at 6% 116%,
+        rgba(255, 255, 255, 0.07) 0 45.6%,
+        rgba(255, 255, 255, 0) 47.4%
       ),
-      repeating-linear-gradient(
-        97deg,
-        rgba(255, 255, 255, 0) 0px,
-        rgba(255, 255, 255, 0.035) 260px,
-        rgba(255, 255, 255, 0) 540px,
-        rgba(0, 0, 0, 0.035) 820px,
-        rgba(255, 255, 255, 0) 1100px
+      radial-gradient(
+        ellipse 210% 165% at -12% 104%,
+        rgba(0, 0, 0, 0.11) 0 51.2%,
+        rgba(0, 0, 0, 0) 53.2%
       ),
-      radial-gradient(120% 90% at 10% 4%, #2f7ef0 0%, rgba(47, 126, 240, 0) 52%),
-      radial-gradient(90% 110% at 92% 16%, #0b47bd 0%, rgba(11, 71, 189, 0) 58%),
-      radial-gradient(130% 110% at 60% 108%, #041646 0%, rgba(4, 22, 70, 0) 68%),
-      linear-gradient(152deg, #1052d6 0%, #0a2e8f 46%, #061a52 100%);
+      radial-gradient(
+        ellipse 190% 150% at 112% -16%,
+        rgba(255, 255, 255, 0.055) 0 47%,
+        rgba(255, 255, 255, 0) 49%
+      ),
+      radial-gradient(
+        ellipse 260% 190% at 96% 128%,
+        rgba(0, 0, 0, 0.1) 0 53%,
+        rgba(0, 0, 0, 0) 55%
+      ),
+      /* The colour underneath the arcs: light at the top-left, deepening into
+       * the bottom-right, so the arcs have something to modulate. */
+      radial-gradient(130% 100% at 8% 0%, #2d7bef 0%, rgba(45, 123, 239, 0) 56%),
+      radial-gradient(100% 120% at 96% 10%, #0c49c2 0%, rgba(12, 73, 194, 0) 60%),
+      radial-gradient(140% 120% at 66% 112%, #03123d 0%, rgba(3, 18, 61, 0) 70%),
+      linear-gradient(150deg, #1355db 0%, #0a2e8f 48%, #05164a 100%);
     background-attachment: fixed;
     margin: 0;
     padding: 0;

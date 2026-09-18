@@ -1068,7 +1068,14 @@ export function App() {
             
             {/* Left: Job Listings Column (Scrolls independently with slim custom scrollbar) */}
             <div
-              className={`flex-1 h-full overflow-y-auto custom-scrollbar pr-2 pb-36 md:pb-16 ${
+              /* px-3 -mx-3 is not decoration: `overflow-y: auto` forces
+                 `overflow-x: auto` too, so this box clips horizontally, and
+                 the cards sat flush against both of its edges -- which cut
+                 the side shadows off and left the cards looking lit only from
+                 below while the map, clipped by nothing, kept its shadow all
+                 the way round. The padding gives the shadow somewhere to fall
+                 and the negative margin gives the padding back to the layout. */
+              className={`flex-1 h-full overflow-y-auto custom-scrollbar px-3 -mx-3 pb-36 md:pb-16 ${
                 mobileView === 'map' ? 'hidden md:block' : 'block'
               }`}
             >

@@ -20,7 +20,7 @@ import { ChevronRight } from 'lucide-react';
  */
 
 const FOOTER_LINK =
-  'text-[rgba(235,235,245,0.42)] hover:text-[rgba(235,235,245,0.75)] transition-colors duration-150';
+  'text-[rgba(235,235,245,0.62)] hover:text-[#f5f5f7] transition-colors duration-150';
 
 interface FooterInfoProps {
   savedCount: number;
@@ -131,11 +131,15 @@ export const FooterInfo: React.FC<FooterInfoProps> = ({
  *
  * Hidden below `md` because the phone layout ends in a fixed tab bar and a
  * floating Map/List pill; a third thing stacked under those would be buried.
+ *
+ * It carries the chrome's glass rather than sitting bare on the wallpaper:
+ * white text at 42% over the pale theme was grey on grey, which is no way to
+ * publish a credit you are obliged to publish.
  */
 export const SiteFooter: React.FC = () => (
-  <footer className="hidden md:flex shrink-0 justify-center select-none">
+  <footer className="ic-footbar hidden md:flex shrink-0 justify-center select-none">
     <div className="w-full max-w-[1760px] px-4 sm:px-6 lg:px-8">
-      <div className="flex items-center justify-between gap-6 h-8 text-[11px] tracking-[-0.005em] text-[rgba(235,235,245,0.42)] border-t border-white/[0.07]">
+      <div className="flex items-center justify-between gap-6 h-9 text-[11px] tracking-[-0.005em] text-[rgba(235,235,245,0.62)]">
         <div className="flex items-center gap-3">
           <span>&copy; {new Date().getFullYear()} mapjob</span>
           <span className="w-px h-2.5 bg-white/10" />

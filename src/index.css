@@ -296,6 +296,31 @@ html[data-wallpaper='sage'] {
     0 1px 10px rgba(0, 0, 0, 0.2);
 }
 
+/* The ribbon's counterpart at the bottom of the window.
+ *
+ * The legal line used to be bare text on the wallpaper with a hairline rule
+ * over it, and on the pale wallpaper that is grey-on-grey: the credits were
+ * there and unreadable. Giving it the ribbon's own glass fixes the contrast
+ * for every theme at once and closes the frame -- glass at the top of the
+ * window, glass at the bottom, the work floating between them.
+ *
+ * A shade more opaque than the ribbon (0.8 against 0.68). The top bar has the
+ * wallpaper's brightest region behind it and can afford to be sheer; this one
+ * sits over whatever the map happens to be showing, which is often near-white
+ * Mapbox paper, and at 0.68 the type swam. The lit edge moves to the top,
+ * because that is the side the join is on.
+ *
+ * Welded to the window edge like the ribbon, so it casts nothing and cannot
+ * bleed a shadow into the map above it. */
+.ic-footbar {
+  position: relative;
+  z-index: 30;
+  background: rgba(6, 10, 26, 0.8);
+  -webkit-backdrop-filter: saturate(180%) blur(30px);
+  backdrop-filter: saturate(180%) blur(30px);
+  box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.1);
+}
+
 /* A floating island: the material of a card, at chrome scale.
  *
  * Deliberately NOT `overflow: hidden`. Clipping to the radius is the obvious
@@ -360,7 +385,8 @@ html[data-wallpaper='sage'] {
   .ic-island {
     background: #0b1533;
   }
-  .ic-ribbon {
+  .ic-ribbon,
+  .ic-footbar {
     background: #070c1c;
   }
 }

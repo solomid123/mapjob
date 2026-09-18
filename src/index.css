@@ -239,13 +239,36 @@ html[data-wallpaper='sage'] {
   box-shadow: var(--shadow-lift), 0 0 0 2.5px var(--tint), var(--tile-edge);
 }
 
-/* The header. Apple's chrome is never opaque: it is the page colour at ~72%
- * with a heavy blur and a saturation boost, over a hairline that is a shadow
- * rather than a border (a border would take a layout pixel and shift the whole
- * page down by one). Content scrolling under it stays faintly visible, which
- * is what makes the bar read as glass sitting on the page instead of a slab
- * bolted above it. */
-/* The header island: navbar and filter strip on one raised, rounded slab.
+/* ---- The chrome, in two parts ------------------------------------------
+ *
+ * iCloud separates *identity and navigation* from *work*. A thin ribbon is
+ * welded to the top edge of the window -- full bleed, no radius, no gap --
+ * and it only ever holds the wordmark and the app switcher. Everything you
+ * actually do then floats below it as separate rounded blocks on the
+ * wallpaper, each one its own object with its own shadow.
+ *
+ * This used to be one 220px slab carrying wordmark, tabs, account, search
+ * and filters together. That is a masthead: it says the chrome is the page.
+ * Splitting it into a ribbon plus islands is what makes the wallpaper read
+ * as the ground everything is sitting on.
+ */
+
+/* The ribbon: chrome, not an object. It is attached to the window, so it has
+ * no shadow to cast and nothing to lift out of -- the only edge it gets is a
+ * hairline of light along the bottom, which is the join between the glass and
+ * the page. Darker than the islands on purpose: the layer nearest the viewer
+ * is the one the eye should notice least. */
+.ic-ribbon {
+  position: relative;
+  z-index: 50;
+  background: rgba(6, 10, 26, 0.68);
+  -webkit-backdrop-filter: saturate(180%) blur(30px);
+  backdrop-filter: saturate(180%) blur(30px);
+  box-shadow: inset 0 -0.5px 0 rgba(255, 255, 255, 0.1),
+    0 1px 10px rgba(0, 0, 0, 0.2);
+}
+
+/* A floating island: the material of a card, at chrome scale.
  *
  * Deliberately NOT `overflow: hidden`. Clipping to the radius is the obvious
  * way to keep the children inside the rounded corners, but every menu in the
@@ -254,11 +277,10 @@ html[data-wallpaper='sage'] {
  * overflow would cut all of them off at the edge. It is not needed anyway:
  * the children draw no background of their own, so there is nothing to bleed
  * past the corners. */
-.ic-chrome {
+.ic-island {
   position: relative;
   z-index: 40;
-  margin: 10px 12px 0;
-  border-radius: 24px;
+  border-radius: 22px;
   /* The same fill as a card, not a lighter one. At 0.46 the wallpaper came
    * through strongly enough that the header took on the wallpaper's hue --
    * green on sage, red on crimson -- while the cards and menus in front of it
@@ -267,12 +289,40 @@ html[data-wallpaper='sage'] {
   background: var(--tile);
   -webkit-backdrop-filter: saturate(180%) blur(24px);
   backdrop-filter: saturate(180%) blur(24px);
-  /* Same three-layer ladder as the tiles, so the header reads as the same
-   * kind of object sitting at the same height, just a larger one. */
+  /* Same three-layer ladder as the tiles, so an island reads as the same kind
+   * of object sitting at the same height, just a larger one. */
   box-shadow: var(--shadow-rest), var(--tile-edge);
+  transition:
+    box-shadow var(--dur-base) var(--ease-apple-out),
+    transform var(--dur-base) var(--ease-apple-spring);
 }
 
-/* Inside the island the bars are pure layout -- the slab owns the surface.
+/* The slab itself lifts, the way a card does.
+ *
+ * Lift only, no scale. A card is ~300px wide and 0.6% of it is two pixels;
+ * an island can be the full width of the window, where the same scale would
+ * push ~12px past its own margins and crop against the viewport edge.
+ *
+ * Safe to transform despite the popovers anchored inside it: transform makes
+ * this a containing block for fixed-position descendants, but the
+ * backdrop-filter above already did that, so nothing changes. That is the
+ * same trap that once put the filter sheet under the map, so it is worth
+ * saying out loud rather than rediscovering.
+ *
+ * The controls inside keep their own hover, which compounds: the slab rises
+ * a little and whatever is under the pointer rises further out of it. */
+.ic-island:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-lift), var(--tile-edge);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ic-island:hover {
+    transform: none;
+  }
+}
+
+/* Inside an island the bars are pure layout -- the slab owns the surface.
  * Two stacked backdrop filters would also double the blur cost of the header
  * for no visible gain. */
 .ic-header {
@@ -284,9 +334,53 @@ html[data-wallpaper='sage'] {
 /* Safari and Firefox without backdrop-filter get the solid colour instead of a
  * transparent bar with text showing through it. */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .ic-chrome {
+  .ic-island {
     background: #0b1533;
   }
+  .ic-ribbon {
+    background: #070c1c;
+  }
+}
+
+/* The wordmark. Apple sets " iCloud" as one white lockup: a solid glyph,
+ * then the name at display size in a regular-to-medium weight with the
+ * tracking pulled in. No colour, no tile behind the mark, no weight contrast
+ * between the two halves of the word -- a two-tone "map|job" in a brand red
+ * is a startup logo, and it was the one thing in the chrome still shouting.
+ *
+ * currentColor on the glyph so the mark and the name can never drift apart. */
+.ic-wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #ffffff;
+  line-height: 1;
+}
+.ic-wordmark-text {
+  font-size: 20px;
+  font-weight: 500;
+  letter-spacing: -0.026em;
+}
+/* The whole lockup is one target, so it dims and settles as one thing. No
+ * scale: resampling a 20px wordmark mid-animation is exactly the blur this
+ * typeface's tracking was chosen to avoid. */
+.ic-wordmark {
+  transition: opacity var(--dur-fast) var(--ease-apple-out);
+}
+.ic-wordmark:hover {
+  opacity: 0.72;
+}
+.ic-wordmark:active {
+  opacity: 0.55;
+}
+
+/* The hairline between the app switcher and the account cluster in the
+ * ribbon. iCloud groups its right-hand glyphs the same way. */
+.ic-ribbon-sep {
+  width: 0.5px;
+  height: 18px;
+  background: rgba(255, 255, 255, 0.16);
+  flex: none;
 }
 
 /* UISegmentedControl, as it is drawn on iOS and in every Apple web property
@@ -372,6 +466,44 @@ html[data-wallpaper='sage'] {
 .ic-fill:hover {
   background: var(--fill-hover);
 }
+/* The selected app in the ribbon's switcher. Filled and lit rather than
+ * underlined or tinted blue: these are three places to be, not three settings
+ * that are on or off, and Apple marks "you are here" by giving the control a
+ * surface. Brighter than the hover fill so the two never read as the same
+ * state under a moving pointer. */
+.ic-fill.is-on {
+  background: rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.22),
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.3);
+}
+.ic-fill.is-on:hover {
+  background: rgba(255, 255, 255, 0.26);
+}
+
+/* In the ribbon the glyphs sit on bare glass until you point at one.
+ *
+ * iCloud's do, and it matters here: six permanently-filled circles in a 48px
+ * strip read as six buttons nobody finished styling, and they drown the one
+ * fill that is supposed to mean something -- which app you are in. Take the
+ * resting fill away and `is-on` becomes the only lit thing in the bar.
+ *
+ * Every rule in the override has to out-specify the one it replaces, which is
+ * why the descendant selector is repeated on the hover and `is-on` variants
+ * rather than written once on the base. Kept next to the rules it overrides
+ * so the ladder can be read in one place instead of two. */
+.ic-ribbon .ic-fill {
+  background: transparent;
+}
+.ic-ribbon .ic-fill:hover {
+  background: var(--fill-hover);
+}
+.ic-ribbon .ic-fill.is-on {
+  background: rgba(255, 255, 255, 0.2);
+}
+.ic-ribbon .ic-fill.is-on:hover {
+  background: rgba(255, 255, 255, 0.26);
+}
 
 /* The press response, shared by every round control in the chrome.
  *
@@ -423,7 +555,7 @@ html[data-wallpaper='sage'] {
  * mostly rise, with just enough scale to feel attached to the pointer. */
 /* No drop shadow here, and a bigger move than the first attempt.
  *
- * These sit inside .ic-chrome, which is a dark translucent bar: a black
+ * These sit inside the chrome, which is dark translucent glass: a black
  * shadow cast onto it is invisible, which is why translateY(-2px) with a
  * shadow measured as applied (matrix(1.02,0,0,1.02,0,-2)) and still looked
  * like nothing was happening. The cards get away with shadows because they

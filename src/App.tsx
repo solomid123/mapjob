@@ -1002,17 +1002,19 @@ export function App() {
         />
       )}
 
-      {/* Top Airbnb Navbar with Menu (Jobs, Automated Emails, Interview Helper) & Search Bar.
+      {/* The chrome, decomposed the way iCloud's is: a ribbon welded to the top
+        * edge for identity and navigation, then the work floating under it as
+        * separate blocks on the wallpaper -- search in one island, filters in
+        * another.
         *
-        * The navbar and the filter strip are wrapped in one `.ic-chrome` island
-        * rather than being two full-bleed bars. They have to share a single
-        * element for the raised look to work at all: a drop shadow on the
-        * navbar alone would fall behind the filter strip, and since that strip
-        * is translucent the shadow would show straight through it as a dark
-        * band across the middle of the island. One wrapper also means one
-        * backdrop-filter pass for the whole header instead of two. */}
+        * This was one slab until now, and for a reason: two *touching* bars
+        * cannot each have a shadow, because the upper one's would fall behind
+        * the lower one and show straight through its translucency as a dark
+        * band. Separating them by a real gap is what makes the shadows legal
+        * again -- each one now lands on the wallpaper, which is the whole
+        * point of the look. The price is one extra backdrop-filter pass. */}
       {!activeJobPage && (
-        <div className="ic-chrome shrink-0">
+        <div className="shrink-0">
         <Navbar
           searchQuery={searchQuery}
           setSearchQuery={(q) => {
@@ -1030,6 +1032,7 @@ export function App() {
           lastPosted={lastPosted}
           setLastPosted={setLastPosted}
           savedCount={savedJobIds.size}
+          appliedCount={appliedJobIds.size}
           showSavedOnly={showSavedOnly}
           setShowSavedOnly={setShowSavedOnly}
           onOpenPostJob={() => setIsPostJobOpen(true)}
@@ -1037,6 +1040,7 @@ export function App() {
           setActiveTopTab={setActiveTopTab}
         />
         {activeTopTab !== 'interview' && (
+          <div className="ic-island mx-3 mt-2.5">
           <FilterBar
             selectedCategory={selectedCategory}
             setSelectedCategory={setSelectedCategory}
@@ -1054,6 +1058,7 @@ export function App() {
             onResetFilters={handleResetFilters}
             hasActiveFilters={hasActiveFilters}
           />
+          </div>
         )}
         </div>
       )}

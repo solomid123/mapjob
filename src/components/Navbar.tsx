@@ -7,15 +7,14 @@ import {
 } from '../utils/postedRange';
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { WallpaperPicker } from './WallpaperPicker';
-import { 
-  Search, 
-  MapPin, 
-  Heart, 
-  Menu, 
-  User, 
-  Briefcase, 
-  Mail, 
-  Sparkles, 
+import { ProfileMenu } from './ProfileMenu';
+import {
+  Search,
+  Heart,
+  Briefcase,
+  Mail,
+  Sparkles,
+  PlusCircle,
   X,
   ChevronLeft,
   ChevronRight,
@@ -23,6 +22,20 @@ import {
 } from 'lucide-react';
 import { CITIES } from '../data/mockJobs';
 import { searchJobTitles } from '../data/jobTitles';
+
+/* The mark, drawn rather than borrowed from the icon set.
+ *
+ * Apple's is a solid silhouette with a bite cut out of it -- one filled shape,
+ * no strokes, legible at 16px and at 160. The lucide MapPin is a 2px outline,
+ * which is the vocabulary of a UI glyph, not of a logotype: set beside a 20px
+ * wordmark it reads as a button someone left in the header. So this is the
+ * same pin as a filled teardrop with the hole wound the other way, which the
+ * nonzero fill rule punches straight through. */
+const MapMark: React.FC<{ className?: string }> = ({ className }) => (
+  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className={className}>
+    <path d="M12 1.7a7.4 7.4 0 0 0-7.4 7.4c0 5.6 6.62 12.83 6.9 13.13a.68.68 0 0 0 1 0c.28-.3 6.9-7.53 6.9-13.13A7.4 7.4 0 0 0 12 1.7Zm0 10.25a2.85 2.85 0 1 1 0-5.7 2.85 2.85 0 0 1 0 5.7Z" />
+  </svg>
+);
 
 interface NavbarProps {
   searchQuery: string;
@@ -34,6 +47,7 @@ interface NavbarProps {
   lastPosted: string;
   setLastPosted: (time: string) => void;
   savedCount: number;
+  appliedCount: number;
   showSavedOnly: boolean;
   setShowSavedOnly: (saved: boolean) => void;
   onOpenPostJob: () => void;
@@ -51,6 +65,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   lastPosted,
   setLastPosted,
   savedCount,
+  appliedCount,
   showSavedOnly,
   setShowSavedOnly,
   onOpenPostJob,
@@ -141,40 +156,39 @@ export const Navbar: React.FC<NavbarProps> = ({
   };
 
   return (
-    <header className="ic-header sticky top-0 z-40 select-none">
-      <div className="max-w-[1760px] mx-auto px-4 sm:px-6 lg:px-8">
-        
-        {/* ROW 1. 56px, not 80. Apple's chrome is a thin strip that gets out of
-          * the way; the height here was carrying a 40px logo tile and a row of
-          * underlined tabs, and it read as a masthead. */}
-        <div className="grid grid-cols-3 items-center h-14">
+    <>
+      {/* THE RIBBON.
+        *
+        * Welded to the top edge: full bleed, square corners, 48px. It holds
+        * the two things that are true no matter what you are doing -- who the
+        * app is, and which of its three parts you are in -- and nothing else.
+        * Search and filters used to share this bar and made it a 220px
+        * masthead; they are their own islands below now. */}
+      <header className="ic-ribbon sticky top-0 z-50 select-none">
+        <div className="max-w-[1760px] mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-12 gap-2">
 
-          {/* Col 1: Logo */}
-          <div className="flex items-center justify-start">
-            <div
-              className="flex items-center gap-2 cursor-pointer select-none shrink-0"
+            <button
+              type="button"
+              className="ic-wordmark shrink-0 cursor-pointer"
               onClick={() => {
                 setSearchQuery('');
                 setShowSavedOnly(false);
                 setActiveSegment(null);
+                setActiveTopTab('jobs');
               }}
             >
-              <div className="w-7 h-7 rounded-[9px] bg-[#FF385C] flex items-center justify-center text-white">
-                <MapPin className="w-4 h-4 stroke-[2.4]" />
-              </div>
-              <div className="hidden sm:block">
-                {/* Semibold, not black. Apple sets its own wordmarks at regular
-                  * or semibold and lets the size carry them. */}
-                <span className="text-[19px] font-semibold tracking-[-0.022em] text-[#FF385C]">
-                  map<span className="text-[#f5f5f7]">job</span>
-                </span>
-              </div>
-            </div>
-          </div>
+              <MapMark className="w-[17px] h-[17px] shrink-0" />
+              <span className="ic-wordmark-text">mapjob</span>
+            </button>
 
-          {/* Col 2: a real segmented control. */}
-          <div className="hidden md:flex items-center justify-center">
-            <div className="ic-segmented">
+            <div className="flex items-center gap-1">
+
+              {/* The app switcher. Three glyphs, the current one filled --
+                * iCloud's grid of apps, flattened out because there are only
+                * three. The labels come back as tooltips; they were costing
+                * ~280px of the widest row in the app to say three words that
+                * never change. */}
               {([
                 { id: 'jobs', label: 'Jobs', Icon: Briefcase },
                 { id: 'emails', label: 'Automated Emails', Icon: Mail },
@@ -184,58 +198,71 @@ export const Navbar: React.FC<NavbarProps> = ({
                   key={id}
                   type="button"
                   onClick={() => setActiveTopTab(id)}
-                  className={`ic-segmented-item ${activeTopTab === id ? 'is-on' : ''}`}
+                  title={label}
+                  aria-label={label}
+                  aria-pressed={activeTopTab === id}
+                  /* Colour lives on the button, not the glyph, so `color`
+                   * transitions with the fill and lucide's currentColor
+                   * follows it. */
+                  className={`ic-fill w-8 h-8 rounded-full flex items-center justify-center cursor-pointer text-[rgba(235,235,245,0.62)] hover:text-[#f5f5f7] ${
+                    activeTopTab === id ? 'is-on' : ''
+                  }`}
                 >
-                  <Icon className="w-[15px] h-[15px]" />
-                  <span>{label}</span>
+                  <Icon className={`w-4 h-4 ${activeTopTab === id ? 'stroke-[2.1]' : 'stroke-[1.8]'}`} />
                 </button>
               ))}
+
+              <span className="ic-ribbon-sep mx-1.5" />
+
+              <button
+                type="button"
+                onClick={onOpenPostJob}
+                title="Post a job"
+                aria-label="Post a job"
+                className="ic-fill w-8 h-8 rounded-full hidden sm:flex items-center justify-center cursor-pointer text-[rgba(235,235,245,0.62)] hover:text-[#f5f5f7]"
+              >
+                <PlusCircle className="w-[17px] h-[17px] stroke-[1.8]" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowSavedOnly(!showSavedOnly)}
+                className="ic-fill w-8 h-8 rounded-full flex items-center justify-center relative cursor-pointer text-[rgba(235,235,245,0.62)] hover:text-[#f5f5f7]"
+                title="Saved jobs"
+                aria-label="Saved jobs"
+                aria-pressed={showSavedOnly}
+              >
+                <Heart className={`w-4 h-4 stroke-[1.8] ${showSavedOnly ? 'fill-[#FF385C] text-[#FF385C]' : ''}`} />
+                {savedCount > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 bg-[#FF385C] text-white text-[9px] font-semibold min-w-[15px] h-[15px] px-1 rounded-full flex items-center justify-center">
+                    {savedCount}
+                  </span>
+                )}
+              </button>
+
+              <span className="hidden sm:block">
+                <WallpaperPicker />
+              </span>
+
+              <ProfileMenu
+                savedCount={savedCount}
+                appliedCount={appliedCount}
+                onShowSaved={() => setShowSavedOnly(true)}
+                onOpenPostJob={onOpenPostJob}
+              />
             </div>
+
           </div>
-
-          {/* Col 3: Right Header Actions */}
-          <div className="flex items-center justify-end gap-1.5">
-            <button
-              type="button"
-              onClick={onOpenPostJob}
-              className="ic-press-wide hidden lg:inline-block px-3 py-1.5 text-[13px] font-medium tracking-[-0.01em] text-[#f5f5f7] hover:bg-white/[0.13] rounded-lg"
-            >
-              Post a Job
-            </button>
-
-            <WallpaperPicker />
-
-            {/* Saved Wishlist */}
-            <button
-              type="button"
-              onClick={() => setShowSavedOnly(!showSavedOnly)}
-              className="ic-fill w-8 h-8 rounded-full flex items-center justify-center relative cursor-pointer"
-              title="Saved Wishlist"
-            >
-              <Heart className={`w-4 h-4 ${showSavedOnly ? 'fill-[#FF385C] text-[#FF385C]' : 'text-[#f5f5f7]'}`} />
-              {savedCount > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 bg-[#FF385C] text-white text-[9px] font-semibold min-w-[15px] h-[15px] px-1 rounded-full flex items-center justify-center">
-                  {savedCount}
-                </span>
-              )}
-            </button>
-
-            {/* Account. A filled circle, not an outlined Airbnb pill. */}
-            <button type="button" className="ic-fill w-8 h-8 rounded-full flex items-center justify-center cursor-pointer" title="Menu">
-              <Menu className="w-4 h-4 text-[#f5f5f7]" />
-            </button>
-            <button type="button" className="ic-press w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 text-[#f5f5f7] flex items-center justify-center cursor-pointer" title="Account">
-              <User className="w-4 h-4" />
-            </button>
-          </div>
-
         </div>
+      </header>
 
-        {/* ROW 2: DEAD-CENTER AIRBNB SEARCH BAR (Where | Job Title | Last Posted + Search) */}
-        {activeTopTab === 'jobs' && (
-          <div ref={searchBarRef} className="pb-4 hidden md:block">
-            <div className="max-w-4xl mx-auto relative">
-              
+      {/* THE SEARCH ISLAND. Its own block on the wallpaper, floating clear of
+        * the ribbon, with its own shadow and its own hover lift. */}
+      {activeTopTab === 'jobs' && (
+        <div className="px-3 pt-2.5 select-none">
+          <div ref={searchBarRef} className="ic-island hidden md:block max-w-4xl mx-auto p-2.5">
+            <div className="relative">
+
               {/* Floating Multi-segment Search Pill Bar - Razor-sharp HD */}
               <div className="ic-searchfield h-[52px] flex items-center p-1 gap-0.5 relative">
                 <Search className="w-[18px] h-[18px] text-[rgba(235,235,245,0.42)] shrink-0 ml-3 mr-1" />
@@ -817,23 +844,22 @@ export const Navbar: React.FC<NavbarProps> = ({
 
             </div>
           </div>
-        )}
 
-        {/* Mobile Search Input */}
-        <div className="pb-3 md:hidden">
-          <div className="relative">
-            <input
-              type="text"
-              placeholder="Search roles, locations, skills..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2.5 bg-white/10 focus:bg-white/[0.16] border border-transparent focus:border-[#FF385C] rounded-full text-sm outline-none transition"
-            />
-            <Search className="w-4 h-4 text-[rgba(235,235,245,0.42)] absolute left-3.5 top-3" />
+          {/* The same island at phone width, holding one plain field. */}
+          <div className="ic-island md:hidden p-2.5">
+            <div className="ic-searchfield relative flex items-center h-11">
+              <Search className="w-4 h-4 text-[rgba(235,235,245,0.42)] shrink-0 ml-3 mr-2" />
+              <input
+                type="text"
+                placeholder="Search roles, locations, skills..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-transparent pr-3 text-[14px] tracking-[-0.01em] text-[#f5f5f7] placeholder:text-[rgba(235,235,245,0.42)] outline-none"
+              />
+            </div>
           </div>
         </div>
-
-      </div>
-    </header>
+      )}
+    </>
   );
 };

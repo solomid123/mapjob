@@ -108,9 +108,13 @@ export const FilterBar: React.FC<FilterBarProps> = ({
   );
 
   return (
-    <div className="ic-header pt-1 pb-2 select-none">
-      <div className="max-w-[1760px] mx-auto px-4 sm:px-6 lg:px-8">
-        
+    <div className="ic-header select-none">
+      {/* Padding matched to the search island above rather than to the old
+        * page gutters: this is a card now, not a full-bleed strip, and the
+        * lg:px-8 it used to carry left 32px of dead glass inside its own
+        * rounded corner. */}
+      <div className="px-3 py-2">
+
         {/* ROW 1: Signature Airbnb Category Icon Carousel */}
         <div className="relative flex items-center pb-1">
           

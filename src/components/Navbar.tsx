@@ -53,6 +53,10 @@ interface NavbarProps {
   onOpenPostJob: () => void;
   activeTopTab: 'jobs' | 'emails' | 'interview';
   setActiveTopTab: (tab: 'jobs' | 'emails' | 'interview') => void;
+  /** The result count and the filter glyph, to sit level with the search
+   *  field on wide windows. Passed in rather than computed here because the
+   *  count is the list's business, not the chrome's. */
+  resultsSummary?: React.ReactNode;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -71,6 +75,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenPostJob,
   activeTopTab,
   setActiveTopTab,
+  resultsSummary,
 }) => {
   const [activeSegment, setActiveSegment] = useState<'where' | 'title' | 'posted' | null>(null);
   const searchBarRef = useRef<HTMLDivElement>(null);
@@ -259,8 +264,26 @@ export const Navbar: React.FC<NavbarProps> = ({
       {/* THE SEARCH ISLAND. Its own block on the wallpaper, floating clear of
         * the ribbon, with its own shadow and its own hover lift. */}
       {activeTopTab === 'jobs' && (
-        <div className="px-3 pt-2.5 select-none">
-          <div ref={searchBarRef} className="ic-island hidden md:block max-w-4xl mx-auto p-2.5">
+        <div className="px-4 sm:px-6 lg:px-8 pt-2.5 select-none">
+          {/* This row is measured to the main grid below it, not to itself:
+            * max-w-[1696px] is the 1760px content width minus its lg padding,
+            * so the left edge here lands exactly on the left edge of the
+            * listings column. That is the whole point of the row -- the result
+            * count sits out there, level with the search field, which lets the
+            * column start at the same height as the map instead of a heading's
+            * worth lower. */}
+          <div className="relative mx-auto max-w-[1696px] hidden md:block">
+            {/* Only once there is room for it. The slot is the gap the centred
+              * search field leaves on its left: half the row, less half the
+              * field (448px), less a little air. Below 2xl that gap is too
+              * narrow to hold a number and a glyph without crowding the field,
+              * so the count stays at the top of the column instead. */}
+            {resultsSummary && (
+              <div className="hidden 2xl:flex absolute inset-y-0 left-0 w-[calc(50%-472px)] items-center">
+                {resultsSummary}
+              </div>
+            )}
+          <div ref={searchBarRef} className="ic-island max-w-4xl mx-auto p-2.5">
             <div className="relative">
 
               {/* Floating Multi-segment Search Pill Bar - Razor-sharp HD */}
@@ -843,6 +866,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               )}
 
             </div>
+          </div>
           </div>
 
           {/* The same island at phone width, holding one plain field. */}

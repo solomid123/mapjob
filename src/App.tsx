@@ -1018,6 +1018,49 @@ export function App() {
 
   const currentCity = CITIES.find((c) => c.id === selectedCity) || CITIES[0];
 
+  /* How many, where, and the way in to the filters.
+   *
+   * It lives in two places on purpose. On a wide window it is handed to the
+   * navbar and sits level with the search field, out over the left edge of the
+   * listings -- which is what lets the first row of cards start at the same
+   * height as the map instead of one heading lower. On anything narrower there
+   * is no room beside a centred search field, so it goes back to the top of the
+   * column. Same markup either way, so the two cannot drift apart. */
+  const resultsSummary = (
+    <div className="min-w-0">
+      <div className="flex items-center gap-2.5">
+        <h2 className="text-[22px] md:text-[26px] leading-tight font-semibold text-[#f5f5f7] tracking-[-0.028em] truncate">
+           {isLoadingJobs && !jobs.length ? 'Searching jobs...' : `${filteredJobs.length} jobs`}
+        </h2>
+        {/* The whole filter strip, folded into the glyph beside the
+          * count -- same vocabulary as the ribbon icons up top. */}
+        <FilterBar
+          selectedCategory={selectedCategory}
+          setSelectedCategory={setSelectedCategory}
+          jobType={jobType}
+          setJobType={setJobType}
+          remoteType={remoteType}
+          setRemoteType={setRemoteType}
+          minSalary={minSalary}
+          setMinSalary={setMinSalary}
+          visaSponsorshipOnly={visaSponsorshipOnly}
+          setVisaSponsorshipOnly={setVisaSponsorshipOnly}
+          directAtsOnly={directAtsOnly}
+          setDirectAtsOnly={setDirectAtsOnly}
+          totalResults={filteredJobs.length}
+          onResetFilters={handleResetFilters}
+          hasActiveFilters={hasActiveFilters}
+        />
+      </div>
+      {/* Wraps rather than truncates: beside the search field this line has
+        * about half the width it has in the column, and an ellipsis through
+        * the middle of a sentence reads as breakage. Two short lines do not. */}
+      <p className="text-[13px] leading-snug text-[rgba(235,235,245,0.42)] mt-0.5 tracking-[-0.01em]">
+         {searchAsMapMoves ? `Map area: ${activeLocationLabel}. Unmapped results are listed separately.` : `${currentCity.name} and nearby jobs`}
+      </p>
+    </div>
+  );
+
   return (
     /* No background of its own: the body carries the blue canvas, and an opaque
      * root here painted straight over it. */
@@ -1078,6 +1121,7 @@ export function App() {
           onOpenPostJob={() => setIsPostJobOpen(true)}
           activeTopTab={activeTopTab}
           setActiveTopTab={setActiveTopTab}
+          resultsSummary={resultsSummary}
         />
         </div>
       )}
@@ -1118,40 +1162,11 @@ export function App() {
                 mobileView === 'map' ? 'hidden md:block' : 'block'
               }`}
             >
-          {/* Subheader. It used to be desktop-only, because the filter strip
-            * above the map carried the controls on a phone. That strip is gone,
-            * so this row is now the only way to reach the filters and it shows
-            * at every width. */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 md:mb-5 pt-1">
-            <div>
-              <div className="flex items-center gap-2.5">
-                <h2 className="text-[22px] md:text-[28px] font-semibold text-[#f5f5f7] tracking-[-0.028em]">
-                   {isLoadingJobs && !jobs.length ? 'Searching jobs...' : `${filteredJobs.length} jobs`}
-                </h2>
-                {/* The whole filter strip, folded into the glyph beside the
-                  * count -- same vocabulary as the ribbon icons up top. */}
-                <FilterBar
-                  selectedCategory={selectedCategory}
-                  setSelectedCategory={setSelectedCategory}
-                  jobType={jobType}
-                  setJobType={setJobType}
-                  remoteType={remoteType}
-                  setRemoteType={setRemoteType}
-                  minSalary={minSalary}
-                  setMinSalary={setMinSalary}
-                  visaSponsorshipOnly={visaSponsorshipOnly}
-                  setVisaSponsorshipOnly={setVisaSponsorshipOnly}
-                  directAtsOnly={directAtsOnly}
-                  setDirectAtsOnly={setDirectAtsOnly}
-                  totalResults={filteredJobs.length}
-                  onResetFilters={handleResetFilters}
-                  hasActiveFilters={hasActiveFilters}
-                />
-              </div>
-              <p className="text-[13px] text-[rgba(235,235,245,0.42)] mt-1 tracking-[-0.01em]">
-                 {searchAsMapMoves ? `Map area: ${activeLocationLabel}. Unmapped results are listed separately.` : `${currentCity.name} and nearby jobs`}
-              </p>
-            </div>
+          {/* Subheader, for the widths where it cannot sit beside the search
+            * field. Above 2xl the navbar is showing this same block up there,
+            * and the cards begin at the top of the column, level with the map. */}
+          <div className="2xl:hidden mb-4 md:mb-5 pt-1">
+            {resultsSummary}
           </div>
 
            {searchError && <p role="alert" className="mb-4 rounded-xl bg-rose-50 p-3 text-sm text-rose-800">{searchError}</p>}

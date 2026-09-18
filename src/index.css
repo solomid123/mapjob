@@ -997,10 +997,12 @@ html[data-wallpaper='sage'] {
     color var(--dur-fast) var(--ease-apple-out),
     transform var(--dur-fast) var(--ease-apple-spring);
 }
-/* Saved jobs keep their rose ring even at the smallest dot size */
-.airbnb-dot-pin.is-saved {
-  box-shadow: 0 1.5px 4px rgba(0, 0, 0, 0.3), 0 0 0 2px #FF385C;
-}
+/* There was a `.airbnb-dot-pin` here, for the 14px dots the map drew below
+ * zoom 11 — except the rule that gave the dot its body had gone, so all that
+ * survived was this ring on saved jobs and an empty, zero-sized div for
+ * everything else. Zooming out past a city therefore emptied the map of pins
+ * entirely. The map draws labelled pills at every zoom now, and fewer of them
+ * when there is less room, so there is nothing left for this to style. */
 
 /* Pins fade in rather than snapping into place when a new area loads.
  *
@@ -1020,8 +1022,7 @@ html[data-wallpaper='sage'] {
   }
 }
 
-.leaflet-marker-pane .salary-pill-wrapper,
-.leaflet-marker-pane .airbnb-dot-wrapper {
+.leaflet-marker-pane .salary-pill-wrapper {
   animation: airbnbFadeIn 0.14s ease-out;
 }
 /* The card that hangs off a pin. Leaflet's default is a 300px box with 13px of

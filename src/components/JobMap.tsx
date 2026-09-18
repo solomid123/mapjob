@@ -17,26 +17,39 @@ const MAPBOX_TOKEN =
 const MAX_MARKERS = 220;
 
 /**
+ * The budget never falls below this, however far out the map goes.
+ *
+ * Zooming out is how you ask "where is the work?", and a map that answers with
+ * nothing is no answer at all. A handful of the best-ranked pins over a whole
+ * country is a readable answer; an empty country is not. Room can still take it
+ * lower — two towns' pills cannot both be drawn on the same square centimetre —
+ * but the budget will never be the reason a continent shows nothing.
+ */
+const MIN_MARKERS = 14;
+
+/**
  * How many pins are allowed on screen at this zoom.
  *
  * A flat budget is what made the continent view a wall of labels: 200 pins over
  * Europe is unreadable, while 200 over one city is comfortable. The budget
  * moving with the zoom is half of why pins *appear* as you go in; the other
  * half is that there is physically more room between them.
+ *
+ * A smooth curve rather than the five steps this used to be: the steps put a
+ * cliff at every other zoom level, where one wheel notch would add forty pins
+ * at once and the map would flicker rather than fill in. Doubling roughly every
+ * two and a half levels gives about 14 pins over a continent, 40 over a
+ * country, 130 over a region, and the full budget from city scale up — so each
+ * notch of the wheel reveals a few more, which is what "zooming in shows more"
+ * is supposed to feel like.
  */
 function markerBudget(zoom: number): number {
-  if (zoom <= 5) return 30;
-  if (zoom <= 7) return 55;
-  if (zoom <= 9) return 90;
-  if (zoom <= 11) return 140;
-  if (zoom <= 13) return 180;
-  return MAX_MARKERS;
+  const grown = Math.round(MIN_MARKERS * 2 ** ((zoom - 3) / 2.5));
+  return Math.max(MIN_MARKERS, Math.min(MAX_MARKERS, grown));
 }
 
 /** How far beyond the viewport we keep markers mounted, as a fraction of the view. */
 const CULL_PADDING = 0.4;
-/** Below this the map draws dots, which need almost no room; above it, labelled pills. */
-const PILL_MIN_ZOOM = 11;
 /** Footprint of the preview card, used to decide whether a pin needs nudging. */
 const POPUP_WIDTH_PX = 280;
 const POPUP_HEIGHT_PX = 330;
@@ -268,15 +281,28 @@ const jobRank = (job: Job): number => {
  */
 const PILL_HEIGHT_PX = 30;
 const PILL_GAP_PX = 6;
-/** A dot is 14px and needs only enough room not to touch its neighbour. */
-const DOT_SIZE_PX = 14;
-const DOT_GAP_PX = 5;
 
 const pillWidth = (job: Job): number => pinLabel(job).length * 7.1 + 26;
 
+/**
+ * Every pin is a labelled pill, at every zoom.
+ *
+ * Below zoom 11 these used to shrink to 14px dots, which is where "it stops
+ * showing pills very early" came from — and it was worse than it sounds. The
+ * rule that drew the dot's body had gone from the stylesheet at some point, so
+ * what the map actually rendered under zoom 11 was a zero-sized empty div per
+ * job: the pins did not shrink, they disappeared. Zooming out to ask the
+ * broadest question — where is this work? — cleared the map.
+ *
+ * A pill is five times the width of a dot, so far fewer fit over a country, and
+ * that is the right trade: a dozen pins you can read beats eighty you cannot.
+ * No zoom threshold is needed to arrange it, either. The collision test below
+ * already thins the pins to what the space will hold, and it does so at every
+ * scale, which is why they now come back gradually as you go in instead of
+ * switching on all at once at zoom 11.
+ */
 function declutter(jobs: Job[], zoom: number, map: L.Map, budget: number): MapItem[] {
-  const asPills = zoom >= PILL_MIN_ZOOM;
-  const halfHeight = asPills ? PILL_HEIGHT_PX / 2 + PILL_GAP_PX : DOT_SIZE_PX / 2 + DOT_GAP_PX;
+  const halfHeight = PILL_HEIGHT_PX / 2 + PILL_GAP_PX;
 
   const kept: { x: number; y: number; halfWidth: number; item: MapItem }[] = [];
 
@@ -286,7 +312,7 @@ function declutter(jobs: Job[], zoom: number, map: L.Map, budget: number): MapIt
     const lat = atLat(job);
     const lng = atLng(job);
     const point = map.project([lat, lng], zoom);
-    const halfWidth = (asPills ? pillWidth(job) : DOT_SIZE_PX) / 2 + (asPills ? PILL_GAP_PX : DOT_GAP_PX);
+    const halfWidth = pillWidth(job) / 2 + PILL_GAP_PX;
 
     const clash = kept.some(
       (other) =>
@@ -317,17 +343,6 @@ const cachedIcon = (key: string, build: () => L.DivIcon): L.DivIcon => {
 const escapeHtml = (value: string) =>
   value.replace(/[&<>"']/g, (c) =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string)
-  );
-
-const dotIcon = (isSaved: boolean) =>
-  cachedIcon(`dot:${isSaved}`, () =>
-    L.divIcon({
-      className: 'airbnb-dot-wrapper',
-      html: `<div class="airbnb-dot-pin${isSaved ? ' is-saved' : ''}"></div>`,
-      iconSize: [14, 14],
-      iconAnchor: [7, 7],
-      popupAnchor: [0, -10],
-    })
   );
 
 /**
@@ -665,16 +680,13 @@ const MarkerLayer: React.FC<{
         const { job } = item;
         const isActive = selectedJobId === job.id || openJobId === job.id;
         const isSaved = savedJobIds.has(job.id);
-        // Zoom decides this, never hover: swapping a dot for a pill under the
-        // cursor is the same DOM-recreation trap as swapping pill variants.
-        const showPill = view.zoom >= PILL_MIN_ZOOM || isActive;
 
         return (
           <Marker
             key={job.id}
             ref={registerRef(job.id)}
             position={[item.lat, item.lng]}
-            icon={showPill ? pillIcon(pinLabel(job), isActive, isSaved) : dotIcon(isSaved)}
+            icon={pillIcon(pinLabel(job), isActive, isSaved)}
             zIndexOffset={isActive ? 1000 : 0}
             eventHandlers={{
               click: () => handlePinClick(item),
@@ -954,40 +966,47 @@ export const JobMap: React.FC<JobMapProps> = ({
         style={{ background: '#e8e6e1' }}
       >
         {/*
-          * (512, -1) -- Mapbox's own pairing for its 512px raster tiles, and
-          * the plain one.
+          * (1024, -2): every tile drawn at twice the size Mapbox renders it.
           *
           * A raster layer lines up only while `tileSize * 2^zoomOffset === 256`,
           * which admits (256, 0), (512, -1), (1024, -2)... and each step along
           * that list draws a tile from one zoom level further out at twice the
-          * size. This was set to (1024, -2) to make place names bigger, and it
-          * worked, but it doubles *everything* on the tile and buys the size by
-          * throwing away a zoom level of cartography.
+          * size. There is nothing in between: Mapbox serves raster tiles at two
+          * fixed pixel sizes and no text-size parameter, so on a raster layer
+          * the type comes in exactly two sizes and this is the larger one.
           *
-          * That turned out to cost more than the minor streets noted at the
-          * time. Mapbox only draws points of interest -- shops, stations,
-          * schools, the icons that tell you what a neighbourhood actually is --
-          * from roughly z14 up. Requesting two levels out meant the map asked
-          * for tiles that have no POI layer drawn on them at all, so at any
-          * normal viewing zoom there were none to be had. The same doubling is
-          * why the labels then shouted.
+          * Measured at (512, -1), a town name was 11 CSS pixels and a
+          * neighbourhood 9 -- half the size of the smallest type anywhere else
+          * in this app, and below what a map is readable at. "The map text
+          * looks very small and I can't read location" is the second report of
+          * it, which settles the argument this comment used to make on the
+          * other side: readable place names are the whole point of having a map
+          * under the pins, and Mapbox's default sizing was losing them.
           *
-          * Back to (512, -1): labels return to the size Mapbox designed them,
-          * and the POI icons come back with them. Still `@2x`, so a 1024px
-          * image fills a 512px box and stays sharp on a retina display.
+          * The bill is one zoom level of cartography, and it falls almost
+          * entirely on points of interest -- Mapbox only draws shops, stations
+          * and schools from about z14, so at this pairing they arrive at the
+          * map's last zoom step instead of its second to last. Minor streets
+          * shift by the same one level. Place names, water, parks and the road
+          * network, which is what anyone reads a job map for, are all there.
+          *
+          * Still `@2x`, so the 1024px image fills its 1024px box: a whole zoom
+          * level is drawn 1:1 with no softening at all, and a half level (see
+          * `zoomSnap`) is stretched by 1.41.
           */}
         <TileLayer
           url={`https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/512/{z}/{x}/{y}@2x?access_token=${MAPBOX_TOKEN}`}
-          tileSize={512}
-          zoomOffset={-1}
+          tileSize={1024}
+          zoomOffset={-2}
           detectRetina={false}
           // Skip intermediate tile requests mid-gesture and keep a ring of
-          // off-screen tiles so panning never exposes grey. Two rings rather
-          // than four now: each tile covers four times the area it used to, so
-          // the same ring costs four times the memory for no more coverage.
+          // off-screen tiles so panning never exposes grey. One ring, not the
+          // four Leaflet defaults to: a tile now covers sixteen times the area
+          // it does at 256, so a single ring already reaches a screen's width
+          // beyond the edge and every further ring is pure memory.
           updateWhenZooming={false}
           updateWhenIdle
-          keepBuffer={2}
+          keepBuffer={1}
           maxZoom={18}
         />
 

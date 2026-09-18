@@ -135,7 +135,10 @@ export const FilterBar: React.FC<FilterBarProps> = ({
                   className={`ic-press-wide group flex flex-col items-center gap-1 px-3 py-2 rounded-xl shrink-0 cursor-pointer ${
                     isActive
                       ? 'bg-white/[0.14] text-[#f5f5f7]'
-                      : 'text-[rgba(235,235,245,0.42)] hover:text-[#f5f5f7] hover:bg-white/[0.07]'
+                      /* 0.13, not 0.07: this utility owns the hover fill,
+                         because it outranks .ic-press-wide:hover by source
+                         order and would quietly undo a fill set there. */
+                      : 'text-[rgba(235,235,245,0.42)] hover:text-[#f5f5f7] hover:bg-white/[0.13]'
                   }`}
                 >
                   {renderCategoryIcon(cat.icon, isActive)}

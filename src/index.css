@@ -337,6 +337,29 @@
        of it. */
     background-color: #0a2e8f;
     background-image:
+      /* Soft diagonal ribbons, top layer. An unbroken blue field is hard to
+       * look at for any length of time -- there is nothing for the eye to
+       * settle on, so it keeps hunting. Apple's wallpaper breaks it with wide
+       * bands of slightly lighter and slightly darker blue. The ramps are long
+       * (140px+) and the alphas tiny: any harder and it stops being a surface
+       * and becomes stripes. Two passes at different angles and periods so the
+       * spacing never reads as a repeat. */
+      repeating-linear-gradient(
+        104deg,
+        rgba(255, 255, 255, 0) 0px,
+        rgba(255, 255, 255, 0.05) 150px,
+        rgba(255, 255, 255, 0) 320px,
+        rgba(0, 0, 0, 0.05) 500px,
+        rgba(255, 255, 255, 0) 680px
+      ),
+      repeating-linear-gradient(
+        97deg,
+        rgba(255, 255, 255, 0) 0px,
+        rgba(255, 255, 255, 0.035) 260px,
+        rgba(255, 255, 255, 0) 540px,
+        rgba(0, 0, 0, 0.035) 820px,
+        rgba(255, 255, 255, 0) 1100px
+      ),
       radial-gradient(120% 90% at 10% 4%, #2f7ef0 0%, rgba(47, 126, 240, 0) 52%),
       radial-gradient(90% 110% at 92% 16%, #0b47bd 0%, rgba(11, 71, 189, 0) 58%),
       radial-gradient(130% 110% at 60% 108%, #041646 0%, rgba(4, 22, 70, 0) 68%),

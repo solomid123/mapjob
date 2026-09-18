@@ -1,10 +1,9 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { 
   SlidersHorizontal, 
   X, 
   Zap, 
-  ChevronLeft, 
-  ChevronRight,
   Briefcase,
   Cpu,
   Rocket,
@@ -79,12 +78,26 @@ export const FilterBar: React.FC<FilterBarProps> = ({
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  const handleScroll = (direction: 'left' | 'right') => {
-    if (scrollContainerRef.current) {
-      const scrollAmount = direction === 'left' ? -260 : 260;
-      scrollContainerRef.current.scrollBy({ left: scrollAmount, behavior: 'smooth' });
-    }
-  };
+  /* The arrow buttons are gone -- a trackpad swipes this strip sideways on its
+   * own. A plain wheel mouse cannot, though, so a vertical wheel over the strip
+   * is translated into horizontal scroll. Bound by hand rather than with
+   * onWheel because React's wheel listener is passive and cannot preventDefault,
+   * which is what stops the page scrolling at the same time. */
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+
+    const onWheel = (e: WheelEvent) => {
+      // A trackpad's horizontal gesture already works; leave it alone.
+      if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+      if (el.scrollWidth <= el.clientWidth) return;
+      e.preventDefault();
+      el.scrollLeft += e.deltaY;
+    };
+
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
 
   const hasPillFilters = Boolean(
     jobType ||
@@ -101,20 +114,10 @@ export const FilterBar: React.FC<FilterBarProps> = ({
         {/* ROW 1: Signature Airbnb Category Icon Carousel */}
         <div className="relative flex items-center pb-1">
           
-          {/* Left Arrow Button */}
-          <button
-            type="button"
-            onClick={() => handleScroll('left')}
-            className="hidden md:flex absolute left-0 z-10 w-8 h-8 rounded-full bg-[rgba(24,30,52,0.9)] backdrop-blur shadow-[0_0_0_0.5px_rgba(255,255,255,0.14),0_2px_8px_rgba(0,0,0,0.4)] items-center justify-center text-[#f5f5f7] hover:scale-105 active:scale-95 transition-transform duration-200 ease-apple-spring"
-            aria-label="Scroll categories left"
-          >
-            <ChevronLeft className="w-4 h-4 stroke-[2.5]" />
-          </button>
-
           {/* Category Carousel Scroll Area */}
           <div
             ref={scrollContainerRef}
-            className="flex items-center gap-1 overflow-x-auto no-scrollbar scroll-smooth w-full px-1 md:px-9"
+            className="flex items-center gap-1 overflow-x-auto no-scrollbar scroll-smooth w-full px-1"
           >
             {CATEGORIES.map((cat) => {
               const isActive = selectedCategory === cat.id;
@@ -148,15 +151,6 @@ export const FilterBar: React.FC<FilterBarProps> = ({
             })}
           </div>
 
-          {/* Right Arrow Button */}
-          <button
-            type="button"
-            onClick={() => handleScroll('right')}
-            className="hidden md:flex absolute right-0 z-10 w-8 h-8 rounded-full bg-[rgba(24,30,52,0.9)] backdrop-blur shadow-[0_0_0_0.5px_rgba(255,255,255,0.14),0_2px_8px_rgba(0,0,0,0.4)] items-center justify-center text-[#f5f5f7] hover:scale-105 active:scale-95 transition-transform duration-200 ease-apple-spring"
-            aria-label="Scroll categories right"
-          >
-            <ChevronRight className="w-4 h-4 stroke-[2.5]" />
-          </button>
         </div>
 
         {/* ROW 2: Filter Pills Strip (Desktop only - mobile uses search pill filter button) */}
@@ -182,17 +176,14 @@ export const FilterBar: React.FC<FilterBarProps> = ({
             <button
               type="button"
               onClick={() => setDirectAtsOnly(!directAtsOnly)}
-              // Keeps its green: it is the one chip that says something about the
-              // job rather than filtering it, and losing the colour lost that.
-              // Everything else about it is the shared chip -- half-pixel ring,
-              // weight 500, spring press -- so it stops shouting.
+              // No longer green. It is a filter like the five beside it, and a
+              // second accent colour in the same row just split the reader's
+              // attention. The bolt still says what it does.
               className={`ic-chip flex items-center gap-1.5 px-3 py-1.5 text-xs shrink-0 cursor-pointer ${
-                directAtsOnly
-                  ? '!bg-emerald-600 !text-white !shadow-[0_0_0_0.5px_theme(colors.emerald.700),0_2px_8px_rgba(5,150,105,0.3)]'
-                  : '!text-emerald-800 !bg-emerald-50/80 hover:!bg-emerald-50 !shadow-[0_0_0_0.5px_rgba(5,150,105,0.3)]'
+                directAtsOnly ? 'is-on' : ''
               }`}
             >
-              <Zap className={`w-3.5 h-3.5 ${directAtsOnly ? 'text-white fill-white' : 'text-emerald-600 fill-emerald-600'}`} />
+              <Zap className={`w-3.5 h-3.5 ${directAtsOnly ? 'text-white fill-white' : 'fill-current'}`} />
               <span>1-Click Apply</span>
             </button>
           )}
@@ -282,9 +273,15 @@ export const FilterBar: React.FC<FilterBarProps> = ({
 
         </div>
 
-        {/* Filter Popover Modal / Dropdown */}
-        {showFilterDropdown && (
-          <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+        {/* Filter Popover Modal / Dropdown.
+          *
+          * Portalled to <body>. This bar is `.ic-header`, which carries a
+          * backdrop-filter, and a filtered element becomes the containing
+          * block for its fixed-position descendants -- so `fixed inset-0`
+          * was laying out inside the header strip and stacking below the
+          * map instead of covering the window. */}
+        {showFilterDropdown && createPortal(
+          <div className="fixed inset-0 z-[200] bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
             <div className="ic-popover rounded-3xl w-full max-w-md p-6 animate-in fade-in zoom-in-95 duration-150">
               <div className="flex items-center justify-between pb-4 border-b border-white/10">
                 <h3 className="text-base font-bold text-[#f5f5f7]">Job Filters</h3>
@@ -398,7 +395,8 @@ export const FilterBar: React.FC<FilterBarProps> = ({
                 </button>
               </div>
             </div>
-          </div>
+          </div>,
+          document.body,
         )}
 
       </div>

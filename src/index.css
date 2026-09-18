@@ -322,14 +322,30 @@ html[data-wallpaper='sage'] {
   cursor: pointer;
   transition:
     background-color var(--dur-fast) var(--ease-apple-out),
-    box-shadow var(--dur-fast) var(--ease-apple-out),
-    color var(--dur-fast) var(--ease-apple-out);
+    box-shadow var(--dur-base) var(--ease-apple-out),
+    color var(--dur-fast) var(--ease-apple-out),
+    transform var(--dur-base) var(--ease-apple-spring);
 }
+/* These sit in a 2px track, so they scale in place rather than rising: a
+ * segment lifting out of its own well reads as broken, not springy. The
+ * brighter fill is doing most of the work; the scale is what makes it feel
+ * attached to the pointer.
+ *
+ * `transform` was missing from the transition list above, so even the
+ * existing :active scale(0.98) snapped instantly -- the same dead declaration
+ * .ic-fill had. */
 .ic-segmented-item:hover:not(.is-on) {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.14);
+  transform: scale(1.05);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.18),
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.26);
+}
+.ic-segmented-item.is-on:hover {
+  transform: scale(1.04);
 }
 .ic-segmented-item:active {
-  transform: scale(0.98);
+  transform: scale(0.96);
+  transition-duration: var(--dur-fast);
 }
 .ic-segmented-item.is-on {
   /* In dark mode UIKit raises the thumb with a lighter fill, not a white one.
@@ -461,8 +477,12 @@ html[data-wallpaper='sage'] {
   border-radius: 12px;
   transition: background-color var(--dur-fast) var(--ease-apple-out);
 }
+/* No transform on these, on purpose. They are compartments inside one pill,
+ * and lifting a single compartment out of it tears the pill in half. The wash
+ * is the whole cue, so it has to be strong enough to actually see: 0.07 on a
+ * dark translucent bar was close to nothing. */
 .ic-segment:hover {
-  background-color: rgba(255, 255, 255, 0.07);
+  background-color: rgba(255, 255, 255, 0.12);
 }
 .ic-segment.is-active {
   background-color: rgba(255, 255, 255, 0.16);

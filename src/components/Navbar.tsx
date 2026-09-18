@@ -198,7 +198,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <button
               type="button"
               onClick={onOpenPostJob}
-              className="hidden lg:inline-block px-3 py-1.5 text-[13px] font-medium tracking-[-0.01em] text-[#f5f5f7] hover:bg-white/[0.09] rounded-lg transition-[background-color,transform] duration-200 ease-apple-out active:scale-[0.97]"
+              className="ic-press-wide hidden lg:inline-block px-3 py-1.5 text-[13px] font-medium tracking-[-0.01em] text-[#f5f5f7] hover:bg-white/[0.13] rounded-lg"
             >
               Post a Job
             </button>
@@ -362,7 +362,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                       setActiveSegment(null);
                     }
                   }}
-                  className="h-[44px] px-5 mr-0.5 shrink-0 rounded-[12px] bg-[#0a84ff] hover:bg-[#3b9bff] text-white font-medium tracking-[-0.01em] text-[14px] flex items-center cursor-pointer transition-[background-color,transform] duration-200 ease-apple-spring active:scale-[0.97]"
+                  className="ic-press-wide h-[44px] px-5 mr-0.5 shrink-0 rounded-[12px] bg-[#0a84ff] hover:bg-[#3b9bff] text-white font-medium tracking-[-0.01em] text-[14px] flex items-center cursor-pointer"
                 >
                   Search
                 </button>

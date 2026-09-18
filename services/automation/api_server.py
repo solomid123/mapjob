@@ -79,6 +79,22 @@ active_agent_status = {
 current_manager_container = {"manager": None}
 current_driver_container = {"driver": None}
 
+# Set when Stop is pressed.
+#
+# Closing the browser is what stops a run that has one: the agent loop checks
+# every tick whether the window is still there. But a run spends its first
+# seconds with no browser at all -- resolving the employer's URL, waiting for
+# the saved Chrome profile to come free -- and a Stop landing in that window
+# used to do nothing at all: there was no driver to quit, the flags were set
+# back to running by the worker a moment later, and Chrome opened on a job the
+# candidate had already called off. So the worker checks this at each point
+# where it is not yet holding a window.
+agent_cancelled = threading.Event()
+
+
+class RunCancelled(Exception):
+    """Stop was pressed. Not an error: the run is simply over."""
+
 # A finished rehearsal leaves its browser open on the filled form. That window is
 # what the candidate reviews, and the same window is what sends the application
 # if they approve it — filling a second browser from scratch would mean sending
@@ -379,7 +395,13 @@ def run_agent_thread(target_url: str, job_title: str = "Candidate Position", com
     profile_dir = None
     profile_persistent = False
     keep_open = False
+
+    def abort_if_cancelled():
+        if agent_cancelled.is_set():
+            raise RunCancelled()
+
     try:
+        abort_if_cancelled()
         push_log("Configuring browser with anti-detect and session parameters...", step=2)
         options = uc.ChromeOptions()
         # ALWAYS run with visible maximized browser window so the user sees PageAgent in action
@@ -394,6 +416,9 @@ def run_agent_thread(target_url: str, job_title: str = "Candidate Position", com
         # the lock, since Chrome will not share a profile directory.
         sweep_abandoned_profiles()
         profile_dir, profile_persistent = agent_profile.acquire(log=lambda m: push_log(m, step=2))
+        # Waiting for the profile is the longest a run goes without a window,
+        # and so the likeliest moment for someone to give up on it.
+        abort_if_cancelled()
         if agent_profile.google_is_linked():
             push_log(f"Using the saved browser profile ({agent_profile.signed_in_summary()}).", step=2)
         else:
@@ -404,6 +429,9 @@ def run_agent_thread(target_url: str, job_title: str = "Candidate Position", com
         driver = launch_chrome(options=options, user_data_dir=profile_dir,
                                log=lambda msg: push_log(msg, step=2))
         current_driver_container["driver"] = driver
+        # Chrome takes a few seconds to come up, and a Stop that arrived during
+        # them found nothing to close. Now the window is shut on the next line.
+        abort_if_cancelled()
         try:
             driver.maximize_window()
         except Exception:
@@ -446,6 +474,7 @@ def run_agent_thread(target_url: str, job_title: str = "Candidate Position", com
         # An empty browser window, but a real one: proof the run got that far.
         page_manager.capture_screenshot()
 
+        abort_if_cancelled()
         push_log(f"Navigating to employer portal: {target_url}", step=3)
         driver.get(target_url)
         page_manager.capture_screenshot()
@@ -531,6 +560,14 @@ def run_agent_thread(target_url: str, job_title: str = "Candidate Position", com
         }
         agent_state["last_result"] = active_agent_status["last_result"]
 
+    except RunCancelled:
+        # Everything worth saying was said by the endpoint that set the flag:
+        # the log line, the ledger entry and the result the panel reads. This
+        # only has to unwind quietly -- the `finally` below shuts the window --
+        # and to leave the state that endpoint wrote exactly as it found it.
+        print("[Engine] run cancelled before the browser was in use.", flush=True)
+        agent_state["phase"] = "cancelled"
+
     except Exception as e:
         # The sentence the candidate reads, and the trace they can open if they
         # want it. Never the other way round.
@@ -564,7 +601,10 @@ def run_agent_thread(target_url: str, job_title: str = "Candidate Position", com
             current_driver_container["driver"] = None
             if driver:
                 try:
-                    time.sleep(5)
+                    # The pause is there so a finished run's last page can be
+                    # read. A cancelled one has nobody reading it.
+                    if not agent_cancelled.is_set():
+                        time.sleep(5)
                     driver.quit()
                 except Exception:
                     pass
@@ -784,6 +824,7 @@ def root():
 
 @app.post("/api/cancel")
 def cancel_application():
+    agent_cancelled.set()
     active_agent_status["is_running"] = False
     agent_state["is_running"] = False
     agent_state["phase"] = "cancelled"
@@ -797,6 +838,24 @@ def cancel_application():
         current_driver_container["driver"] = None
     current_manager_container["manager"] = None
     push_log("Application cancelled by user.", done=True, success=False)
+    # An ending, not a silence. Without a result the panel cannot tell "stopped"
+    # from "still thinking", so it would sit on a spinner until its own timeout
+    # -- five minutes of watching something that is already over. `outcome` is
+    # read by the client, which shows this as stopped rather than as failed:
+    # nothing went wrong here, someone decided.
+    cancelled_result = {
+        "success": False,
+        "submitted": False,
+        "sent": False,
+        "barrier": False,
+        "outcome": "cancelled",
+        "dry_run": agent_state.get("dry_run", True),
+        "message": "Stopped before anything was sent.",
+    }
+    agent_state["last_result"] = cancelled_result
+    active_agent_status["last_result"] = cancelled_result
+    # push_log calls a finished run "failed"; this one has its own word.
+    agent_state["phase"] = "cancelled"
     # Recorded like any other ending. "I stopped it myself" is a perfectly good
     # answer to "what happened with this job", and the absence of a line is not.
     record_outcome("cancelled", company=agent_state.get("company", ""),
@@ -958,6 +1017,7 @@ def start_application(req: ApplyRequest):
         except Exception:
             break
 
+    agent_cancelled.clear()
     active_agent_status["is_running"] = True
     active_agent_status["last_result"] = None
 

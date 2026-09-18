@@ -465,6 +465,9 @@ const PHASE_STATUS: Record<string, BrowserApplyStatus> = {
 function agentStatus(state: AgentState): BrowserApplyStatus {
   const result = state.last_result;
   if (state.is_running || !result) return PHASE_STATUS[state.phase] || 'FILLING';
+  // Asked to stop. Not a failure -- nothing went wrong, someone decided -- and
+  // it must not be painted in the colour that means the site rejected you.
+  if (result.outcome === 'cancelled') return 'SKIPPED';
   if (result.submitted) return 'APPLIED';
   if (result.success && result.dry_run) return 'DRY_RUN_COMPLETED';
   if (result.success) return 'SUBMITTED_UNVERIFIED';
@@ -562,6 +565,24 @@ export async function submitReviewedForm(): Promise<BrowserApplyRun> {
   return await getBrowserApply(AGENT_RUN_ID);
 }
 
+/**
+ * Stops the run and closes the browser it was driving.
+ *
+ * The backend records the stop like any other ending -- "I stopped it myself"
+ * is a perfectly good answer to "what happened with this job", and an absent
+ * line is not -- and hands back a finished state, so the panel settles instead
+ * of spinning on a run that no longer exists.
+ */
+export async function cancelBrowserApply(): Promise<BrowserApplyRun> {
+  const res = await fetch(`${BACKEND_URL}/api/cancel`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  });
+  if (!res.ok) throw new Error(`Could not stop that run (HTTP ${res.status}).`);
+  return await getBrowserApply(AGENT_RUN_ID);
+}
+
 export async function getBrowserApply(_runId: string): Promise<BrowserApplyRun> {
   const res = await fetch(`${BACKEND_URL}/api/apply/state`);
   if (!res.ok) throw new Error(`Lost track of that application run (HTTP ${res.status}).`);
@@ -631,7 +652,7 @@ const OUTCOME_NOTE: Partial<Record<BrowserApplyStatus, string>> = {
   NEEDS_CHECKPOINT: 'Blocked by the site',
   WAITING_FOR_HUMAN: 'Needs you',
   FAILED: 'Not sent',
-  SKIPPED: 'Skipped',
+  SKIPPED: 'Stopped by you',
 };
 
 /** Reads a finished run as an outcome worth remembering. */

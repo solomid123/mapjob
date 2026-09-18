@@ -25,6 +25,7 @@ import {
   fetchJobFeed,
   startBrowserApply,
   submitReviewedForm,
+  cancelBrowserApply,
   pollBrowserApply,
   runOutcome,
   type ApplyOutcome,
@@ -590,6 +591,7 @@ export function App() {
   // The live browser application, if one is running or waiting for approval.
   const [applyRun, setApplyRun] = useState<BrowserApplyRun | null>(null);
   const [isSubmittingForReal, setIsSubmittingForReal] = useState(false);
+  const [isStoppingApply, setIsStoppingApply] = useState(false);
   const [isPostJobOpen, setIsPostJobOpen] = useState(false);
   const [mobileView, setMobileView] = useState<'both' | 'map' | 'list'>('list');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -679,6 +681,10 @@ export function App() {
       showToast(`Not sent — ${job.company}'s site blocked the application.`);
     } else if (final.status === 'DRY_RUN_COMPLETED') {
       showToast(`Form filled for ${job.company}. Nothing sent yet.`);
+    } else if (final.status === 'SKIPPED') {
+      // Stopped on purpose. Reported as a fact, not as a failure -- there is
+      // nothing here to apologise for or to retry automatically.
+      showToast(`Stopped. Nothing was sent to ${job.company}.`);
     } else {
       showToast(`Not sent to ${job.company}. ${final.message}`.trim());
     }
@@ -724,6 +730,26 @@ export function App() {
       setApplyRun(null);
     } finally {
       setApplyingJobId(null);
+    }
+  };
+
+  /**
+   * Calls off a run that is still going.
+   *
+   * The browser is closed at the other end and the attempt is written down as
+   * stopped, so a job someone changed their mind about does not sit in the
+   * history looking like a failure or, worse, like nothing at all. The poll
+   * loop sees the finished state on its next tick and unwinds itself.
+   */
+  const handleStopApply = async () => {
+    if (isStoppingApply) return;
+    setIsStoppingApply(true);
+    try {
+      setApplyRun(await cancelBrowserApply());
+    } catch (err: any) {
+      showToast(err?.message || 'Could not stop that run.');
+    } finally {
+      setIsStoppingApply(false);
     }
   };
 
@@ -1112,6 +1138,8 @@ export function App() {
         <ApplyReviewPanel
           run={applyRun}
           isSubmitting={isSubmittingForReal}
+          isStopping={isStoppingApply}
+          onStop={handleStopApply}
           onSubmitForReal={handleSubmitForReal}
           onClose={() => setApplyRun(null)}
         />

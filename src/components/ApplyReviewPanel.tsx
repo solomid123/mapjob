@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   X, Loader2, CheckCircle2, AlertTriangle, ExternalLink, Send, ShieldAlert, ChevronRight,
+  Minimize2, Maximize2, CircleStop,
 } from 'lucide-react';
 import type { BrowserApplyRun } from '../services/directAtsApi';
 import { browserApplyScreenshotUrl, readableFailure } from '../services/directAtsApi';
@@ -12,6 +13,15 @@ interface ApplyReviewPanelProps {
   isSubmitting: boolean;
   onSubmitForReal: () => void;
   onClose: () => void;
+  /**
+   * Stops the run for real: the browser is closed and the attempt is recorded
+   * as stopped. Distinct from `onClose`, which only puts the panel away and
+   * leaves the agent working -- a difference worth two separate buttons, since
+   * one of them is how you call off an application you do not want sent.
+   */
+  onStop: () => void;
+  /** True while the stop is being carried out. */
+  isStopping: boolean;
 }
 
 /** The status where the form is filled and waiting on a human decision. */
@@ -112,10 +122,13 @@ const TechnicalDetail: React.FC<{ trace: string }> = ({ trace }) => (
  * full-size bitmaps behind it; and until the first one arrives, the stage
  * shows a pulse, so the emptiness reads as "not yet" rather than "nothing is
  * happening".
+ *
+ * The frame is held here, above the two places that draw it, because the panel
+ * can be shrunk to a corner and opened out again: if the picture lived in the
+ * stage it would be thrown away and re-fetched on every such move, and a live
+ * view that goes black each time you minimise it is not much of a live view.
  */
-const LiveView: React.FC<{ src: string; live: boolean; caption: string; placeholder: string }> = ({
-  src, live, caption, placeholder,
-}) => {
+function useLiveFrame(src: string): string {
   const [shown, setShown] = React.useState('');
   // The object URL currently on screen. Kept in a ref rather than state
   // because revoking is cleanup, not rendering, and it must happen exactly
@@ -158,6 +171,14 @@ const LiveView: React.FC<{ src: string; live: boolean; caption: string; placehol
     showing.current = '';
   }, []);
 
+  return shown;
+}
+
+/** The stage the frame is shown on. Given the frame; it fetches nothing. */
+const LiveView: React.FC<{ frame: string; live: boolean; caption: string; placeholder: string }> = ({
+  frame, live, caption, placeholder,
+}) => {
+  const shown = frame;
   return (
     <figure className="space-y-2.5">
       <div className="relative rounded-2xl overflow-hidden bg-black/35 shadow-[inset_0_0_0_0.5px_rgba(255,255,255,0.1)]">
@@ -210,18 +231,34 @@ export const ApplyReviewPanel: React.FC<ApplyReviewPanelProps> = ({
   isSubmitting,
   onSubmitForReal,
   onClose,
+  onStop,
+  isStopping,
 }) => {
   const shot = browserApplyScreenshotUrl(run);
+  const frame = useLiveFrame(shot);
   const tone = TONE[run.status] || NEUTRAL_TONE;
   const missing = run.missing_required || [];
   const steps = run.steps || [];
 
-  // Escape closes it, like every other sheet in the app.
+  /* Shrunk into the corner. A run takes minutes, and holding the whole screen
+   * hostage for them means the choice is watch it or abandon it -- so it
+   * folds down to a picture in the corner that keeps playing while the rest of
+   * the app is usable again. */
+  const [minimized, setMinimized] = React.useState(false);
+
+  // Escape closes it, like every other sheet in the app -- except when it is
+  // already out of the way, where the only thing left to dismiss is the corner
+  // picture, and throwing away the run instead would be a nasty surprise.
   React.useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (minimized) setMinimized(false);
+      else if (!run.done) setMinimized(true);
+      else onClose();
+    };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, minimized, run.done]);
 
   // An application with empty required fields gets rejected by the form, so
   // there is nothing to approve: the honest move is to withhold the button and
@@ -247,10 +284,112 @@ export const ApplyReviewPanel: React.FC<ApplyReviewPanelProps> = ({
   // The rail under it: the same lines, as phrases, de-duplicated.
   const trail = progressTrail(steps);
 
+  // The run is live, so stopping it is a thing that can still be done. Kept
+  // separate from "is it finished": a run waiting on a human is not finished,
+  // and calling it off is exactly what someone staring at a CAPTCHA may want.
+  const stoppable = !run.done;
+
+  /* Minimised: the whole panel as a picture in the corner.
+   *
+   * It keeps the two things that matter while something else has the screen --
+   * what the browser is looking at, and the phrase for what it is doing -- and
+   * the two controls worth having at that size: put it back, or call it off.
+   * Clicking the picture puts it back, because that is what people do to a
+   * picture in a corner. */
+  if (minimized) {
+    return (
+      <div
+        className="fixed bottom-4 right-4 z-[6000] w-[292px] ic-popover rounded-[20px] overflow-hidden shadow-panel animate-in slide-in-from-bottom-3 fade-in duration-200"
+        role="dialog"
+        aria-label={`Application to ${run.company}, minimised`}
+      >
+        <button
+          type="button"
+          onClick={() => setMinimized(false)}
+          className="relative block w-full aspect-video bg-black/45 cursor-pointer group"
+          title="Back to the full panel"
+          aria-label="Back to the full panel"
+        >
+          {frame ? (
+            <img
+              src={frame}
+              alt="The employer's application form, as it stands in the browser right now"
+              className="w-full h-full object-cover object-top"
+            />
+          ) : (
+            <span className="absolute inset-0 flex items-center justify-center">
+              <span className="relative flex w-2.5 h-2.5">
+                {stoppable && (
+                  <span className="absolute inline-flex w-full h-full rounded-full bg-sky-400/60 animate-ping" />
+                )}
+                <span
+                  className={`relative inline-flex w-2.5 h-2.5 rounded-full ${
+                    stoppable ? 'bg-sky-400' : 'bg-white/25'
+                  }`}
+                />
+              </span>
+            </span>
+          )}
+
+          {stoppable && frame && (
+            <span className="absolute top-2 left-2 inline-flex items-center gap-1.5 rounded-full bg-black/55 backdrop-blur-md px-2 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.08em] text-white">
+              <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse" />
+              Live
+            </span>
+          )}
+
+          {/* Shown on hover rather than always: at this size the picture is
+              small enough that a permanent button sits on top of the form. */}
+          <span className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/55 backdrop-blur-md flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+            <Maximize2 className="w-3.5 h-3.5" />
+          </span>
+        </button>
+
+        <div className="flex items-center gap-2 px-3 py-2.5">
+          <div className="min-w-0 flex-1">
+            <p className="text-[12.5px] font-semibold text-[#f5f5f7] truncate tracking-[-0.01em]">
+              {run.company || 'Application'}
+            </p>
+            <p
+              className={`text-[11.5px] truncate ${
+                run.done || isWaitingOnYou ? tone.text : 'text-[rgba(235,235,245,0.62)]'
+              }`}
+            >
+              {headline}
+            </p>
+          </div>
+
+          {stoppable ? (
+            <button
+              type="button"
+              onClick={onStop}
+              disabled={isStopping}
+              className="ic-fill shrink-0 w-8 h-8 rounded-full flex items-center justify-center cursor-pointer text-rose-300 hover:text-rose-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Stop this application"
+              aria-label="Stop this application"
+            >
+              {isStopping ? <Loader2 className="w-4 h-4 animate-spin" /> : <CircleStop className="w-4 h-4" />}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={onClose}
+              className="ic-fill shrink-0 w-8 h-8 rounded-full flex items-center justify-center cursor-pointer text-[rgba(235,235,245,0.62)] hover:text-[#f5f5f7]"
+              title="Close"
+              aria-label="Close"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className="fixed inset-0 z-[6000] flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 animate-in fade-in duration-150"
-      onClick={onClose}
+      onClick={stoppable ? () => setMinimized(true) : onClose}
     >
       <div
         className="ic-popover w-full max-w-3xl max-h-[92vh] flex flex-col rounded-[26px] overflow-hidden animate-in zoom-in-95 duration-200"
@@ -270,15 +409,22 @@ export const ApplyReviewPanel: React.FC<ApplyReviewPanelProps> = ({
               {run.elapsed ? ` · ${run.elapsed}s` : ''}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="ic-fill shrink-0 w-8 h-8 rounded-full flex items-center justify-center cursor-pointer text-[rgba(235,235,245,0.62)] hover:text-[#f5f5f7]"
-            title="Close"
-            aria-label="Close"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          {/* While the run is live this is a shrink button, not a close one.
+              There is nothing to close: the agent is typing into an employer's
+              form whether or not this panel is on screen, and a dismissed
+              panel would have left no way back to it and no way to stop it.
+              So the only two exits from a live run are the corner and Stop. */}
+          <div className="shrink-0 flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={stoppable ? () => setMinimized(true) : onClose}
+              className="ic-fill w-8 h-8 rounded-full flex items-center justify-center cursor-pointer text-[rgba(235,235,245,0.62)] hover:text-[#f5f5f7]"
+              title={stoppable ? 'Shrink to the corner' : 'Close'}
+              aria-label={stoppable ? 'Shrink to the corner' : 'Close'}
+            >
+              {stoppable ? <Minimize2 className="w-4 h-4" /> : <X className="w-4 h-4" />}
+            </button>
+          </div>
         </div>
 
         <div className={`mx-6 mt-4 shrink-0 flex items-start gap-3 px-4 py-3 rounded-2xl ${tone.wash}`}>
@@ -390,7 +536,7 @@ export const ApplyReviewPanel: React.FC<ApplyReviewPanelProps> = ({
 
         <div className="flex-1 overflow-y-auto custom-scrollbar px-6 py-4">
           <LiveView
-            src={shot}
+            frame={frame}
             live={!run.done}
             caption={
               run.done
@@ -417,12 +563,37 @@ export const ApplyReviewPanel: React.FC<ApplyReviewPanelProps> = ({
           </a>
 
           <div className="flex items-center gap-2">
+            {/* Stop means stop: the browser is shut and the attempt is filed as
+                stopped. It sits apart from Close, which only hides this panel,
+                because "I have seen enough" and "do not send this" are not the
+                same instruction and there is no undoing the second one late. */}
+            {stoppable && (
+              <button
+                type="button"
+                onClick={onStop}
+                disabled={isStopping}
+                className="ic-press-wide inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-[14px] font-medium text-rose-200 bg-rose-500/[0.14] hover:bg-rose-500/25 disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
+              >
+                {isStopping ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Stopping...
+                  </>
+                ) : (
+                  <>
+                    <CircleStop className="w-4 h-4" />
+                    Stop
+                  </>
+                )}
+              </button>
+            )}
+
             <button
               type="button"
-              onClick={onClose}
+              onClick={stoppable ? () => setMinimized(true) : onClose}
               className="ic-press-wide px-4 py-2.5 rounded-xl text-[14px] font-medium text-[#f5f5f7] bg-white/[0.08] hover:bg-white/[0.14] cursor-pointer"
             >
-              {canSubmit ? 'Not now' : 'Close'}
+              {canSubmit ? 'Not now' : stoppable ? 'Hide' : 'Close'}
             </button>
 
             {/* The only control in the app that sends anything to an employer.

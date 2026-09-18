@@ -15,14 +15,19 @@
       Restore the chosen wallpaper before anything paints. This has to be
       inline and synchronous in <head>'s shadow rather than a React effect:
       by the time React mounts, the browser has already painted <body> with
-      the default azure canvas, and a saved crimson would land as a blue
+      the default mist canvas, and a saved crimson would land as a pale
       flash. Wrapped because localStorage throws outright in some privacy
       modes, and a background preference is not worth a blank page.
+
+      The list is an allow-list, not a truthiness check: this value is read
+      straight out of storage and written into an attribute that selects a
+      stylesheet rule, so anything unrecognised must fall through to the
+      default rather than be trusted.
     -->
     <script>
       try {
         var w = localStorage.getItem('mapjob.wallpaper');
-        if (w === 'crimson' || w === 'azure' || w === 'sage') {
+        if (w === 'crimson' || w === 'azure' || w === 'sage' || w === 'mist') {
           document.documentElement.setAttribute('data-wallpaper', w);
         }
       } catch (e) {}

@@ -19,7 +19,7 @@ export const BottomTabBar: React.FC<BottomTabBarProps> = ({
   return (
     <nav 
       aria-label="Mobile Navigation"
-      className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[rgba(8,14,32,0.72)] backdrop-blur-xl backdrop-saturate-150 shadow-[inset_0_0.5px_0_rgba(255,255,255,0.12)] pt-2.5 pb-8 px-6 select-none"
+      className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[var(--tile)] backdrop-blur-xl backdrop-saturate-150 shadow-[inset_0_0.5px_0_rgba(255,255,255,0.12)] pt-2.5 pb-8 px-6 select-none"
       style={{ paddingBottom: 'max(env(safe-area-inset-bottom, 28px), 28px)' }}
     >
       <div className="flex items-center justify-around max-w-xs mx-auto">

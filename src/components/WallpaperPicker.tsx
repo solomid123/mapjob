@@ -10,18 +10,19 @@ import { Check, Palette } from 'lucide-react';
  * property. So the switch is one attribute write and the CSS does the rest --
  * no re-render, and nothing to keep in sync.
  */
-export type WallpaperId = 'azure' | 'crimson' | 'sage';
+export type WallpaperId = 'mist' | 'azure' | 'crimson' | 'sage';
 
 const STORAGE_KEY = 'mapjob.wallpaper';
 
 const WALLPAPERS: { id: WallpaperId; name: string; swatch: string }[] = [
+  { id: 'mist', name: 'Mist', swatch: 'linear-gradient(135deg,#e3ebe6,#b3bfb7 52%,#8b9c95)' },
   { id: 'azure', name: 'Azure', swatch: 'linear-gradient(135deg,#2d7bef,#0a2e8f 55%,#05164a)' },
   { id: 'crimson', name: 'Crimson', swatch: 'linear-gradient(135deg,#a03050,#4a1226 55%,#1c0510)' },
   { id: 'sage', name: 'Sage', swatch: 'linear-gradient(135deg,#8a9c8b,#3d4c41 55%,#151f18)' },
 ];
 
 export const readWallpaper = (): WallpaperId =>
-  (document.documentElement.getAttribute('data-wallpaper') as WallpaperId) || 'azure';
+  (document.documentElement.getAttribute('data-wallpaper') as WallpaperId) || 'mist';
 
 export const applyWallpaper = (id: WallpaperId) => {
   document.documentElement.setAttribute('data-wallpaper', id);
@@ -35,7 +36,7 @@ export const applyWallpaper = (id: WallpaperId) => {
 
 export const WallpaperPicker: React.FC = () => {
   const [open, setOpen] = useState(false);
-  const [current, setCurrent] = useState<WallpaperId>('azure');
+  const [current, setCurrent] = useState<WallpaperId>('mist');
   const wrapRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => setCurrent(readWallpaper()), []);

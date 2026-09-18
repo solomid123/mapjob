@@ -75,19 +75,35 @@
    * The tile colours below are deliberately NOT themed. They are a very dark
    * desaturated navy, which reads as neutral shadow under either wallpaper;
    * tinting them to match would make each card look like a coloured panel
-   * rather than a hole of shade the content sits in. */
-  --wallpaper: url('/wallpaper-azure.jpg');
-  --canvas-base: #0a2e8f;
+   * rather than a hole of shade the content sits in.
+   *
+   * The default is mist, so its values live here rather than in a
+   * `[data-wallpaper='mist']` block: an unset attribute has to land on the
+   * same canvas the app normally wears, not on whichever theme happened to be
+   * written first. */
+
+  /* Mist. The odd one out: mean luminance is ~72% where the other three sit
+   * near 20%, so the 0.24-0.58 dark ramp they use would grey it into sludge
+   * and throw away the only pale wallpaper in the set. Its scrim is therefore
+   * almost nothing -- a breath of white at the top, a soft deepening at the
+   * bottom for depth, and the image left alone in between.
+   *
+   * That inverts the usual figure/ground: instead of dark tiles being a
+   * shade darker than a dark canvas, they are far darker than a pale one.
+   * White type on --tile measures 8.0:1 over the lightest part of the image
+   * and 9.6:1 at its mean, so nothing downstream needs to change. */
+  --wallpaper: url('/wallpaper-mist.jpg');
+  --canvas-base: #b3bfb7;
   --canvas-scrim: linear-gradient(
     168deg,
-    rgba(4, 16, 48, 0.34) 0%,
-    rgba(3, 12, 38, 0.46) 55%,
-    rgba(2, 9, 30, 0.58) 100%
+    rgba(255, 255, 255, 0.1) 0%,
+    rgba(154, 172, 162, 0.05) 52%,
+    rgba(70, 86, 78, 0.16) 100%
   );
-  --canvas-under: radial-gradient(130% 100% at 8% 0%, #2d7bef 0%, rgba(45, 123, 239, 0) 56%),
-    radial-gradient(100% 120% at 96% 10%, #0c49c2 0%, rgba(12, 73, 194, 0) 60%),
-    radial-gradient(140% 120% at 66% 112%, #03123d 0%, rgba(3, 18, 61, 0) 70%),
-    linear-gradient(150deg, #1355db 0%, #0a2e8f 48%, #05164a 100%);
+  --canvas-under: radial-gradient(120% 100% at 92% 4%, #e3ebe6 0%, rgba(227, 235, 230, 0) 56%),
+    radial-gradient(100% 120% at 6% 10%, #c9d3cf 0%, rgba(201, 211, 207, 0) 60%),
+    radial-gradient(140% 120% at 66% 112%, #8b9c95 0%, rgba(139, 156, 149, 0) 70%),
+    linear-gradient(150deg, #d5dfda 0%, #b3bfb7 48%, #90a099 100%);
 
   /* Tile materials. */
   /* At 0.5 alpha over a saturated blue the tile just tints the wallpaper and
@@ -104,6 +120,23 @@
     inset 0 0 0 0.5px rgba(255, 255, 255, 0.07);
   --fill: rgba(255, 255, 255, 0.11);
   --fill-hover: rgba(255, 255, 255, 0.17);
+}
+
+/* Azure: the original canvas, now one theme among four rather than the
+ * default baked into :root. */
+html[data-wallpaper='azure'] {
+  --wallpaper: url('/wallpaper-azure.jpg');
+  --canvas-base: #0a2e8f;
+  --canvas-scrim: linear-gradient(
+    168deg,
+    rgba(4, 16, 48, 0.34) 0%,
+    rgba(3, 12, 38, 0.46) 55%,
+    rgba(2, 9, 30, 0.58) 100%
+  );
+  --canvas-under: radial-gradient(130% 100% at 8% 0%, #2d7bef 0%, rgba(45, 123, 239, 0) 56%),
+    radial-gradient(100% 120% at 96% 10%, #0c49c2 0%, rgba(12, 73, 194, 0) 60%),
+    radial-gradient(140% 120% at 66% 112%, #03123d 0%, rgba(3, 18, 61, 0) 70%),
+    linear-gradient(150deg, #1355db 0%, #0a2e8f 48%, #05164a 100%);
 }
 
 /* The crimson wallpaper. Only the canvas changes: type, tiles, controls and

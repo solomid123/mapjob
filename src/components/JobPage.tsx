@@ -23,6 +23,7 @@ import type { Job } from '../types/job';
 import { DEFAULT_JOB_IMAGE } from '../services/adzuna';
 import { fetchJobDetail } from '../services/directAtsApi';
 import { getEmailStatus, type EmailStatus } from '../services/applyAgent';
+import { Wordmark } from './Wordmark';
 
 const MAPBOX_TOKEN =
   import.meta.env.VITE_MAPBOX_TOKEN ||
@@ -186,20 +187,12 @@ export const JobPage: React.FC<JobPageProps> = ({
       <div className="border-b border-white/[0.09] sticky top-0 z-30 bg-[var(--tile)] backdrop-blur-md backdrop-saturate-150 pt-[max(env(safe-area-inset-top,0px),1rem)]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex items-center justify-between">
           <div className="flex items-center gap-3 sm:gap-6">
-            {/* Logo link */}
-            <button
-              type="button"
-              onClick={onBack}
-              className="flex items-center gap-2 cursor-pointer select-none group"
-              title="Return to MapJob search"
-            >
-              <div className="w-8 h-8 rounded-xl bg-[#FF385C] flex items-center justify-center text-white shadow-sm group-hover:scale-105 transition">
-                <MapPin className="w-4 h-4 stroke-[2.3]" />
-              </div>
-              <span className="text-xl font-black tracking-tight text-[#FF385C] hidden sm:inline">
-                map<span className="text-[#f5f5f7] font-black">job</span>
-              </span>
-            </button>
+            {/* The same lockup the ribbon carries, from the same file. This
+              * used to be a local copy -- an outline pin in a rose rounded
+              * square, next to a black-weight "map" in rose and "job" in
+              * white -- so opening a job swapped the logo for a different
+              * one. A product has one mark. */}
+            <Wordmark onClick={onBack} title="Return to MapJob search" />
 
             <div className="h-5 w-[1px] bg-white/[0.12]" />
 

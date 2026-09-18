@@ -978,8 +978,23 @@ export async function fetchAdzunaJobs({
 
   const cleanQ = cleanQueryForAdzuna(query);
   let whatParam = '';
+  /* The same request phrased the old way. Only used as a fallback -- see the
+   * comment on whatParam below, and the backfill after the first fetch. */
+  let looseParam = '';
   if (cleanQ) {
-    whatParam = `&what=${encodeURIComponent(cleanQ)}`;
+    /* `what` is a relevance search, not a filter: Adzuna ranks by it and then
+     * keeps filling the page with whatever else it has, so a search for
+     * "ingénieur mécanique" comes back padded with maintenance technicians and
+     * electrical engineers that matched one word out of two. Where exact
+     * matches are plentiful the padding sits below the fold and nobody
+     * notices; over a thin map area it is most of the page.
+     *
+     * `title_only` is the same query as a filter -- every word must be in the
+     * title. Measured against a live key: 255 results for `what`, of which the
+     * later pages were mostly other jobs, against 111 for `title_only`, all of
+     * them the job that was asked for. */
+    whatParam = `&title_only=${encodeURIComponent(cleanQ)}`;
+    looseParam = `&what=${encodeURIComponent(cleanQ)}`;
   } else {
     // Multi-discipline engineering expansion with what_or to maximize job pool 3x-4x
     if (searchCountry === 'fr' || isLuxembourg) {
@@ -1011,40 +1026,53 @@ export async function fetchAdzunaJobs({
   try {
     // If page === 1, fetch pages 1 and 2 in parallel to provide 100 active pins on map moves
     const pagesToFetch = page === 1 ? [1, 2] : [page];
-    const pagePromises = pagesToFetch.map(async (p) => {
-      const endpoint = `${baseUrl}/v1/api/jobs/${searchCountry}/search/${p}?app_id=${appId}&app_key=${appKey}&results_per_page=50${whatParam}${whereParam}${distanceParam}${daysParam}&content-type=application/json`;
-      try {
-        let res = await fetch(endpoint);
-        if (!res.ok && import.meta.env.DEV && res.status >= 500) {
-          const directEndpoint = `https://api.adzuna.com/v1/api/jobs/${searchCountry}/search/${p}?app_id=${appId}&app_key=${appKey}&results_per_page=50${whatParam}${whereParam}${distanceParam}${daysParam}&content-type=application/json`;
-          res = await fetch(directEndpoint);
+    const fetchPages = async (queryParam: string): Promise<AdzunaJobItem[]> => {
+      const pagePromises = pagesToFetch.map(async (p) => {
+        const endpoint = `${baseUrl}/v1/api/jobs/${searchCountry}/search/${p}?app_id=${appId}&app_key=${appKey}&results_per_page=50${queryParam}${whereParam}${distanceParam}${daysParam}&content-type=application/json`;
+        try {
+          let res = await fetch(endpoint);
+          if (!res.ok && import.meta.env.DEV && res.status >= 500) {
+            const directEndpoint = `https://api.adzuna.com/v1/api/jobs/${searchCountry}/search/${p}?app_id=${appId}&app_key=${appKey}&results_per_page=50${queryParam}${whereParam}${distanceParam}${daysParam}&content-type=application/json`;
+            res = await fetch(directEndpoint);
+          }
+          if (res.ok) {
+            const data = await res.json();
+            return (data.results || []) as AdzunaJobItem[];
+          }
+        } catch {
+          // ignore individual page error
         }
-        if (res.ok) {
-          const data = await res.json();
-          return (data.results || []) as AdzunaJobItem[];
-        }
-      } catch {
-        // ignore individual page error
-      }
-      return [] as AdzunaJobItem[];
-    });
-
-    const pageResults = await Promise.all(pagePromises);
-    let items: AdzunaJobItem[] = pageResults.flat();
+        return [] as AdzunaJobItem[];
+      });
+      return (await Promise.all(pagePromises)).flat();
+    };
 
     // Deduplicate jobs by ID
     const seenIds = new Set<string>();
-    items = items.filter((item) => {
-      const idStr = String(item.id);
-      if (seenIds.has(idStr)) return false;
-      seenIds.add(idStr);
-      return true;
-    });
+    const dedupe = (list: AdzunaJobItem[]) =>
+      list.filter((item) => {
+        const idStr = String(item.id);
+        if (seenIds.has(idStr)) return false;
+        seenIds.add(idStr);
+        return true;
+      });
+
+    let items: AdzunaJobItem[] = dedupe(await fetchPages(whatParam));
+
+    /* Fallback 0: a title filter is strict by design, and over a thin area it
+     * can come back with three rows where the loose search would have found
+     * something worth reading. So when it does, ask again the old way and add
+     * what comes back BELOW the title matches -- the client ranks by how much
+     * of the query each title actually answers, so the near-misses land at the
+     * bottom instead of pretending to be exact. */
+    if (looseParam && items.length < 12) {
+      items = items.concat(dedupe(await fetchPages(looseParam)));
+    }
 
     // Fallback 1: If exact suburb yielded 0 results, expand search radius with distance=60
     if (items.length === 0 && searchWhere) {
       try {
-        const retryUrl = `${baseUrl}/v1/api/jobs/${searchCountry}/search/${page}?app_id=${appId}&app_key=${appKey}&results_per_page=50${whatParam}&where=${encodeURIComponent(searchWhere)}&distance=60${daysParam}&content-type=application/json`;
+        const retryUrl = `${baseUrl}/v1/api/jobs/${searchCountry}/search/${page}?app_id=${appId}&app_key=${appKey}&results_per_page=50${looseParam || whatParam}&where=${encodeURIComponent(searchWhere)}&distance=60${daysParam}&content-type=application/json`;
         const retryRes = await fetch(retryUrl);
         if (retryRes.ok) {
           const retryData = await retryRes.json();
@@ -1070,7 +1098,7 @@ export async function fetchAdzunaJobs({
           }
         }
         if (nearestHub.name.toLowerCase() !== searchWhere.toLowerCase()) {
-          const hubUrl = `${baseUrl}/v1/api/jobs/${nearestHub.country}/search/${page}?app_id=${appId}&app_key=${appKey}&results_per_page=50${whatParam}&where=${encodeURIComponent(nearestHub.name)}&distance=50${daysParam}&content-type=application/json`;
+          const hubUrl = `${baseUrl}/v1/api/jobs/${nearestHub.country}/search/${page}?app_id=${appId}&app_key=${appKey}&results_per_page=50${looseParam || whatParam}&where=${encodeURIComponent(nearestHub.name)}&distance=50${daysParam}&content-type=application/json`;
           const hubRes = await fetch(hubUrl);
           if (hubRes.ok) {
             const hubData = await hubRes.json();

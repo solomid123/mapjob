@@ -19,6 +19,7 @@ import { AutomatedEmailsModal } from './components/AutomatedEmailsModal';
 import { InterviewHelperModal } from './components/InterviewHelperModal';
 import { CITIES } from './data/mockJobs';
 import { resolveLocationFromCoords, getVisibleHubsInBounds } from './services/adzuna';
+import { matchTitle, terms } from './services/relevance';
 import {
   fetchDirectAtsJobs,
   fetchJobFeed,
@@ -894,6 +895,12 @@ export function App() {
     showSavedOnly
   );
 
+  /* The words the search is actually asking for -- folded, with the gender
+   * tags and contract noise dropped. Taken from the committed query, not the
+   * one being typed, so the list is filtered by the same words that fetched
+   * it instead of emptying itself half way through a word. */
+  const queryTerms = useMemo(() => terms(committedQuery), [committedQuery]);
+
   // Filter jobs dynamically
   const filteredJobs = useMemo(() => {
     // 1. General criteria filtering (saved, role, category, jobType, remote, minSalary, visa, timeframe)
@@ -905,19 +912,9 @@ export function App() {
 
       // City filter (if map bounds are not constraining)
 
-      // Search keyword / role matching
-      if (searchQuery.trim()) {
-        const words = searchQuery
-          .toLowerCase()
-          .replace(/[()[\]{}"'’]/g, ' ')
-          .split(/\s+/)
-          .filter((w) => w.length > 2);
-        if (words.length > 0) {
-          const text = `${job.title} ${job.company} ${job.location} ${job.description} ${job.category}`.toLowerCase();
-          const matches = words.some((w) => text.includes(w));
-          if (!matches) return false;
-        }
-      }
+      // Relevance to the search is judged further down, on the whole set at
+      // once, because "is this the job you asked for" cannot be answered one
+      // row at a time -- it depends on what else came back.
 
       // Last posted timeframe filter
       if (lastPosted !== 'all') {
@@ -986,18 +983,51 @@ export function App() {
     });
 
     // 2. Viewport bounds filtering when "Search as I move the map" is enabled
+    let inArea = baseFiltered;
     if (searchAsMapMoves && mapBounds) {
       // Unresolved locations remain in the list, never as invented map pins.
       const reach = inViewOf(mapBounds);
-      return baseFiltered.filter(
+      inArea = baseFiltered.filter(
         (job) => !Number.isFinite(job.lat) || !Number.isFinite(job.lng) || reach(job)
       );
     }
 
-    return baseFiltered;
+    /* 3. Relevance.
+     *
+     * The old test was `words.some(w => text.includes(w))` over the title, the
+     * company, the location, the description AND the category -- so searching
+     * "ingénieur mécanique" kept every ad whose description said "ingénieur"
+     * once, which in this industry is all of them. That is why the results
+     * were maintenance technicians and electrical engineers.
+     *
+     * Now the question is asked of the title (plus the company, so that typing
+     * an employer's name still works) and asked of the whole set at once: if
+     * anything here answers the query completely, only those are shown. Only
+     * when nothing does -- a thin rural map area, a niche title -- do partial
+     * matches appear, best first, because an approximate answer beats an empty
+     * page. A title that answers none of it is never shown. */
+    if (queryTerms.length === 0) return inArea;
+
+    const scored = inArea.map((job) => ({
+      job,
+      match: matchTitle(`${job.title} ${job.company}`, queryTerms),
+    }));
+    const exact = scored.filter((s) => s.match.full);
+    if (exact.length > 0) return exact.map((s) => s.job);
+
+    /* Nothing here answers the query. Show the nearest things, but only the
+     * nearest FEW: a title that says half of what was asked is worth offering
+     * when there is nothing better, and worthless three hundred times over --
+     * that is the same page of not-quite-right jobs, just arrived by another
+     * route. Half the words is the floor, twenty-four the ceiling. */
+    return scored
+      .filter((s) => s.match.covered * 2 >= s.match.wanted && s.match.covered > 0)
+      .sort((a, b) => b.match.covered - a.match.covered)
+      .slice(0, 24)
+      .map((s) => s.job);
   }, [
     jobs,
-    searchQuery,
+    queryTerms,
     selectedCategory,
     jobType,
     remoteType,
@@ -1030,7 +1060,9 @@ export function App() {
     <div className="min-w-0">
       <div className="flex items-center gap-2.5">
         <h2 className="text-[22px] md:text-[26px] leading-tight font-semibold text-[#f5f5f7] tracking-[-0.028em] truncate">
-           {isLoadingJobs && !jobs.length ? 'Searching jobs...' : `${filteredJobs.length} jobs`}
+           {isLoadingJobs && !jobs.length
+             ? 'Searching jobs...'
+             : `${filteredJobs.length} ${filteredJobs.length === 1 ? 'job' : 'jobs'}`}
         </h2>
         {/* The whole filter strip, folded into the glyph beside the
           * count -- same vocabulary as the ribbon icons up top. */}

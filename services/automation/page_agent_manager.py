@@ -1954,9 +1954,16 @@ class PageAgentManager:
         if cookie_text:
             self.log_callback(f"Dismissed cookie consent banner ('{cookie_text}').", step=3)
             time.sleep(1)
+        # Frames through the pre-agent stretch. The monitoring loop below takes
+        # one every tick, but everything above it -- landing on the page,
+        # clearing the banner, clicking through to the form -- used to happen
+        # with the live view still empty, which is the part of a run that looks
+        # most like a hang.
+        self.capture_screenshot()
 
         # Step 2: Advance to application form if needed
         self.advance_to_application_form()
+        self.capture_screenshot()
 
         # Step 2b: no longer runs the sign-in ladder up front.
         #

@@ -350,8 +350,43 @@ export interface BrowserApplyRun {
   steps: string[];
   /** Server-relative; use `browserApplyScreenshotUrl` to load it. */
   screenshot_url: string;
+  /**
+   * The raw failure, when there was one: a driver exception with its session
+   * banner and its stack frames. `message` is the sentence; this is the
+   * evidence, and the panel keeps it folded away.
+   */
+  detail: string;
   done: boolean;
   elapsed: number;
+}
+
+/**
+ * A sentence, out of whatever the backend said.
+ *
+ * The server now translates its own driver failures, so on the ordinary path
+ * this changes nothing. It exists because `message` is a free-text field
+ * written by several code paths and one of them, for a while, was handing over
+ * forty lines of `undetected_chromedriver!GetHandleVerifier [0x1011c73+4e33]`
+ * as the headline a candidate reads. Anything that still arrives looking like a
+ * trace gets cut back to its first clause here rather than rendered.
+ */
+export function readableFailure(message: string): { text: string; trace: string } {
+  const raw = (message || '').trim();
+  const looksLikeTrace =
+    /Stacktrace:|\(Session info:|GetHandleVerifier|\[0x[0-9a-f]+/i.test(raw);
+  if (!looksLikeTrace) return { text: raw, trace: '' };
+
+  const head = raw
+    .split('Stacktrace:')[0]
+    .split('(Session info:')[0]
+    .replace(/^Message:\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\.$/, '');
+  return {
+    text: head ? `${head}.` : 'The run stopped unexpectedly. Nothing was sent.',
+    trace: raw,
+  };
 }
 
 /**
@@ -403,6 +438,8 @@ interface AgentState {
     fields_filled?: number;
     resume_attached?: boolean;
     unexpected_submit?: boolean;
+    /** The raw driver error, when the run died on one. */
+    detail?: string;
   } | null;
   dry_run: boolean;
   started_at: number | null;
@@ -452,6 +489,7 @@ function toRun(state: AgentState): BrowserApplyRun {
     missing_required: [],
     steps: (state.logs || []).map((entry) => entry.message).filter(Boolean),
     screenshot_url: state.screenshot_url || '',
+    detail: result?.detail || '',
     done,
     elapsed: state.started_at ? Math.round(Date.now() / 1000 - state.started_at) : 0,
   };

@@ -122,6 +122,76 @@ class ApplyRequest(pydantic.BaseModel):
     # button untouched, so nothing reaches an employer unless it is asked for.
     dry_run: Optional[bool] = True
 
+# --------------------------------------------------------------------------
+# Driver failures, in the candidate's language.
+#
+# Selenium raises with a whole debugging apparatus attached: a `Message:`
+# line, a `(Session info: chrome=...)` parenthetical, and forty frames of
+# `undetected_chromedriver!GetHandleVerifier [0x1011c73+4e33]`. That is a
+# stack trace for whoever wrote this file. It was being pushed verbatim into
+# the run log and set as the status headline, so a candidate who closed the
+# browser window got a page of hexadecimal where a sentence belonged.
+#
+# The raw text is not thrown away -- it goes to stdout and into the run's
+# `detail`, which the panel keeps behind a disclosure -- but it is never the
+# thing that speaks first.
+# --------------------------------------------------------------------------
+
+#: (needle in the raw error, sentence for the candidate). First match wins.
+_DRIVER_FAILURES = (
+    ("no such window",
+     "The browser window was closed before the application was finished. Nothing was sent."),
+    ("target window already closed",
+     "The browser window was closed before the application was finished. Nothing was sent."),
+    ("web view not found",
+     "The browser window was closed before the application was finished. Nothing was sent."),
+    ("invalid session id",
+     "The browser stopped responding and the run was abandoned. Nothing was sent."),
+    ("chrome not reachable",
+     "The browser stopped responding and the run was abandoned. Nothing was sent."),
+    ("disconnected: not connected to devtools",
+     "The browser stopped responding and the run was abandoned. Nothing was sent."),
+    ("cannot find chrome binary",
+     "Chrome could not be found on this machine, so no browser could be opened."),
+    ("this version of chromedriver only supports",
+     "The browser and its driver are different versions, so the window could not be opened. "
+     "Updating Chrome, or the driver, fixes this."),
+    ("session not created",
+     "A browser window could not be started. Another run may still be holding the profile."),
+    ("err_name_not_resolved",
+     "That address could not be reached -- the employer's site did not resolve."),
+    ("err_connection",
+     "The employer's site refused the connection, so the form never loaded."),
+    ("err_internet_disconnected",
+     "There is no internet connection, so the employer's page could not be loaded."),
+    ("timeout", "The employer's page took too long to load, so the run was stopped."),
+)
+
+
+def humanize_driver_error(exc: BaseException) -> str:
+    """One plain sentence describing why a run died."""
+    raw = str(exc) or exc.__class__.__name__
+    low = raw.lower()
+    for needle, sentence in _DRIVER_FAILURES:
+        if needle in low:
+            return sentence
+    # Unrecognised. Selenium's own first line is usually readable on its own,
+    # so take it and drop everything the debugger added after it.
+    head = raw.split("Stacktrace:")[0].split("(Session info:")[0]
+    head = head.replace("Message:", "").strip().strip(".")
+    head = re.sub(r"\s+", " ", head)
+    if not head:
+        return "The run stopped unexpectedly. Nothing was sent."
+    if len(head) > 180:
+        head = head[:177].rstrip() + "..."
+    return f"The run stopped unexpectedly: {head}. Nothing was sent."
+
+
+def error_detail(exc: BaseException) -> str:
+    """The raw failure, for the disclosure and for the log on disk."""
+    return f"{exc.__class__.__name__}: {exc}".strip()
+
+
 def push_log(message: str, step: int = 0, status: str = "running", done: bool = False, success: bool = False):
     safe_msg = str(message).encode('utf-8', 'replace').decode('utf-8')
     print(f"[Engine] {safe_msg}", flush=True)
@@ -328,13 +398,23 @@ def run_agent_thread(target_url: str, job_title: str = "Candidate Position", com
         except Exception:
             pass
 
-        push_log(f"Navigating to employer portal: {target_url}", step=3)
-        driver.get(target_url)
-        time.sleep(2)
-
-        # Initialize PageAgentManager (MapJOB_browser-extension architecture powered by Fuelix)
+        # Built before the navigation rather than after it, purely so the live
+        # view can start. Frames are read off the manager, so until it existed
+        # there was nothing to read: the panel sat on "the live view appears
+        # here" through profile setup, the window opening, the page load and
+        # the cookie banner -- the better part of a minute of blank box on a
+        # run whose whole point is that you can watch it. It owns no state
+        # until `run_agent`, so moving it up costs nothing.
         page_manager = PageAgentManager(driver, log_callback=push_log)
         current_manager_container["manager"] = page_manager
+        # An empty browser window, but a real one: proof the run got that far.
+        page_manager.capture_screenshot()
+
+        push_log(f"Navigating to employer portal: {target_url}", step=3)
+        driver.get(target_url)
+        page_manager.capture_screenshot()
+        time.sleep(2)
+        page_manager.capture_screenshot()
         
         # Run autonomous agent loop
         # The agent now types every field itself rather than finishing off what
@@ -401,8 +481,15 @@ def run_agent_thread(target_url: str, job_title: str = "Candidate Position", com
         agent_state["last_result"] = active_agent_status["last_result"]
 
     except Exception as e:
-        push_log(f"Automation execution notice: {e}", step=99, done=True, success=False)
-        active_agent_status["last_result"] = {"success": False, "message": str(e), "dry_run": dry_run}
+        # The sentence the candidate reads, and the trace they can open if they
+        # want it. Never the other way round.
+        friendly = humanize_driver_error(e)
+        detail = error_detail(e)
+        print(f"[Engine] run failed: {detail}", flush=True)
+        push_log(friendly, step=99, done=True, success=False)
+        active_agent_status["last_result"] = {
+            "success": False, "message": friendly, "detail": detail, "dry_run": dry_run,
+        }
         agent_state["last_result"] = active_agent_status["last_result"]
     finally:
         active_agent_status["is_running"] = False
@@ -599,8 +686,13 @@ def submit_pending_thread():
         }
         active_agent_status["last_result"] = agent_state["last_result"]
     except Exception as e:
-        push_log(f"Submission notice: {e}", step=99, done=True, success=False)
-        agent_state["last_result"] = {"success": False, "dry_run": False, "message": str(e)}
+        friendly = humanize_driver_error(e)
+        detail = error_detail(e)
+        print(f"[Engine] submission failed: {detail}", flush=True)
+        push_log(friendly, step=99, done=True, success=False)
+        agent_state["last_result"] = {
+            "success": False, "dry_run": False, "message": friendly, "detail": detail,
+        }
         active_agent_status["last_result"] = agent_state["last_result"]
     finally:
         active_agent_status["is_running"] = False
@@ -1599,4 +1691,4 @@ def get_status():
     return active_agent_status
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000)

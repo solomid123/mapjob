@@ -10,7 +10,7 @@ import {
 import { daysAgo, parsePostedRange } from './utils/postedRange';
 import { Navbar } from './components/Navbar';
 import { FilterBar } from './components/FilterBar';
-import { SiteFooter } from './components/SiteFooter';
+import { FooterInfo, SiteFooter } from './components/SiteFooter';
 import { JobCard } from './components/JobCard';
 import { JobMap } from './components/JobMap';
 import { JobPage } from './components/JobPage';
@@ -1191,6 +1191,18 @@ export function App() {
               </button>
             </div>
           )}
+
+          {/* The iCloud footer band, at the only place on this view where
+            * scrolling ends. Pinning it to the window instead would cost every
+            * screen ~130px of map, permanently, to show something iCloud only
+            * ever shows you below the fold. */}
+          <FooterInfo
+            savedCount={savedJobIds.size}
+            appliedCount={appliedJobIds.size}
+            jobCount={filteredJobs.length}
+            locationLabel={searchAsMapMoves ? activeLocationLabel : currentCity.name}
+            onShowSaved={() => setShowSavedOnly(true)}
+          />
         </div>
 
         {/* Right: Framed Interactive Map Container (Permanent Fixed Full-Height) */}
@@ -1254,6 +1266,22 @@ export function App() {
       )}
 
         </>
+      )}
+
+      {/* The job page is the one view that scrolls as a page, so the band can
+        * sit at the end of it the way iCloud's does -- costing nothing, since
+        * there is always more page below. */}
+      {activeJobPage && (
+        <div className="max-w-[1760px] w-full mx-auto px-4 sm:px-6 lg:px-8 pb-4">
+          <FooterInfo
+            savedCount={savedJobIds.size}
+            appliedCount={appliedJobIds.size}
+            onShowSaved={() => {
+              handleBackFromJobPage();
+              setShowSavedOnly(true);
+            }}
+          />
+        </div>
       )}
 
       {/* Last row of the flex column: shrink-0, so it takes its 32px and leaves

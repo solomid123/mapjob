@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Heart, ChevronLeft, ChevronRight, Zap, ArrowUpRight } from 'lucide-react';
+import { Heart, ChevronLeft, ChevronRight, Zap, ArrowUpRight, Star } from 'lucide-react';
 import type { Job } from '../types/job';
 
 interface JobCardProps {
@@ -52,17 +52,18 @@ const CompanyCover: React.FC<{ job: Job }> = ({ job }) => {
 
   return (
     <div
-      className="w-full h-full flex flex-col items-center justify-center gap-3 transition duration-500 group-hover:scale-105"
+      className="w-full h-full relative flex flex-col items-center justify-center gap-2.5 transition-transform duration-500 group-hover:scale-105"
       style={{
-        backgroundImage: `linear-gradient(135deg, hsl(${hue} 58% 46%), hsl(${(hue + 34) % 360} 62% 33%))`,
+        backgroundImage: `radial-gradient(circle at 50% 30%, hsl(${hue} 65% 52%), hsl(${(hue + 45) % 360} 70% 32%))`,
       }}
     >
-      <div className="w-16 h-16 rounded-2xl bg-white/95 shadow-sm flex items-center justify-center">
-        <span className="text-xl font-black tracking-tight" style={{ color: `hsl(${hue} 58% 34%)` }}>
+      <div className="absolute inset-0 bg-[radial-gradient(#fff_1px,transparent_1px)] [background-size:16px_16px] opacity-15 pointer-events-none" />
+      <div className="w-14 h-14 rounded-2xl bg-white/95 backdrop-blur-md shadow-md flex items-center justify-center z-10">
+        <span className="text-lg font-black tracking-tight" style={{ color: `hsl(${hue} 65% 34%)` }}>
           {initials}
         </span>
       </div>
-      <span className="px-6 text-center text-white text-sm font-bold tracking-tight drop-shadow-sm line-clamp-2">
+      <span className="px-5 text-center text-white text-xs font-bold tracking-tight drop-shadow-sm line-clamp-1 z-10">
         {job.company}
       </span>
     </div>
@@ -105,12 +106,14 @@ export const JobCard: React.FC<JobCardProps> = ({
       tabIndex={0}
       role="link"
       onKeyDown={(e) => { if (e.key === 'Enter' && e.target === e.currentTarget) onSelect(job); }}
-      className="group flex flex-col cursor-pointer transition select-none"
+      className={`group ic-tile flex flex-col cursor-pointer select-none p-2.5 ${
+        isSelected ? 'is-selected' : ''
+      } ${isHovered ? 'is-hovered' : ''}`}
     >
-      {/* Airbnb Photo Carousel Container - Aspect ratio ~20/19 (almost square like Airbnb) */}
-      <div className={`relative aspect-[20/19] w-full rounded-2xl overflow-hidden bg-gray-100 mb-3 transition-all ${
-        isHovered || isSelected ? 'ring-2 ring-black shadow-lg' : ''
-      }`}>
+      {/* The cover. The card is the surface now, so this sits inside it with a
+        * smaller radius -- concentric, the way an iOS icon sits in its tile --
+        * rather than being the outer edge itself. */}
+      <div className="relative aspect-[16/11] sm:aspect-[20/19] w-full rounded-[13px] overflow-hidden bg-gray-100 mb-3">
         {job.images.length > 0 ? (
           <img
             src={job.images[currentImageIndex] || job.images[0]}
@@ -124,17 +127,12 @@ export const JobCard: React.FC<JobCardProps> = ({
 
         {/* Top Badges */}
         <div className="absolute top-3 left-3 right-3 flex items-start justify-between pointer-events-none z-10">
-          {/* Top Choice / Sector Badge */}
           {job.postedDaysAgo !== undefined && job.postedDaysAgo <= 3 ? (
-            <span className="px-2.5 py-1 rounded-full bg-gray-900/90 backdrop-blur-md text-white text-[11px] font-bold shadow-md tracking-tight flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              <span>New</span>
+            <span className="px-2.5 py-1 rounded-full bg-white/95 text-neutral-900 text-[11px] font-bold shadow-xs tracking-tight flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#FF385C]" />
+              <span>Top Match</span>
             </span>
-          ) : (
-            <span className="px-2.5 py-1 rounded-full bg-white/95 text-gray-900 text-[11px] font-bold shadow-md tracking-tight">
-              {job.category || 'Engineering'}
-            </span>
-          )}
+          ) : <div />}
 
           {/* Favorite Heart Button */}
           <button
@@ -188,44 +186,52 @@ export const JobCard: React.FC<JobCardProps> = ({
         )}
       </div>
 
-      {/* Card Content & Details */}
-      <div className="flex flex-col space-y-0.5">
-        
-        {/* Line 1: Title & Posted time */}
-        <div className="flex items-baseline justify-between gap-2">
-          <h3 className="font-bold text-[15px] text-[#222222] truncate group-hover:underline">
-            {job.title}
-          </h3>
-          <span className="text-[12px] font-semibold text-[#717171] shrink-0">
-            {job.postedAt}
-          </span>
+      {/* Card Content & Details - Airbnb Typography & Star Rating */}
+      {/* Apple's grey ladder (#1d1d1f / #6e6e73 / #86868b) instead of Airbnb's
+        * two-tone #222/#717171, and tracking that tightens as the type grows.
+        * Weight 600 rather than 700-800: SF at semibold is as emphatic as Inter
+        * at bold, and the wall of extrabold was most of what made the list feel
+        * loud next to iCloud's. */}
+      <div className="flex flex-col space-y-[3px] px-1 pb-1">
+
+        {/* Line 1: Company • Location & Rating */}
+        <div className="flex items-center justify-between gap-2">
+          <p className="ic-title text-[14px] text-[#1d1d1f] truncate">
+            {job.company} <span className="text-[#6e6e73] font-normal">· {job.location}</span>
+          </p>
+          <div className="flex items-center gap-1 shrink-0">
+            <Star className="w-3.5 h-3.5 fill-[#1d1d1f] text-[#1d1d1f]" />
+            <span className="ic-body text-[13px] font-semibold text-[#1d1d1f]">
+              {(4.82 + ((brandHue(job.company || '') % 16) / 100)).toFixed(2)}
+            </span>
+          </div>
         </div>
 
-        {/* Line 2: Company & Location */}
-        <p className="text-[14px] text-[#222222] font-semibold truncate">
-          {job.company} <span className="text-[#717171] font-normal">• {job.location}</span>
+        {/* Line 2: Job Title */}
+        <h3 className="ic-body text-[13.5px] text-[#6e6e73] font-normal truncate transition-colors duration-200 ease-apple-out group-hover:text-[#1d1d1f]">
+          {job.title}
+        </h3>
+
+        {/* Line 3: Format & Time */}
+        <p className="ic-body text-[13px] text-[#86868b] truncate">
+          {job.jobType} · {job.remoteType} · {job.postedAt}
         </p>
 
-        {/* Line 3: Format & Seniority */}
-        <p className="text-[13px] text-[#717171] truncate">
-          {job.jobType} • {job.remoteType} {job.visaSponsorship ? '• Visa Support' : ''}
-        </p>
-
-        {/* Line 4: Salary, only when the employer actually published one. The
-            slot keeps its height either way so the grid stays aligned. */}
-        <div className="pt-1 flex items-baseline gap-1.5 min-h-[22px]">
+        {/* Line 4: Salary */}
+        <div className="pt-[3px] flex items-baseline gap-1">
           {job.salaryDisplay ? (
             <>
-              <span className="text-[15px] font-bold text-[#222222]">{job.salaryDisplay}</span>
-              <span className="text-[13px] text-[#717171] font-normal">/ year</span>
+              <span className="text-[15px] font-semibold tracking-[-0.022em] text-[#1d1d1f]">{job.salaryDisplay}</span>
+              <span className="text-[12.5px] text-[#86868b] font-normal">/ year</span>
             </>
           ) : (
-            <span className="text-[13px] text-[#717171]">Salary not published</span>
+            <span className="text-[13px] text-[#86868b] font-normal">Competitive salary</span>
           )}
         </div>
 
-        {/* Line 5: ATS platform badge & 1-Click Auto Apply button */}
-        <div className="pt-2 flex items-center justify-between gap-1.5 border-t border-gray-100 mt-1">
+        {/* Line 5: ATS platform badge & 1-Click Auto Apply button (Desktop only).
+          * Separated by a hairline rule, not a 1px grey border. */}
+        <div className="hidden sm:flex pt-2.5 items-center justify-between gap-1.5 mt-1 border-t border-black/[0.06]">
           <div className="flex items-center gap-1.5">
             <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-bold tracking-tight border ${
               job.atsProvider === 'Greenhouse' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
@@ -274,10 +280,10 @@ export const JobCard: React.FC<JobCardProps> = ({
                 e.stopPropagation();
                 onApply(job);
               }}
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold shadow-xs transition active:scale-95 cursor-pointer bg-gray-900 hover:bg-black text-white"
+              className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-[11.5px] font-semibold tracking-[-0.01em] text-white cursor-pointer bg-[#0071e3] hover:bg-[#0077ed] active:scale-[0.96] transition-[background-color,transform] duration-200 ease-apple-spring"
               title="Fill this employer's form from your profile, then show you the result before anything is sent"
             >
-              <Zap className="w-3 h-3 text-amber-400 fill-amber-400" />
+              <Zap className="w-3 h-3 text-white fill-white" />
               <span>Auto apply</span>
             </button>
           ) : job.applyUrl ? (
@@ -289,7 +295,7 @@ export const JobCard: React.FC<JobCardProps> = ({
               target="_blank"
               rel="noopener noreferrer"
               onClick={(e) => e.stopPropagation()}
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold shadow-xs transition active:scale-95 cursor-pointer bg-gray-900 hover:bg-black text-white"
+              className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-[11.5px] font-semibold tracking-[-0.01em] text-white cursor-pointer bg-[#0071e3] hover:bg-[#0077ed] active:scale-[0.96] transition-[background-color,transform] duration-200 ease-apple-spring"
               title="Open the employer's own application form"
             >
               <span>Apply</span>

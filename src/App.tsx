@@ -1043,7 +1043,11 @@ export function App() {
             
             {/* Left: Job Listings Column (Scrolls independently with slim custom scrollbar) */}
             <div
-              className={`flex-1 h-full overflow-y-auto custom-scrollbar pr-2 pb-36 md:pb-16 ${
+              /* Apple's page grey (#f5f5f7) behind the results, so the white
+                 tiles have something to sit on. On white-on-white the layered
+                 shadows were mathematically present and visually invisible --
+                 the cards read as floating text, not as objects. */
+              className={`flex-1 h-full overflow-y-auto custom-scrollbar bg-[#f5f5f7] rounded-[26px] px-5 pt-5 pb-36 md:pb-16 ${
                 mobileView === 'map' ? 'hidden md:block' : 'block'
               }`}
             >
@@ -1083,7 +1087,7 @@ export function App() {
             </div>
           ) : filteredJobs.length > 0 ? (
             <div className="space-y-8">
-               <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-8">
+               <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-6">
                  {filteredJobs.slice(0, visibleCardCount).map((job) => (
                   <JobCard
                     key={job.id}

@@ -4,6 +4,106 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * iCloud-flavoured design tokens.
+ *
+ * Three things carry over from apple.com/icloud.com and are worth having:
+ * the type (SF, tightened tracking as size goes up), the motion (one family
+ * of decelerating curves, never a linear or a bounce), and the surfaces
+ * (generous radii, layered soft shadows plus a hairline ring, no hard
+ * borders). The dark translucent panels do not carry over: this app puts
+ * cards next to a map, and frosted dark glass over map tiles destroys the
+ * label legibility.
+ *
+ * On a Mac or an iPhone `-apple-system` resolves to the real SF and the type
+ * is genuinely Apple's. On this Windows machine there is no SF to load, so
+ * Inter stands in -- it is the closest metric match in wide circulation, and
+ * the tracking scale below is what makes it read as SF rather than as Inter's
+ * default, slightly loose self.
+ */
+:root {
+  /* Motion. All decelerating; the "spring" overshoots by ~4% and settles. */
+  --ease-apple: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-apple-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-apple-spring: cubic-bezier(0.34, 1.32, 0.52, 1);
+  --dur-fast: 0.18s;
+  --dur-base: 0.32s;
+  --dur-slow: 0.5s;
+
+  /* Surfaces. iCloud's tiles are ~18-22px; the hairline is a ring, not a border,
+   * so it never eats a pixel of layout. */
+  --radius-tile: 22px;
+  --radius-card: 16px;
+  --radius-inner: 13px;
+  --hairline: 0 0 0 0.5px rgba(0, 0, 0, 0.08);
+  --shadow-rest: 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.05);
+  --shadow-lift: 0 2px 6px rgba(0, 0, 0, 0.06), 0 12px 32px rgba(0, 0, 0, 0.11);
+  --shadow-pop: 0 8px 20px rgba(0, 0, 0, 0.09), 0 24px 56px rgba(0, 0, 0, 0.16);
+
+  /* Text. Apple's greys, not Airbnb's. */
+  --ink: #1d1d1f;
+  --ink-secondary: #6e6e73;
+  --ink-tertiary: #86868b;
+  --tint: #0071e3;
+}
+
+/* Apple tightens tracking as type grows and loosens it as type shrinks. One
+ * class per role so a card is not a pile of arbitrary letter-spacings. */
+.ic-title {
+  letter-spacing: -0.022em;
+  font-weight: 600;
+}
+.ic-body {
+  letter-spacing: -0.01em;
+}
+.ic-caption {
+  letter-spacing: 0em;
+}
+
+/* A tile: the whole card is the surface, the way an iCloud app tile is. */
+.ic-tile {
+  background: #ffffff;
+  border-radius: var(--radius-tile);
+  box-shadow: var(--shadow-rest), var(--hairline);
+  transition:
+    box-shadow var(--dur-base) var(--ease-apple-out),
+    transform var(--dur-base) var(--ease-apple-spring);
+  /* No `will-change`. A results list is 60+ of these on screen at once and
+   * promoting every one to its own compositor layer costs more memory than the
+   * hover animation saves. */
+}
+/* `.is-hovered` is set from outside -- hovering the job's pin on the map lifts
+ * its card too -- and has to produce exactly what the pointer does. */
+.ic-tile:hover,
+.ic-tile.is-hovered {
+  box-shadow: var(--shadow-lift), var(--hairline);
+  transform: translateY(-3px);
+}
+.ic-tile:active {
+  transform: translateY(-1px) scale(0.994);
+  transition-duration: var(--dur-fast);
+}
+.ic-tile.is-selected {
+  box-shadow: var(--shadow-lift), 0 0 0 2.5px var(--tint);
+}
+
+/* Anything that appears from nothing: menus, popovers, suggestion lists.
+ * Scales from 98% so it reads as coming forward rather than sliding in. */
+@keyframes icPop {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.ic-pop {
+  animation: icPop var(--dur-base) var(--ease-apple-out);
+  transform-origin: top center;
+}
+
 @layer base {
   html {
     -webkit-font-smoothing: antialiased;
@@ -14,14 +114,30 @@
     -webkit-text-size-adjust: 100%;
   }
 
-  body, input, button, select, textarea {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  body {
+    /* SF first, Inter second. The order matters and it was backwards: with
+     * Inter in front, a Mac and an iPhone -- the two places SF actually exists
+     * -- were being served a downloaded webfont in preference to the system
+     * face the whole design is modelled on. Windows skips the first three
+     * entries (there is no SF to find) and still lands on Inter. */
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter',
+      'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    color: #222222;
+    letter-spacing: -0.01em;
+    color: var(--ink);
     background-color: #ffffff;
     margin: 0;
     padding: 0;
+  }
+
+  input, select, textarea {
+    font-family: inherit;
+  }
+
+  button {
+    font-family: inherit;
+    background-color: transparent;
   }
 
   #root {
@@ -179,11 +295,16 @@
   scrollbar-width: none;
 }
 
-/* Airbnb Signature Spring & Pop Micro-animations */
+/* The popover entrance. Still called `airbnbPop` because Navbar and
+ * ApplyReviewPanel name the class in five places, but it is Apple's motion now:
+ * 0.16s linear-ish ease-out read as a flicker -- too short to see a curve, so
+ * the panel simply appeared. 0.28s on a decelerating curve, coming forward from
+ * 98%, is long enough that the eye tracks it and reads the panel as emerging
+ * from the control that opened it. */
 @keyframes airbnbPop {
   0% {
     opacity: 0;
-    transform: translateY(-4px);
+    transform: translateY(-6px) scale(0.98);
   }
   100% {
     opacity: 1;
@@ -192,11 +313,17 @@
 }
 
 .animate-airbnb-pop {
-  animation: airbnbPop 0.16s ease-out;
+  animation: airbnbPop 0.28s var(--ease-apple-out);
+  transform-origin: top center;
 }
 
 .airbnb-spring {
-  transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, color 0.15s ease;
+  transition:
+    background-color var(--dur-fast) var(--ease-apple-out),
+    border-color var(--dur-fast) var(--ease-apple-out),
+    box-shadow var(--dur-fast) var(--ease-apple-out),
+    color var(--dur-fast) var(--ease-apple-out),
+    transform var(--dur-fast) var(--ease-apple-spring);
 }
 /* Saved jobs keep their rose ring even at the smallest dot size */
 .airbnb-dot-pin.is-saved {
@@ -262,3 +389,18 @@
   background: rgba(0, 0, 0, 0.45);
   color: #ffffff;
 }
+
+/* iOS Safe Area & Airbnb App Utilities */
+.safe-area-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.airbnb-shadow-card {
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
+}
+.airbnb-shadow-floating {
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(0, 0, 0, 0.04);
+}
+

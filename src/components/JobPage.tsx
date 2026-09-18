@@ -180,10 +180,10 @@ export const JobPage: React.FC<JobPageProps> = ({
   });
 
   return (
-    <div className="min-h-screen bg-white text-[#222222] font-sans pb-24 animate-in fade-in duration-200">
+    <div className="min-h-screen text-[#f5f5f7] font-sans pb-24 animate-in fade-in duration-200">
       
       {/* Top Airbnb Navigation / Header */}
-      <div className="border-b border-gray-100 sticky top-0 z-30 bg-white/95 backdrop-blur-md pt-[max(env(safe-area-inset-top,0px),1rem)]">
+      <div className="border-b border-white/[0.09] sticky top-0 z-30 bg-[var(--tile)] backdrop-blur-md backdrop-saturate-150 pt-[max(env(safe-area-inset-top,0px),1rem)]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex items-center justify-between">
           <div className="flex items-center gap-3 sm:gap-6">
             {/* Logo link */}
@@ -197,17 +197,17 @@ export const JobPage: React.FC<JobPageProps> = ({
                 <MapPin className="w-4 h-4 stroke-[2.3]" />
               </div>
               <span className="text-xl font-black tracking-tight text-[#FF385C] hidden sm:inline">
-                map<span className="text-gray-900 font-black">job</span>
+                map<span className="text-[#f5f5f7] font-black">job</span>
               </span>
             </button>
 
-            <div className="h-5 w-[1px] bg-gray-200" />
+            <div className="h-5 w-[1px] bg-white/[0.12]" />
 
             {/* Prominent Back Button */}
             <button
               type="button"
               onClick={onBack}
-              className="flex items-center gap-2 text-xs sm:text-sm font-bold text-neutral-900 bg-neutral-100 hover:bg-neutral-200 py-1.5 px-3 sm:px-4 rounded-full transition active:scale-95 cursor-pointer shadow-xs"
+              className="flex items-center gap-2 text-xs sm:text-sm font-bold text-[#f5f5f7] bg-white/[0.12] hover:bg-white/[0.18] py-1.5 px-3 sm:px-4 rounded-full transition active:scale-95 cursor-pointer shadow-xs"
             >
               <ArrowLeft className="w-4 h-4 stroke-[2.8]" />
               <span>Back to jobs</span>
@@ -218,7 +218,7 @@ export const JobPage: React.FC<JobPageProps> = ({
             <button
               type="button"
               onClick={handleCopyShare}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-gray-700 hover:bg-gray-100 rounded-full transition cursor-pointer"
+              className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-[rgba(235,235,245,0.62)] hover:bg-white/[0.08] rounded-full transition cursor-pointer"
             >
               {copiedShare ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Share2 className="w-3.5 h-3.5" />}
               <span>{copiedShare ? 'Link Copied!' : 'Share'}</span>
@@ -227,9 +227,9 @@ export const JobPage: React.FC<JobPageProps> = ({
             <button
               type="button"
               onClick={() => onToggleSave(job.id)}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-gray-700 hover:bg-gray-100 rounded-full transition cursor-pointer"
+              className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-[rgba(235,235,245,0.62)] hover:bg-white/[0.08] rounded-full transition cursor-pointer"
             >
-              <Heart className={`w-4 h-4 ${isSaved ? 'fill-[#FF385C] text-[#FF385C]' : 'text-gray-700'}`} />
+              <Heart className={`w-4 h-4 ${isSaved ? 'fill-[#FF385C] text-[#FF385C]' : 'text-[rgba(235,235,245,0.62)]'}`} />
               <span>{isSaved ? 'Saved' : 'Save'}</span>
             </button>
           </div>
@@ -241,41 +241,41 @@ export const JobPage: React.FC<JobPageProps> = ({
         {/* Title & Metadata Header (Matches Airbnb room title) */}
         <div>
           <div className="flex flex-wrap items-center gap-2 mb-2">
-            <span className="px-2.5 py-0.5 rounded-full bg-rose-50 text-rose-600 text-xs font-bold tracking-wide">
+            <span className="px-2.5 py-0.5 rounded-full bg-rose-400/15 text-rose-200 border border-rose-300/25 text-xs font-bold tracking-wide">
               {job.category}
             </span>
             {job.postedDaysAgo !== undefined && job.postedDaysAgo <= 3 && (
-              <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-xs font-bold flex items-center gap-1 border border-emerald-100">
+              <span className="px-2.5 py-0.5 rounded-full bg-emerald-400/15 text-emerald-200 text-xs font-bold flex items-center gap-1 border border-emerald-300/25">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                 <span>New Posting</span>
               </span>
             )}
-            <span className="text-xs text-gray-400">•</span>
-            <span className="text-xs font-medium text-gray-500 flex items-center gap-1">
+            <span className="text-xs text-[rgba(235,235,245,0.42)]">•</span>
+            <span className="text-xs font-medium text-[rgba(235,235,245,0.62)] flex items-center gap-1">
               <Clock className="w-3.5 h-3.5" />
               Posted {job.postedAt}
             </span>
           </div>
 
-          <h1 className="text-2xl sm:text-3xl md:text-4xl font-extrabold text-[#222222] tracking-tight mb-2">
+          <h1 className="text-2xl sm:text-3xl md:text-4xl font-extrabold text-[#f5f5f7] tracking-tight mb-2">
             {job.title}
           </h1>
 
-          <div className="flex flex-wrap items-center gap-y-2 gap-x-3 text-sm text-[#222222] font-semibold">
+          <div className="flex flex-wrap items-center gap-y-2 gap-x-3 text-sm text-[#f5f5f7] font-semibold">
             <span className="underline hover:text-black cursor-pointer">{job.company}</span>
             <span>•</span>
-            <span className="text-gray-600 font-normal">{job.jobType}</span>
+            <span className="text-[rgba(235,235,245,0.62)] font-normal">{job.jobType}</span>
             <span>•</span>
-            <span className="text-gray-600 font-normal">{job.remoteType}</span>
+            <span className="text-[rgba(235,235,245,0.62)] font-normal">{job.remoteType}</span>
             <span>•</span>
-            <span className="text-gray-600 font-normal">{job.experienceLevel} Level</span>
+            <span className="text-[rgba(235,235,245,0.62)] font-normal">{job.experienceLevel} Level</span>
             <span>•</span>
-            <span className="text-gray-600 font-normal underline">{job.location}</span>
+            <span className="text-[rgba(235,235,245,0.62)] font-normal underline">{job.location}</span>
           </div>
         </div>
 
         {/* Airbnb Photo Gallery Grid (Matches media_1788490110494.png) */}
-        <div className="relative rounded-3xl overflow-hidden aspect-[16/9] sm:aspect-[2/1] md:aspect-[21/9] max-h-[480px] bg-gray-100 shadow-xs">
+        <div className="relative rounded-3xl overflow-hidden aspect-[16/9] sm:aspect-[2/1] md:aspect-[21/9] max-h-[480px] bg-white/[0.08] shadow-xs">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-2 h-full">
             {/* Main big image (left 2 cols) */}
             <div 
@@ -367,58 +367,62 @@ export const JobPage: React.FC<JobPageProps> = ({
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 pt-6">
           
           {/* Left Main Content (8 cols) */}
-          <div className="lg:col-span-7 xl:col-span-8 space-y-8">
+          {/* The description column gets the card surface too. Left bare it
+            * was body copy printed straight onto the wallpaper: legible, but
+            * the only place in the app where text floats with nothing under
+            * it, and the gradient behind moves under long paragraphs. */}
+          <div className="lg:col-span-7 xl:col-span-8 space-y-8 ic-tile rounded-3xl p-6 sm:p-8">
             
             {/* Guest Favorite / Employer Recognition Banner */}
-            <div className="border-b border-gray-200 pb-6 flex items-center justify-between gap-4">
+            <div className="border-b border-white/[0.09] pb-6 flex items-center justify-between gap-4">
               <div>
-                <h2 className="text-xl sm:text-2xl font-bold text-[#222222]">
+                <h2 className="text-xl sm:text-2xl font-bold text-[#f5f5f7]">
                   Position hosted by {job.company}
                 </h2>
-                <p className="text-sm text-gray-500 mt-1">
+                <p className="text-sm text-[rgba(235,235,245,0.62)] mt-1">
                   Verified Official Direct Live Listing • {job.city.toUpperCase()} Regional Hub
                 </p>
               </div>
 
-              <div className="w-14 h-14 rounded-2xl bg-gray-900 text-white flex items-center justify-center font-black text-lg shrink-0 shadow-md">
+              <div className="w-14 h-14 rounded-2xl bg-white/[0.12] text-[#f5f5f7] flex items-center justify-center font-black text-lg shrink-0 shadow-md">
                 {job.company.slice(0, 2).toUpperCase()}
               </div>
             </div>
 
             {/* Airbnb Key Highlights Features */}
-            <div className="border-b border-gray-200 pb-8 space-y-6">
+            <div className="border-b border-white/[0.09] pb-8 space-y-6">
               
               <div className="flex items-start gap-4">
-                <div className="p-2.5 rounded-full bg-gray-100 text-gray-900 shrink-0 mt-0.5">
+                <div className="p-2.5 rounded-full bg-white/[0.08] text-[#f5f5f7] shrink-0 mt-0.5">
                   <Trophy className="w-5 h-5" />
                 </div>
                 <div>
-                  <h4 className="font-bold text-base text-[#222222]">Top Tier Precision Engineering Role</h4>
-                  <p className="text-sm text-gray-500 mt-0.5">
+                  <h4 className="font-bold text-base text-[#f5f5f7]">Top Tier Precision Engineering Role</h4>
+                  <p className="text-sm text-[rgba(235,235,245,0.62)] mt-0.5">
                     This position is highly ranked based on competitive compensation, industry impact, and candidate satisfaction.
                   </p>
                 </div>
               </div>
 
               <div className="flex items-start gap-4">
-                <div className="p-2.5 rounded-full bg-gray-100 text-gray-900 shrink-0 mt-0.5">
+                <div className="p-2.5 rounded-full bg-white/[0.08] text-[#f5f5f7] shrink-0 mt-0.5">
                   <ShieldCheck className="w-5 h-5" />
                 </div>
                 <div>
-                  <h4 className="font-bold text-base text-[#222222]">Verified Employer Channel</h4>
-                  <p className="text-sm text-gray-500 mt-0.5">
+                  <h4 className="font-bold text-base text-[#f5f5f7]">Verified Employer Channel</h4>
+                  <p className="text-sm text-[rgba(235,235,245,0.62)] mt-0.5">
                     Responds to 95% of qualified engineering applications within 48 business hours.
                   </p>
                 </div>
               </div>
 
               <div className="flex items-start gap-4">
-                <div className="p-2.5 rounded-full bg-gray-100 text-gray-900 shrink-0 mt-0.5">
+                <div className="p-2.5 rounded-full bg-white/[0.08] text-[#f5f5f7] shrink-0 mt-0.5">
                   <MapPin className="w-5 h-5" />
                 </div>
                 <div>
-                  <h4 className="font-bold text-base text-[#222222]">Physical Workplace & High-Tech Campus</h4>
-                  <p className="text-sm text-gray-500 mt-0.5">
+                  <h4 className="font-bold text-base text-[#f5f5f7]">Physical Workplace & High-Tech Campus</h4>
+                  <p className="text-sm text-[rgba(235,235,245,0.62)] mt-0.5">
                     Located in {job.location}. Verified facility coordinates with easy transit access.
                   </p>
                 </div>
@@ -427,38 +431,38 @@ export const JobPage: React.FC<JobPageProps> = ({
             </div>
 
             {/* Translation notice matching Airbnb */}
-            <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 text-xs text-gray-600 flex items-center justify-between">
+            <div className="p-4 bg-white/[0.06] rounded-2xl border border-white/[0.09] text-xs text-[rgba(235,235,245,0.62)] flex items-center justify-between">
               <span>Some information has been automatically synchronized from the official employer feed.</span>
               <span className="font-bold underline cursor-pointer hover:text-black">Show original</span>
             </div>
 
             {/* About the Position (Description) */}
-            <div className="border-b border-gray-200 pb-8">
+            <div className="border-b border-white/[0.09] pb-8">
               <div className="flex items-center justify-between gap-3 mb-4">
-                <h3 className="text-xl font-bold text-[#222222]">About the Position</h3>
+                <h3 className="text-xl font-bold text-[#f5f5f7]">About the Position</h3>
                 {isLoadingFull ? (
-                  <span className="inline-flex items-center gap-1.5 text-xs text-gray-500 font-medium">
+                  <span className="inline-flex items-center gap-1.5 text-xs text-[rgba(235,235,245,0.62)] font-medium">
                     <Loader2 className="w-3.5 h-3.5 animate-spin text-rose-500" />
                     <span>Loading full official posting...</span>
                   </span>
                 ) : isFullLoaded ? (
-                  <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-100">
+                  <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-200 bg-emerald-400/15 px-2.5 py-1 rounded-full border border-emerald-300/25">
                     <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
                     <span>Full Employer Specifications</span>
                   </span>
                 ) : null}
               </div>
-              <p className="text-[#222222] text-base leading-relaxed whitespace-pre-line">
+              <p className="text-[#f5f5f7] text-base leading-relaxed whitespace-pre-line">
                 {fullDescription}
               </p>
             </div>
 
             {/* What you will do (Responsibilities) */}
-            <div className="border-b border-gray-200 pb-8">
-              <h3 className="text-xl font-bold text-[#222222] mb-4">Key Responsibilities</h3>
+            <div className="border-b border-white/[0.09] pb-8">
+              <h3 className="text-xl font-bold text-[#f5f5f7] mb-4">Key Responsibilities</h3>
               <ul className="space-y-3">
                 {responsibilities.map((resp, i) => (
-                  <li key={i} className="flex items-start gap-3 text-base text-gray-800">
+                  <li key={i} className="flex items-start gap-3 text-base text-[#f5f5f7]">
                     <CheckCircle2 className="w-5 h-5 text-emerald-600 mt-0.5 shrink-0" />
                     <span>{resp}</span>
                   </li>
@@ -467,11 +471,11 @@ export const JobPage: React.FC<JobPageProps> = ({
             </div>
 
             {/* Requirements & Qualifications */}
-            <div className="border-b border-gray-200 pb-8">
-              <h3 className="text-xl font-bold text-[#222222] mb-4">Candidate Requirements & Specifications</h3>
+            <div className="border-b border-white/[0.09] pb-8">
+              <h3 className="text-xl font-bold text-[#f5f5f7] mb-4">Candidate Requirements & Specifications</h3>
               <ul className="space-y-3">
                 {requirements.map((req, i) => (
-                  <li key={i} className="flex items-start gap-3 text-base text-gray-800">
+                  <li key={i} className="flex items-start gap-3 text-base text-[#f5f5f7]">
                     <div className="w-2 h-2 rounded-full bg-rose-500 mt-2 shrink-0" />
                     <span>{req}</span>
                   </li>
@@ -480,13 +484,13 @@ export const JobPage: React.FC<JobPageProps> = ({
             </div>
 
             {/* Company Benefits */}
-            <div className="border-b border-gray-200 pb-8">
-              <h3 className="text-xl font-bold text-[#222222] mb-4">What this workplace offers</h3>
+            <div className="border-b border-white/[0.09] pb-8">
+              <h3 className="text-xl font-bold text-[#f5f5f7] mb-4">What this workplace offers</h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                 {job.benefits.map((benefit, i) => (
                   <div
                     key={i}
-                    className="flex items-center gap-3 p-3.5 rounded-2xl bg-gray-50 border border-gray-100 font-semibold text-sm text-[#222222]"
+                    className="flex items-center gap-3 p-3.5 rounded-2xl bg-white/[0.06] border border-white/[0.09] font-semibold text-sm text-[#f5f5f7]"
                   >
                     <Sparkles className="w-4 h-4 text-rose-500 shrink-0" />
                     <span>{benefit}</span>
@@ -497,12 +501,12 @@ export const JobPage: React.FC<JobPageProps> = ({
 
             {/* Where you'll be (Interactive Map Snippet) */}
             <div className="pb-8 space-y-4">
-              <h3 className="text-xl font-bold text-[#222222]">Where you'll be working</h3>
-              <p className="text-sm text-gray-600 font-medium">
+              <h3 className="text-xl font-bold text-[#f5f5f7]">Where you'll be working</h3>
+              <p className="text-sm text-[rgba(235,235,245,0.62)] font-medium">
                 📍 {job.address || job.location}
               </p>
 
-              <div className="h-72 w-full rounded-3xl overflow-hidden border border-gray-200 shadow-sm relative z-0">
+              <div className="h-72 w-full rounded-3xl overflow-hidden border border-white/[0.09] shadow-sm relative z-0">
                 {Number.isFinite(job.lat) && Number.isFinite(job.lng) ? <MapContainer
                   center={[job.lat, job.lng]}
                   zoom={14}
@@ -518,7 +522,7 @@ export const JobPage: React.FC<JobPageProps> = ({
                     zoomOffset={-1}
                   />
                   <Marker position={[job.lat, job.lng]} icon={markerIcon} />
-                </MapContainer> : <p className="p-6 text-sm text-gray-500">The employer has not provided a mappable location. See the original listing for details.</p>}
+                </MapContainer> : <p className="p-6 text-sm text-[rgba(235,235,245,0.62)]">The employer has not provided a mappable location. See the original listing for details.</p>}
               </div>
             </div>
 
@@ -526,54 +530,54 @@ export const JobPage: React.FC<JobPageProps> = ({
 
           {/* Right Sticky Reservation Card (Matches media_1788490110494.png) */}
           <div className="lg:col-span-5 xl:col-span-4">
-            <div className="sticky top-24 bg-white rounded-3xl p-6 sm:p-7 border border-gray-200 shadow-[0_6px_28px_rgba(0,0,0,0.12)] space-y-6">
+            <div className="sticky top-24 ic-tile rounded-3xl p-6 sm:p-7 space-y-6">
               
               {/* Rare Find banner matching Airbnb */}
-              <div className="p-3.5 bg-rose-50/80 rounded-2xl border border-rose-100 flex items-center gap-3 text-xs text-[#222222]">
+              <div className="p-3.5 bg-rose-400/12 rounded-2xl border border-rose-300/25 flex items-center gap-3 text-xs text-[#f5f5f7]">
                 <span className="text-base">💎</span>
                 <div>
                   <span className="font-extrabold text-rose-700">Rare opportunity!</span>{' '}
-                  <span className="text-gray-600">Postings at {job.company} usually fill quickly.</span>
+                  <span className="text-[rgba(235,235,245,0.62)]">Postings at {job.company} usually fill quickly.</span>
                 </div>
               </div>
 
               {/* Salary Total Header */}
               <div>
-                <span className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1">
+                <span className="text-xs font-bold text-[rgba(235,235,245,0.42)] uppercase tracking-wider block mb-1">
                   Compensation
                 </span>
                 <div className="flex items-baseline gap-1.5">
-                  <span className="text-3xl font-black text-[#222222]">
+                  <span className="text-3xl font-black text-[#f5f5f7]">
                     {job.salaryDisplay}
                   </span>
                 </div>
-                <span className="text-xs text-gray-500 mt-1 block">
+                <span className="text-xs text-[rgba(235,235,245,0.62)] mt-1 block">
                   Includes full benefits package, performance bonus & equity
                 </span>
               </div>
 
               {/* Booking Specifications Box */}
-              <div className="border border-gray-300 rounded-2xl overflow-hidden divide-y divide-gray-300 text-xs">
+              <div className="border border-white/15 rounded-2xl overflow-hidden divide-y divide-gray-300 text-xs">
                 <div className="grid grid-cols-2 divide-x divide-gray-300">
                   <div className="p-3">
-                    <span className="block font-black text-[10px] text-gray-500 uppercase">WORK FORMAT</span>
-                    <span className="font-bold text-sm text-gray-900">{job.remoteType}</span>
+                    <span className="block font-black text-[10px] text-[rgba(235,235,245,0.62)] uppercase">WORK FORMAT</span>
+                    <span className="font-bold text-sm text-[#f5f5f7]">{job.remoteType}</span>
                   </div>
                   <div className="p-3">
-                    <span className="block font-black text-[10px] text-gray-500 uppercase">CONTRACT</span>
-                    <span className="font-bold text-sm text-gray-900">{job.jobType}</span>
+                    <span className="block font-black text-[10px] text-[rgba(235,235,245,0.62)] uppercase">CONTRACT</span>
+                    <span className="font-bold text-sm text-[#f5f5f7]">{job.jobType}</span>
                   </div>
                 </div>
 
                 <div className="p-3">
-                  <span className="block font-black text-[10px] text-gray-500 uppercase">EXPERIENCE LEVEL</span>
-                  <span className="font-bold text-sm text-gray-900">{job.experienceLevel} Engineering Level</span>
+                  <span className="block font-black text-[10px] text-[rgba(235,235,245,0.62)] uppercase">EXPERIENCE LEVEL</span>
+                  <span className="font-bold text-sm text-[#f5f5f7]">{job.experienceLevel} Engineering Level</span>
                 </div>
               </div>
 
               {/* Airbnb Rates Radio Selector Box (Matches media_1788490110494.png) */}
               <div className="space-y-3">
-                <span className="text-xs font-bold text-gray-400 uppercase tracking-wider block">
+                <span className="text-xs font-bold text-[rgba(235,235,245,0.42)] uppercase tracking-wider block">
                   APPLICATION METHOD
                 </span>
 
@@ -582,31 +586,31 @@ export const JobPage: React.FC<JobPageProps> = ({
                   onClick={() => setApplyMode('direct')}
                   className={`p-3.5 rounded-2xl border flex items-start justify-between gap-3 cursor-pointer transition select-none ${
                     applyMode === 'direct'
-                      ? 'border-gray-900 ring-2 ring-gray-900 bg-gray-50/50'
-                      : 'border-gray-200 hover:border-gray-300 bg-white'
+                      ? 'border-[#0a84ff] ring-2 ring-[#0a84ff] bg-[#0a84ff]/[0.12]'
+                      : 'border-white/[0.09] hover:border-white/20 bg-white/[0.05]'
                   }`}
                 >
                   <div className="space-y-1">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="font-bold text-sm text-gray-900 block">Direct Employer Portal</span>
+                      <span className="font-bold text-sm text-[#f5f5f7] block">Direct Employer Portal</span>
                       {directDomain ? (
                         <span className="inline-flex items-center gap-1 text-[10px] font-extrabold uppercase tracking-wide bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">
                           <Check className="w-2.5 h-2.5 stroke-[3]" /> Direct
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-extrabold uppercase tracking-wide bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
+                        <span className="inline-flex items-center gap-1 text-[10px] font-extrabold uppercase tracking-wide bg-white/[0.08] text-[rgba(235,235,245,0.62)] px-2 py-0.5 rounded-full">
                           External
                         </span>
                       )}
                     </div>
-                    <span className="text-xs text-gray-500 block leading-tight">
+                    <span className="text-xs text-[rgba(235,235,245,0.62)] block leading-tight">
                       {directDomain 
                         ? `Direct portal: ${directDomain} (bypasses Adzuna)` 
                         : 'Instant redirection to official candidate tracking system.'}
                     </span>
                   </div>
                   <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 mt-0.5 ${
-                    applyMode === 'direct' ? 'border-gray-900 bg-gray-900' : 'border-gray-300'
+                    applyMode === 'direct' ? 'border-[#0a84ff] bg-[#0a84ff]' : 'border-white/15'
                   }`}>
                     {applyMode === 'direct' && <div className="w-2 h-2 rounded-full bg-white" />}
                   </div>
@@ -617,15 +621,15 @@ export const JobPage: React.FC<JobPageProps> = ({
                   onClick={() => canAutoApply && setApplyMode('fast')}
                   className={`p-3.5 rounded-2xl border flex items-start justify-between gap-3 transition select-none ${
                     !canAutoApply
-                      ? 'border-gray-100 bg-gray-50 opacity-70 cursor-not-allowed'
+                      ? 'border-white/[0.09] bg-white/[0.06] opacity-70 cursor-not-allowed'
                       : applyMode === 'fast'
-                      ? 'border-gray-900 ring-2 ring-gray-900 bg-gray-50/50 cursor-pointer'
-                      : 'border-gray-200 hover:border-gray-300 bg-white cursor-pointer'
+                      ? 'border-[#0a84ff] ring-2 ring-[#0a84ff] bg-[#0a84ff]/[0.12] cursor-pointer'
+                      : 'border-white/[0.09] hover:border-white/20 bg-white/[0.05] cursor-pointer'
                   }`}
                 >
                   <div className="space-y-0.5">
-                    <span className="font-bold text-sm text-gray-900 block">Submit through MapJob</span>
-                    <span className="text-xs text-gray-500 block leading-tight">
+                    <span className="font-bold text-sm text-[#f5f5f7] block">Submit through MapJob</span>
+                    <span className="text-xs text-[rgba(235,235,245,0.62)] block leading-tight">
                       {!canAutoApply
                         ? "Not available: this ATS has no public application API, so only the employer's own form can accept your application."
                         : emailStatus?.receipt_email_configured
@@ -639,7 +643,7 @@ export const JobPage: React.FC<JobPageProps> = ({
                     )}
                   </div>
                   <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 mt-0.5 ${
-                    applyMode === 'fast' ? 'border-gray-900 bg-gray-900' : 'border-gray-300'
+                    applyMode === 'fast' ? 'border-[#0a84ff] bg-[#0a84ff]' : 'border-white/15'
                   }`}>
                     {applyMode === 'fast' && <div className="w-2 h-2 rounded-full bg-white" />}
                   </div>
@@ -697,7 +701,7 @@ export const JobPage: React.FC<JobPageProps> = ({
                   <button
                     type="button"
                     onClick={() => onUnmarkApplied(job.id)}
-                    className="text-xs text-gray-400 hover:text-gray-700 underline font-medium cursor-pointer transition py-0.5"
+                    className="text-xs text-[rgba(235,235,245,0.42)] hover:text-[rgba(235,235,245,0.62)] underline font-medium cursor-pointer transition py-0.5"
                   >
                     Reset status / Re-apply to this position
                   </button>
@@ -705,16 +709,16 @@ export const JobPage: React.FC<JobPageProps> = ({
               )}
 
               {/* Microtext matching Airbnb "You won't be charged yet" */}
-              <p className="text-center text-xs text-gray-500 font-medium">
+              <p className="text-center text-xs text-[rgba(235,235,245,0.62)] font-medium">
                 100% Free Candidate Service • No registration fees
               </p>
 
               {/* Report listing */}
-              <div className="border-t border-gray-100 pt-4 flex items-center justify-center">
+              <div className="border-t border-white/[0.09] pt-4 flex items-center justify-center">
                 <button
                   type="button"
                   onClick={() => alert('Listing reported for review. Thank you!')}
-                  className="flex items-center gap-2 text-xs font-semibold text-gray-400 hover:text-gray-600 transition"
+                  className="flex items-center gap-2 text-xs font-semibold text-[rgba(235,235,245,0.42)] hover:text-[rgba(235,235,245,0.62)] transition"
                 >
                   <Flag className="w-3.5 h-3.5" />
                   <span>Report this listing</span>
@@ -750,7 +754,7 @@ export const JobPage: React.FC<JobPageProps> = ({
 
           <div className="w-full max-w-4xl space-y-6 pb-12">
             {job.images.map((img, i) => (
-              <div key={i} className="rounded-2xl overflow-hidden bg-gray-900 shadow-2xl">
+              <div key={i} className="rounded-2xl overflow-hidden bg-[#0a84ff] shadow-2xl">
                 <img
                   src={img}
                   alt={`${job.company} photo ${i + 1}`}

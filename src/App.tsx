@@ -973,8 +973,17 @@ export function App() {
         />
       )}
 
-      {/* Top Airbnb Navbar with Menu (Jobs, Automated Emails, Interview Helper) & Search Bar */}
+      {/* Top Airbnb Navbar with Menu (Jobs, Automated Emails, Interview Helper) & Search Bar.
+        *
+        * The navbar and the filter strip are wrapped in one `.ic-chrome` island
+        * rather than being two full-bleed bars. They have to share a single
+        * element for the raised look to work at all: a drop shadow on the
+        * navbar alone would fall behind the filter strip, and since that strip
+        * is translucent the shadow would show straight through it as a dark
+        * band across the middle of the island. One wrapper also means one
+        * backdrop-filter pass for the whole header instead of two. */}
       {!activeJobPage && (
+        <div className="ic-chrome shrink-0">
         <Navbar
           searchQuery={searchQuery}
           setSearchQuery={(q) => {
@@ -998,6 +1007,26 @@ export function App() {
           activeTopTab={activeTopTab}
           setActiveTopTab={setActiveTopTab}
         />
+        {activeTopTab !== 'interview' && (
+          <FilterBar
+            selectedCategory={selectedCategory}
+            setSelectedCategory={setSelectedCategory}
+            jobType={jobType}
+            setJobType={setJobType}
+            remoteType={remoteType}
+            setRemoteType={setRemoteType}
+            minSalary={minSalary}
+            setMinSalary={setMinSalary}
+            visaSponsorshipOnly={visaSponsorshipOnly}
+            setVisaSponsorshipOnly={setVisaSponsorshipOnly}
+            directAtsOnly={directAtsOnly}
+            setDirectAtsOnly={setDirectAtsOnly}
+            totalResults={filteredJobs.length}
+            onResetFilters={handleResetFilters}
+            hasActiveFilters={hasActiveFilters}
+          />
+        )}
+        </div>
       )}
 
       {/* If viewing a dedicated Job Offer Page (Airbnb-style) */}
@@ -1019,26 +1048,8 @@ export function App() {
         />
       ) : (
         <>
-          {/* Categories & Filter Bar */}
-          <div className="shrink-0">
-            <FilterBar
-              selectedCategory={selectedCategory}
-              setSelectedCategory={setSelectedCategory}
-              jobType={jobType}
-              setJobType={setJobType}
-              remoteType={remoteType}
-              setRemoteType={setRemoteType}
-              minSalary={minSalary}
-              setMinSalary={setMinSalary}
-              visaSponsorshipOnly={visaSponsorshipOnly}
-              setVisaSponsorshipOnly={setVisaSponsorshipOnly}
-              directAtsOnly={directAtsOnly}
-              setDirectAtsOnly={setDirectAtsOnly}
-              totalResults={filteredJobs.length}
-              onResetFilters={handleResetFilters}
-              hasActiveFilters={hasActiveFilters}
-            />
-          </div>
+          {/* The filter bar now lives in the .ic-chrome island above, beside the
+            * navbar, so that the two share one shadow and one backdrop pass. */}
 
           {/* MAIN SPLIT LAYOUT (Matches English Airbnb: Cards on Left, Map on Right) */}
           <main className="flex-1 max-w-[1760px] w-full mx-auto px-4 sm:px-6 lg:px-8 pt-2 pb-3 flex flex-col md:flex-row gap-6 xl:gap-8 overflow-hidden min-h-0 relative">

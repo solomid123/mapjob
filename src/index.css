@@ -201,16 +201,41 @@ html[data-wallpaper='sage'] {
  * page down by one). Content scrolling under it stays faintly visible, which
  * is what makes the bar read as glass sitting on the page instead of a slab
  * bolted above it. */
-.ic-header {
-  background: rgba(8, 14, 32, 0.42);
+/* The header island: navbar and filter strip on one raised, rounded slab.
+ *
+ * Deliberately NOT `overflow: hidden`. Clipping to the radius is the obvious
+ * way to keep the children inside the rounded corners, but every menu in the
+ * navbar -- the wallpaper picker, the account menu, the search panels -- is an
+ * absolutely positioned child that is supposed to hang below the bar, and
+ * overflow would cut all of them off at the edge. It is not needed anyway:
+ * the children draw no background of their own, so there is nothing to bleed
+ * past the corners. */
+.ic-chrome {
+  position: relative;
+  z-index: 40;
+  margin: 10px 12px 0;
+  border-radius: 24px;
+  background: rgba(8, 14, 32, 0.46);
   -webkit-backdrop-filter: saturate(180%) blur(24px);
   backdrop-filter: saturate(180%) blur(24px);
-  box-shadow: 0 0.5px 0 rgba(255, 255, 255, 0.1);
+  /* Same three-layer ladder as the tiles, so the header reads as the same
+   * kind of object sitting at the same height, just a larger one. */
+  box-shadow: var(--shadow-rest), var(--tile-edge);
+}
+
+/* Inside the island the bars are pure layout -- the slab owns the surface.
+ * Two stacked backdrop filters would also double the blur cost of the header
+ * for no visible gain. */
+.ic-header {
+  background: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
 }
 /* Safari and Firefox without backdrop-filter get the solid colour instead of a
  * transparent bar with text showing through it. */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .ic-header {
+  .ic-chrome {
     background: #0b1533;
   }
 }

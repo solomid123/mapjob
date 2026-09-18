@@ -238,8 +238,16 @@ export const JobPage: React.FC<JobPageProps> = ({
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 space-y-6">
         
-        {/* Title & Metadata Header (Matches Airbnb room title) */}
-        <div>
+        {/* Title & Metadata Header.
+         *
+         * On its own card rather than bare on the canvas. It was the only
+         * block on the page still sitting directly on the wallpaper, which
+         * read as unfinished next to the tiles below it -- and on the pale
+         * mist canvas it was a legibility bug outright: white title and
+         * rgba(235,235,245,0.62) meta over a ~72%-luminance background is
+         * roughly 1.5:1. The tile puts a dark, near-opaque ground back under
+         * the type on every theme. */}
+        <div className="ic-tile is-static rounded-3xl p-5 sm:p-7">
           <div className="flex flex-wrap items-center gap-2 mb-2">
             <span className="px-2.5 py-0.5 rounded-full bg-rose-400/15 text-rose-200 border border-rose-300/25 text-xs font-bold tracking-wide">
               {job.category}
@@ -262,7 +270,11 @@ export const JobPage: React.FC<JobPageProps> = ({
           </h1>
 
           <div className="flex flex-wrap items-center gap-y-2 gap-x-3 text-sm text-[#f5f5f7] font-semibold">
-            <span className="underline hover:text-black cursor-pointer">{job.company}</span>
+            {/* hover:text-black, left over from the light design: on a dark
+             * tile it faded the link into the background on hover. */}
+            <span className="underline hover:text-[#0a84ff] transition-colors cursor-pointer">
+              {job.company}
+            </span>
             <span>•</span>
             <span className="text-[rgba(235,235,245,0.62)] font-normal">{job.jobType}</span>
             <span>•</span>
@@ -371,7 +383,7 @@ export const JobPage: React.FC<JobPageProps> = ({
             * was body copy printed straight onto the wallpaper: legible, but
             * the only place in the app where text floats with nothing under
             * it, and the gradient behind moves under long paragraphs. */}
-          <div className="lg:col-span-7 xl:col-span-8 space-y-8 ic-tile rounded-3xl p-6 sm:p-8">
+          <div className="lg:col-span-7 xl:col-span-8 space-y-8 ic-tile is-static rounded-3xl p-6 sm:p-8">
             
             {/* Guest Favorite / Employer Recognition Banner */}
             <div className="border-b border-white/[0.09] pb-6 flex items-center justify-between gap-4">
@@ -530,7 +542,7 @@ export const JobPage: React.FC<JobPageProps> = ({
 
           {/* Right Sticky Reservation Card (Matches media_1788490110494.png) */}
           <div className="lg:col-span-5 xl:col-span-4">
-            <div className="sticky top-24 ic-tile rounded-3xl p-6 sm:p-7 space-y-6">
+            <div className="sticky top-24 ic-tile is-static rounded-3xl p-6 sm:p-7 space-y-6">
               
               {/* Rare Find banner matching Airbnb */}
               <div className="p-3.5 bg-rose-400/12 rounded-2xl border border-rose-300/25 flex items-center gap-3 text-xs text-[#f5f5f7]">

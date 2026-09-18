@@ -198,7 +198,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <button
               type="button"
               onClick={onOpenPostJob}
-              className="hidden lg:inline-block px-3 py-1.5 text-[13px] font-medium tracking-[-0.01em] text-[#f5f5f7] hover:bg-white/[0.09] rounded-lg transition-colors duration-200 ease-apple-out"
+              className="hidden lg:inline-block px-3 py-1.5 text-[13px] font-medium tracking-[-0.01em] text-[#f5f5f7] hover:bg-white/[0.09] rounded-lg transition-[background-color,transform] duration-200 ease-apple-out active:scale-[0.97]"
             >
               Post a Job
             </button>
@@ -224,7 +224,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <button type="button" className="ic-fill w-8 h-8 rounded-full flex items-center justify-center cursor-pointer" title="Menu">
               <Menu className="w-4 h-4 text-[#f5f5f7]" />
             </button>
-            <button type="button" className="w-8 h-8 rounded-full bg-white/20 text-[#f5f5f7] flex items-center justify-center cursor-pointer transition-transform duration-200 ease-apple-spring active:scale-95" title="Account">
+            <button type="button" className="ic-press w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 text-[#f5f5f7] flex items-center justify-center cursor-pointer" title="Account">
               <User className="w-4 h-4" />
             </button>
           </div>

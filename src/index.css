@@ -224,6 +224,15 @@ html[data-wallpaper='sage'] {
   transform: translateY(-1px) scale(0.994);
   transition-duration: var(--dur-fast);
 }
+/* A tile used as a panel rather than a control. The lift is a promise that
+ * clicking does something; on the job page's title block, description column
+ * and sidebar it just makes the page twitch as the pointer crosses it. */
+.ic-tile.is-static:hover,
+.ic-tile.is-static:active {
+  background: var(--tile);
+  box-shadow: var(--shadow-rest), var(--tile-edge);
+  transform: none;
+}
 .ic-tile.is-selected {
   box-shadow: var(--shadow-lift), 0 0 0 2.5px var(--tint), var(--tile-edge);
 }
@@ -344,6 +353,64 @@ html[data-wallpaper='sage'] {
 }
 .ic-fill:hover {
   background: var(--fill-hover);
+}
+
+/* The press response, shared by every round control in the chrome.
+ *
+ * .ic-fill already listed `transform` in its transition above, but nothing
+ * ever set one -- so the declaration was dead and the buttons changed colour
+ * and nothing else, while the cards beside them lifted and settled.
+ *
+ * The cards use translateY(-3px); a 32px button cannot. Three pixels is a
+ * tenth of its height and reads as the icon sliding out of its own well, so
+ * these scale instead and lift by one. The overshoot is in
+ * --ease-apple-spring (the 1.32 control point) and needs --dur-base to be
+ * seen at all: at --dur-fast the bounce is over in three frames, which is
+ * why these felt inert even where a transform was applied by hand.
+ *
+ * .ic-press is the same motion without the background, for the controls that
+ * bring their own fill. */
+.ic-fill,
+.ic-press {
+  transition:
+    background-color var(--dur-fast) var(--ease-apple-out),
+    box-shadow var(--dur-base) var(--ease-apple-out),
+    color var(--dur-fast) var(--ease-apple-out),
+    transform var(--dur-base) var(--ease-apple-spring);
+}
+/* scale(1.08), not the 1.06 I first tried. The spring's overshoot is a fixed
+ * ~9% of the distance travelled, so on a 32px control 1.06 buys 0.17px of
+ * bounce -- measurably there, invisible. The other half of it is the shadow:
+ * what reads as "bounce" on the cards is the lift and the shadow growing
+ * together, so these get a shadow at rest-weight on hover for the same
+ * reason. */
+.ic-fill:hover,
+.ic-press:hover {
+  transform: translateY(-1.5px) scale(1.08);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3), 0 6px 14px rgba(0, 0, 0, 0.22);
+}
+.ic-fill:active,
+.ic-press:active {
+  transform: translateY(0) scale(0.9);
+  box-shadow: none;
+  transition-duration: var(--dur-fast);
+}
+
+/* Motion here is decoration: it says "this is pressable", which the cursor
+ * and the colour change already say. Someone who gets motion sick from a
+ * bouncing interface loses nothing by having it removed. */
+@media (prefers-reduced-motion: reduce) {
+  .ic-fill:hover,
+  .ic-press:hover,
+  .ic-fill:active,
+  .ic-press:active {
+    transform: none;
+  }
+  .ic-tile:hover,
+  .ic-tile.is-hovered,
+  .ic-tile:active {
+    transform: none;
+  }
 }
 
 /* A search-bar segment. The resting state is nothing at all; hover and focus

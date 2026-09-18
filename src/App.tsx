@@ -1205,7 +1205,7 @@ export function App() {
             at the document root and paint straight over the navbar's search
             dropdowns (which live inside a z-40 sticky header).
           */}
-          <div className="w-full h-full rounded-[22px] overflow-hidden shadow-[0_0_0_0.5px_rgba(255,255,255,0.12),0_2px_8px_rgba(0,0,0,0.3),0_20px_48px_rgba(0,0,0,0.4)] relative isolate z-0">
+          <div className="w-full h-full rounded-[22px] overflow-hidden ic-panel relative isolate z-0">
             <JobMap
               jobs={filteredJobs}
               selectedCity={selectedCity}

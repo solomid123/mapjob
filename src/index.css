@@ -56,6 +56,27 @@
   --shadow-pop: 0 3px 5px rgba(0, 0, 0, 0.4), 0 16px 32px rgba(0, 0, 0, 0.36),
     0 40px 80px rgba(0, 0, 0, 0.56);
 
+  /* The same idea at panel scale -- and the one shadow in the app that was
+   * never a token.
+   *
+   * The map frame carried these three layers written out by hand in a Tailwind
+   * arbitrary value, and they are better than the set above for something that
+   * big: a wider, deeper ambient (20/48 against 14/34) so a 700px block floats
+   * like a 700px block, and a half-pixel *outset* ring of light instead of an
+   * inset one, which is what draws the crisp edge all the way round.
+   *
+   * The result was that the map sat higher off the wallpaper than the job
+   * cards beside it, which is a difference nobody asked for and everybody
+   * sees. So the hand-written shadow became this token and the big surfaces
+   * -- map, cards, islands -- all render the identical string.
+   *
+   * Controls stay on --shadow-rest: a 48px ambient under a 36px button is a
+   * smudge, not height. Scale is the whole reason there are two sets. */
+  --shadow-panel: 0 0 0 0.5px rgba(255, 255, 255, 0.12),
+    0 2px 8px rgba(0, 0, 0, 0.3), 0 20px 48px rgba(0, 0, 0, 0.4);
+  --shadow-panel-lift: 0 0 0 0.5px rgba(255, 255, 255, 0.18),
+    0 4px 12px rgba(0, 0, 0, 0.32), 0 30px 64px rgba(0, 0, 0, 0.48);
+
   /* Text on the dark canvas: Apple's own dark-mode label colours. A near-white
    * primary and two translucent whites under it, so secondary text picks up
    * whatever is behind the tile instead of being a flat grey that only works
@@ -204,7 +225,7 @@ html[data-wallpaper='sage'] {
    * lit from above. */
   background: var(--tile);
   border-radius: var(--radius-tile);
-  box-shadow: var(--shadow-rest), var(--tile-edge);
+  box-shadow: var(--shadow-panel), var(--tile-edge);
   transition:
     box-shadow var(--dur-base) var(--ease-apple-out),
     transform var(--dur-base) var(--ease-apple-spring);
@@ -217,7 +238,7 @@ html[data-wallpaper='sage'] {
 .ic-tile:hover,
 .ic-tile.is-hovered {
   background: var(--tile-hover);
-  box-shadow: var(--shadow-lift), var(--tile-edge);
+  box-shadow: var(--shadow-panel-lift), var(--tile-edge);
   transform: translateY(-3px);
 }
 .ic-tile:active {
@@ -232,11 +253,11 @@ html[data-wallpaper='sage'] {
 .ic-tile.is-static:hover,
 .ic-tile.is-static:active {
   background: var(--tile);
-  box-shadow: var(--shadow-rest), var(--tile-edge);
+  box-shadow: var(--shadow-panel), var(--tile-edge);
   transform: none;
 }
 .ic-tile.is-selected {
-  box-shadow: var(--shadow-lift), 0 0 0 2.5px var(--tint), var(--tile-edge);
+  box-shadow: 0 0 0 2.5px var(--tint), var(--shadow-panel-lift), var(--tile-edge);
 }
 
 /* ---- The chrome, in two parts ------------------------------------------
@@ -252,6 +273,13 @@ html[data-wallpaper='sage'] {
  * Splitting it into a ribbon plus islands is what makes the wallpaper read
  * as the ground everything is sitting on.
  */
+
+/* A panel with no surface of its own: the map frame, which is filled edge to
+ * edge by opaque tiles and so needs the shadow and nothing else. Its own
+ * radius and clipping stay in the markup, where they belong to the layout. */
+.ic-panel {
+  box-shadow: var(--shadow-panel);
+}
 
 /* The ribbon: chrome, not an object. It is attached to the window, so it has
  * no shadow to cast and nothing to lift out of -- the only edge it gets is a
@@ -289,9 +317,9 @@ html[data-wallpaper='sage'] {
   background: var(--tile);
   -webkit-backdrop-filter: saturate(180%) blur(24px);
   backdrop-filter: saturate(180%) blur(24px);
-  /* Same three-layer ladder as the tiles, so an island reads as the same kind
+  /* Same shadow as the tiles and the map, so an island reads as the same kind
    * of object sitting at the same height, just a larger one. */
-  box-shadow: var(--shadow-rest), var(--tile-edge);
+  box-shadow: var(--shadow-panel), var(--tile-edge);
   transition:
     box-shadow var(--dur-base) var(--ease-apple-out),
     transform var(--dur-base) var(--ease-apple-spring);
@@ -313,7 +341,7 @@ html[data-wallpaper='sage'] {
  * a little and whatever is under the pointer rises further out of it. */
 .ic-island:hover {
   transform: translateY(-3px);
-  box-shadow: var(--shadow-lift), var(--tile-edge);
+  box-shadow: var(--shadow-panel-lift), var(--tile-edge);
 }
 
 @media (prefers-reduced-motion: reduce) {

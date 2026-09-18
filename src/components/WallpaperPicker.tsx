@@ -14,6 +14,13 @@ export type WallpaperId = 'mist' | 'slate' | 'azure' | 'violet' | 'crimson' | 's
 
 const STORAGE_KEY = 'mapjob.wallpaper';
 
+/**
+ * What the canvas wears when nobody has chosen. It must match the values in
+ * :root in index.css -- with no attribute set, those are what actually paint,
+ * and a tick against a different name in this menu would be a lie.
+ */
+const DEFAULT_WALLPAPER: WallpaperId = 'teal';
+
 const WALLPAPERS: { id: WallpaperId; name: string; swatch: string }[] = [
   { id: 'mist', name: 'Mist', swatch: 'linear-gradient(135deg,#e3ebe6,#b3bfb7 52%,#8b9c95)' },
   { id: 'slate', name: 'Slate', swatch: 'linear-gradient(135deg,#868ea9,#4a5164 55%,#1b1d28)' },
@@ -25,7 +32,7 @@ const WALLPAPERS: { id: WallpaperId; name: string; swatch: string }[] = [
 ];
 
 export const readWallpaper = (): WallpaperId =>
-  (document.documentElement.getAttribute('data-wallpaper') as WallpaperId) || 'mist';
+  (document.documentElement.getAttribute('data-wallpaper') as WallpaperId) || DEFAULT_WALLPAPER;
 
 export const applyWallpaper = (id: WallpaperId) => {
   document.documentElement.setAttribute('data-wallpaper', id);
@@ -39,7 +46,7 @@ export const applyWallpaper = (id: WallpaperId) => {
 
 export const WallpaperPicker: React.FC = () => {
   const [open, setOpen] = useState(false);
-  const [current, setCurrent] = useState<WallpaperId>('mist');
+  const [current, setCurrent] = useState<WallpaperId>(DEFAULT_WALLPAPER);
   const wrapRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => setCurrent(readWallpaper()), []);

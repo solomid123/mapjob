@@ -98,33 +98,28 @@
    * tinting them to match would make each card look like a coloured panel
    * rather than a hole of shade the content sits in.
    *
-   * The default is mist, so its values live here rather than in a
-   * `[data-wallpaper='mist']` block: an unset attribute has to land on the
+   * The default is teal, so its values live here rather than only in a
+   * `[data-wallpaper='teal']` block: an unset attribute has to land on the
    * same canvas the app normally wears, not on whichever theme happened to be
-   * written first. */
+   * written first. The teal block further down repeats them, because an
+   * explicit choice of teal has to win over any theme that comes after it in
+   * the cascade. */
 
-  /* Mist. The odd one out: mean luminance is ~72% where the other three sit
-   * near 20%, so the 0.24-0.58 dark ramp they use would grey it into sludge
-   * and throw away the only pale wallpaper in the set. Its scrim is therefore
-   * almost nothing -- a breath of white at the top, a soft deepening at the
-   * bottom for depth, and the image left alone in between.
-   *
-   * That inverts the usual figure/ground: instead of dark tiles being a
-   * shade darker than a dark canvas, they are far darker than a pale one.
-   * White type on --tile measures 8.0:1 over the lightest part of the image
-   * and 9.6:1 at its mean, so nothing downstream needs to change. */
-  --wallpaper: url('/wallpaper-mist.jpg');
-  --canvas-base: #b3bfb7;
+  /* Teal. Deep sea-green silk, the lightest of the dark set (mean luminance
+   * ~37%), which keeps the crest legible without the canvas ever competing
+   * with the tiles floating on it. Stops sampled from the JPEG. */
+  --wallpaper: url('/wallpaper-teal.jpg');
+  --canvas-base: #2b645e;
   --canvas-scrim: linear-gradient(
     168deg,
-    rgba(255, 255, 255, 0.1) 0%,
-    rgba(154, 172, 162, 0.05) 52%,
-    rgba(70, 86, 78, 0.16) 100%
+    rgba(3, 20, 20, 0.2) 0%,
+    rgba(3, 17, 17, 0.32) 55%,
+    rgba(2, 12, 12, 0.46) 100%
   );
-  --canvas-under: radial-gradient(120% 100% at 92% 4%, #e3ebe6 0%, rgba(227, 235, 230, 0) 56%),
-    radial-gradient(100% 120% at 6% 10%, #c9d3cf 0%, rgba(201, 211, 207, 0) 60%),
-    radial-gradient(140% 120% at 66% 112%, #8b9c95 0%, rgba(139, 156, 149, 0) 70%),
-    linear-gradient(150deg, #d5dfda 0%, #b3bfb7 48%, #90a099 100%);
+  --canvas-under: radial-gradient(130% 100% at 10% 0%, #123f3a 0%, rgba(18, 63, 58, 0) 54%),
+    radial-gradient(110% 120% at 64% 46%, #74bab1 0%, rgba(116, 186, 177, 0) 58%),
+    radial-gradient(140% 120% at 38% 112%, #05191a 0%, rgba(5, 25, 26, 0) 68%),
+    linear-gradient(150deg, #3a7970 0%, #2b645e 46%, #032121 100%);
 
   /* Tile materials. */
   /* At 0.5 alpha over a saturated blue the tile just tints the wallpaper and
@@ -143,7 +138,32 @@
   --fill-hover: rgba(255, 255, 255, 0.17);
 }
 
-/* Azure: the original canvas, now one theme among four rather than the
+/* Mist. The odd one out: mean luminance is ~72% where the dark themes sit
+ * near 20-37%, so the dark ramp they use would grey it into sludge and throw
+ * away the only pale wallpaper in the set. Its scrim is therefore almost
+ * nothing -- a breath of white at the top, a soft deepening at the bottom for
+ * depth, and the image left alone in between.
+ *
+ * That inverts the usual figure/ground: instead of dark tiles being a shade
+ * darker than a dark canvas, they are far darker than a pale one. White type
+ * on --tile measures 8.0:1 over the lightest part of the image and 9.6:1 at
+ * its mean, so nothing downstream needs to change. */
+html[data-wallpaper='mist'] {
+  --wallpaper: url('/wallpaper-mist.jpg');
+  --canvas-base: #b3bfb7;
+  --canvas-scrim: linear-gradient(
+    168deg,
+    rgba(255, 255, 255, 0.1) 0%,
+    rgba(154, 172, 162, 0.05) 52%,
+    rgba(70, 86, 78, 0.16) 100%
+  );
+  --canvas-under: radial-gradient(120% 100% at 92% 4%, #e3ebe6 0%, rgba(227, 235, 230, 0) 56%),
+    radial-gradient(100% 120% at 6% 10%, #c9d3cf 0%, rgba(201, 211, 207, 0) 60%),
+    radial-gradient(140% 120% at 66% 112%, #8b9c95 0%, rgba(139, 156, 149, 0) 70%),
+    linear-gradient(150deg, #d5dfda 0%, #b3bfb7 48%, #90a099 100%);
+}
+
+/* Azure: the original canvas, now one theme among several rather than the
  * default baked into :root. */
 html[data-wallpaper='azure'] {
   --wallpaper: url('/wallpaper-azure.jpg');

@@ -224,9 +224,11 @@ html[data-wallpaper='sage'] {
   transform: translateY(-1px) scale(0.994);
   transition-duration: var(--dur-fast);
 }
-/* A tile used as a panel rather than a control. The lift is a promise that
- * clicking does something; on the job page's title block, description column
- * and sidebar it just makes the page twitch as the pointer crosses it. */
+/* `.is-static` used to sit here and suppress the hover lift on the job page's
+ * panels, on the theory that a lift promises the thing is clickable. It is
+ * kept as an opt-in because that argument still holds somewhere, but it is
+ * applied nowhere: the job page felt dead without it. The liveliness is the
+ * point, so panels lift like everything else. */
 .ic-tile.is-static:hover,
 .ic-tile.is-static:active {
   background: var(--tile);
@@ -371,7 +373,8 @@ html[data-wallpaper='sage'] {
  * .ic-press is the same motion without the background, for the controls that
  * bring their own fill. */
 .ic-fill,
-.ic-press {
+.ic-press,
+.ic-press-wide {
   transition:
     background-color var(--dur-fast) var(--ease-apple-out),
     box-shadow var(--dur-base) var(--ease-apple-out),
@@ -387,11 +390,38 @@ html[data-wallpaper='sage'] {
 .ic-fill:hover,
 .ic-press:hover {
   transform: translateY(-1.5px) scale(1.08);
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3), 0 6px 14px rgba(0, 0, 0, 0.22);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.2),
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.3);
 }
 .ic-fill:active,
 .ic-press:active {
   transform: translateY(0) scale(0.9);
+  box-shadow: none;
+  transition-duration: var(--dur-fast);
+}
+
+/* The same motion for wide controls -- the discipline tabs, filter pills.
+ * Scale and lift trade places here. 8% of a 32px icon is 2.5px and reads as
+ * a press; 8% of a 97px tab is 8px, which shoves its neighbours visually and
+ * resamples the label into a blur for the length of the animation. So these
+ * mostly rise, with just enough scale to feel attached to the pointer. */
+/* No drop shadow here, and a bigger move than the first attempt.
+ *
+ * These sit inside .ic-chrome, which is a dark translucent bar: a black
+ * shadow cast onto it is invisible, which is why translateY(-2px) with a
+ * shadow measured as applied (matrix(1.02,0,0,1.02,0,-2)) and still looked
+ * like nothing was happening. The cards get away with shadows because they
+ * fall on the pale canvas. Inside the chrome the cue has to be light, not
+ * dark: a lit edge and a brighter fill, with enough scale to be read at a
+ * glance. */
+.ic-press-wide:hover {
+  transform: translateY(-2px) scale(1.06);
+  background-color: rgba(255, 255, 255, 0.13);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.18),
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.28);
+}
+.ic-press-wide:active {
+  transform: translateY(0) scale(0.98);
   box-shadow: none;
   transition-duration: var(--dur-fast);
 }
@@ -402,8 +432,12 @@ html[data-wallpaper='sage'] {
 @media (prefers-reduced-motion: reduce) {
   .ic-fill:hover,
   .ic-press:hover,
+  .ic-press-wide:hover,
+  .ic-chip:hover,
   .ic-fill:active,
-  .ic-press:active {
+  .ic-press:active,
+  .ic-press-wide:active,
+  .ic-chip:active {
     transform: none;
   }
   .ic-tile:hover,
@@ -460,13 +494,21 @@ html[data-wallpaper='sage'] {
     background-color var(--dur-fast) var(--ease-apple-out),
     box-shadow var(--dur-fast) var(--ease-apple-out),
     color var(--dur-fast) var(--ease-apple-out),
-    transform var(--dur-fast) var(--ease-apple-spring);
+    transform var(--dur-base) var(--ease-apple-spring);
 }
+/* Same lift as the discipline tabs above. The chip already had an active
+ * scale, but at --dur-fast the spring's overshoot is gone inside three frames,
+ * so the press landed flat and hover did nothing at all. */
 .ic-chip:hover {
   background: var(--fill-hover);
+  transform: translateY(-2px) scale(1.05);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.18),
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.28);
 }
 .ic-chip:active {
-  transform: scale(0.96);
+  transform: translateY(0) scale(0.96);
+  box-shadow: none;
+  transition-duration: var(--dur-fast);
 }
 /* Selected is the accent, not black. Apple marks a chosen filter by tinting it;
  * a black pill is a different vocabulary and it is Airbnb's. */

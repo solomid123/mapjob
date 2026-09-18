@@ -70,9 +70,29 @@ async function loadFeedWithRefill(
   isCurrent: () => boolean,
   onJobs: (jobs: Job[]) => void
 ): Promise<void> {
+  /* Only hand up a wave that differs from the one already on screen.
+   *
+   * The refill polls until the backend reports complete, and most of those
+   * polls come back with the identical list -- the point of waiting is that
+   * it is not ready yet. Each one was still calling setJobs(), and each
+   * setJobs() re-renders sixty cards. That measured as ~1s of blocked main
+   * thread, repeatedly, which is long enough that hover does not respond:
+   * :hover needs a style recalc on the same thread, so the cursor moves over
+   * a control and nothing happens until the burst ends.
+   *
+   * Comparing ids costs one pass over an array we already hold, against a
+   * render of the whole list. */
+  let lastSignature = '';
+  const publish = (jobs: Job[]) => {
+    const signature = `${jobs.length}:${jobs.map((j) => j.id).join(',')}`;
+    if (signature === lastSignature) return;
+    lastSignature = signature;
+    onJobs(jobs);
+  };
+
   let feed = await fetchJobFeed(options);
   if (!isCurrent()) return;
-  onJobs(feed.jobs);
+  publish(feed.jobs);
 
   for (let tries = 0; tries < REFILL_MAX_TRIES && !feed.complete; tries++) {
     await new Promise((resolve) => setTimeout(resolve, REFILL_DELAY_MS));
@@ -83,7 +103,7 @@ async function loadFeedWithRefill(
       return; // The first wave is already on screen; a failed top-up is not an error.
     }
     if (!isCurrent()) return;
-    onJobs(feed.jobs);
+    publish(feed.jobs);
   }
 }
 import type { Job } from './types/job';

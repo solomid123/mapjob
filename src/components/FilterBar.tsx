@@ -132,7 +132,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({
                   /* A selected item is a filled rounded rect, not a 2px rule under
                     * the label. The underline is a browser-tab metaphor; Apple
                     * marks selection by filling the control's own shape. */
-                  className={`group flex flex-col items-center gap-1 px-3 py-2 rounded-xl shrink-0 cursor-pointer transition-[background-color,color] duration-200 ease-apple-out ${
+                  className={`ic-press-wide group flex flex-col items-center gap-1 px-3 py-2 rounded-xl shrink-0 cursor-pointer ${
                     isActive
                       ? 'bg-white/[0.14] text-[#f5f5f7]'
                       : 'text-[rgba(235,235,245,0.42)] hover:text-[#f5f5f7] hover:bg-white/[0.07]'

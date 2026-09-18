@@ -247,7 +247,7 @@ export const JobPage: React.FC<JobPageProps> = ({
          * rgba(235,235,245,0.62) meta over a ~72%-luminance background is
          * roughly 1.5:1. The tile puts a dark, near-opaque ground back under
          * the type on every theme. */}
-        <div className="ic-tile is-static rounded-3xl p-5 sm:p-7">
+        <div className="ic-tile rounded-3xl p-5 sm:p-7">
           <div className="flex flex-wrap items-center gap-2 mb-2">
             <span className="px-2.5 py-0.5 rounded-full bg-rose-400/15 text-rose-200 border border-rose-300/25 text-xs font-bold tracking-wide">
               {job.category}
@@ -383,7 +383,7 @@ export const JobPage: React.FC<JobPageProps> = ({
             * was body copy printed straight onto the wallpaper: legible, but
             * the only place in the app where text floats with nothing under
             * it, and the gradient behind moves under long paragraphs. */}
-          <div className="lg:col-span-7 xl:col-span-8 space-y-8 ic-tile is-static rounded-3xl p-6 sm:p-8">
+          <div className="lg:col-span-7 xl:col-span-8 space-y-8 ic-tile rounded-3xl p-6 sm:p-8">
             
             {/* Guest Favorite / Employer Recognition Banner */}
             <div className="border-b border-white/[0.09] pb-6 flex items-center justify-between gap-4">
@@ -542,7 +542,7 @@ export const JobPage: React.FC<JobPageProps> = ({
 
           {/* Right Sticky Reservation Card (Matches media_1788490110494.png) */}
           <div className="lg:col-span-5 xl:col-span-4">
-            <div className="sticky top-24 ic-tile is-static rounded-3xl p-6 sm:p-7 space-y-6">
+            <div className="sticky top-24 ic-tile rounded-3xl p-6 sm:p-7 space-y-6">
               
               {/* Rare Find banner matching Airbnb */}
               <div className="p-3.5 bg-rose-400/12 rounded-2xl border border-rose-300/25 flex items-center gap-3 text-xs text-[#f5f5f7]">

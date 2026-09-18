@@ -34,6 +34,14 @@ import {
 } from './services/directAtsApi';
 import { ApplyReviewPanel } from './components/ApplyReviewPanel';
 import { BottomTabBar, type BottomTabType } from './components/BottomTabBar';
+import { BulkApplyBar } from './components/BulkApplyBar';
+import {
+  bulkBlocker,
+  runBulkQueue,
+  bulkTally,
+  type BulkControl,
+  type BulkQueue,
+} from './services/bulkApply';
 
 /**
  * Below this fraction of the loaded region's width, a viewport is refetched even
@@ -657,6 +665,47 @@ export function App() {
   /** The job the open panel belongs to, so "Submit" can re-run the same one. */
   const applyJobRef = useRef<Job | null>(null);
 
+  /* ---- Bulk apply ------------------------------------------------------
+   *
+   * Picking several jobs and letting the agent work through them one at a
+   * time. The queue is in the client because the backend drives one browser
+   * with one signed-in profile; running two at once would be two tabs
+   * fighting over the same cookies, not twice the throughput.
+   */
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkQueue, setBulkQueue] = useState<BulkQueue | null>(null);
+  // A ref, not state: the loop reads this between jobs and must see the press
+  // that happened while it was awaiting, which a captured state value cannot.
+  const bulkControlRef = useRef<BulkControl>({ stopRequested: false });
+
+  /**
+   * The applied set as the running queue sees it.
+   *
+   * The loop is one long-lived async call: the `appliedJobIds` it closed over
+   * is the one from the render that started it, and would still be empty
+   * twenty applications later. A ref is read fresh each time, so a duplicate
+   * listing in the queue is skipped rather than applied to twice.
+   */
+  const appliedJobIdsRef = useRef(appliedJobIds);
+  useEffect(() => {
+    appliedJobIdsRef.current = appliedJobIds;
+  }, [appliedJobIds]);
+
+  const toggleSelected = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const exitSelectMode = () => {
+    setSelectMode(false);
+    setSelectedIds(new Set());
+  };
+
   /**
    * Says what a finished run actually achieved, and marks the job applied when
    * something left the browser.
@@ -706,6 +755,21 @@ export function App() {
    * screenshot. The panel still streams every step, so a bad run can be watched
    * and killed while it happens.
    */
+  const runOneApplication = async (job: Job): Promise<BrowserApplyRun> => {
+    applyJobRef.current = job;
+    setApplyingJobId(job.id);
+    try {
+      const started = await startBrowserApply(job);
+      setApplyRun(started);
+      const final = await pollBrowserApply(started.id, setApplyRun);
+      setApplyRun(final);
+      reportApplyOutcome(job, final);
+      return final;
+    } finally {
+      setApplyingJobId(null);
+    }
+  };
+
   const handleFastApply = async (job: Job) => {
     if (!job.applyUrl) {
       showToast('This listing has no official application URL.');
@@ -716,20 +780,79 @@ export function App() {
       return;
     }
 
-    applyJobRef.current = job;
-    setApplyingJobId(job.id);
-
     try {
-      const started = await startBrowserApply(job);
-      setApplyRun(started);
-      const final = await pollBrowserApply(started.id, setApplyRun);
-      setApplyRun(final);
-      reportApplyOutcome(job, final);
+      await runOneApplication(job);
     } catch (err: any) {
       showToast(err?.message || 'The apply service is unreachable.');
       setApplyRun(null);
-    } finally {
-      setApplyingJobId(null);
+    }
+  };
+
+  /**
+   * Starts working through the ticked jobs, one application at a time.
+   *
+   * Each one goes through `runOneApplication`, the same path a single click
+   * takes, so the live panel, the outcome history and the "applied" marks all
+   * behave identically -- a bulk run is twenty ordinary runs, not a second
+   * apply implementation that has to be kept in step with the first.
+   */
+  const handleBulkStart = async () => {
+    const chosen = filteredJobs.filter(
+      (job) => selectedIds.has(job.id) && !bulkBlocker(job, (j) => appliedJobIds.has(j.id)),
+    );
+    if (chosen.length === 0) {
+      showToast('None of those can be applied to automatically.');
+      return;
+    }
+    if (applyingJobId) {
+      showToast('An application is already running.');
+      return;
+    }
+
+    bulkControlRef.current = { stopRequested: false };
+    exitSelectMode();
+
+    const finished = await runBulkQueue(chosen, {
+      applyOne: runOneApplication,
+      onChange: setBulkQueue,
+      control: bulkControlRef.current,
+      isApplied: (job) => appliedJobIdsRef.current.has(job.id),
+    });
+
+    // The panel for the last job is left open on its result; the bar now
+    // carries the summary for the whole run.
+    const tally = bulkTally(finished);
+    showToast(
+      tally.sent > 0
+        ? `${tally.sent} of ${tally.total} applications sent.`
+        : `Nothing was sent. ${tally.failed + tally.skipped} of ${tally.total} did not go through.`,
+    );
+  };
+
+  /**
+   * Abandons the job being worked on and moves to the next.
+   *
+   * Cancelling the run is enough: the backend closes that browser and reports
+   * the ending, the poll loop unwinds on its next tick, and the queue -- which
+   * only waits for the promise -- carries straight on.
+   */
+  const handleBulkSkip = async () => {
+    try {
+      setApplyRun(await cancelBrowserApply());
+    } catch (err: any) {
+      showToast(err?.message || 'Could not skip that one.');
+    }
+  };
+
+  /** Stops the current application and drops everything still queued. */
+  const handleBulkStop = async () => {
+    bulkControlRef.current.stopRequested = true;
+    setBulkQueue((prev) => (prev ? { ...prev, stopping: true } : prev));
+    try {
+      setApplyRun(await cancelBrowserApply());
+    } catch {
+      // The run may already have ended on its own; the flag still stands and
+      // the queue will stop at the next job either way.
     }
   };
 
@@ -1109,6 +1232,46 @@ export function App() {
           onResetFilters={handleResetFilters}
           hasActiveFilters={hasActiveFilters}
         />
+        {/* Picking several at once. Beside the count and the filters because
+          * it acts on exactly what they describe: this list, as filtered. */}
+        {!bulkQueue?.running && (
+          <button
+            type="button"
+            onClick={() => {
+              if (selectMode) {
+                exitSelectMode();
+                return;
+              }
+              // The summary of the last run is not in the way of the next one:
+              // starting to choose again is as clear a dismissal as the X.
+              setBulkQueue(null);
+              setSelectMode(true);
+            }}
+            className={`shrink-0 px-2.5 py-1 rounded-full text-[12px] font-semibold tracking-[-0.01em] transition-colors duration-200 ease-apple-out cursor-pointer ${
+              selectMode
+                ? 'bg-[#0a84ff] text-white'
+                : 'ic-fill text-[rgba(235,235,245,0.62)] hover:text-[#f5f5f7]'
+            }`}
+            title="Pick several jobs and apply to all of them"
+          >
+            {selectMode ? 'Done' : 'Select'}
+          </button>
+        )}
+        {selectMode && filteredJobs.length > 0 && (
+          <button
+            type="button"
+            onClick={() => {
+              const eligible = filteredJobs
+                .slice(0, visibleCardCount)
+                .filter((job) => !bulkBlocker(job, (j) => appliedJobIds.has(j.id)));
+              const allChosen = eligible.every((job) => selectedIds.has(job.id));
+              setSelectedIds(allChosen ? new Set() : new Set(eligible.map((job) => job.id)));
+            }}
+            className="shrink-0 px-2.5 py-1 rounded-full text-[12px] font-medium tracking-[-0.01em] text-[rgba(235,235,245,0.62)] hover:text-[#f5f5f7] hover:bg-white/[0.08] transition-colors duration-200 cursor-pointer"
+          >
+            Select all
+          </button>
+        )}
       </div>
       {/* Wraps rather than truncates: beside the search field this line has
         * about half the width it has in the column, and an ellipsis through
@@ -1144,6 +1307,24 @@ export function App() {
           onClose={() => setApplyRun(null)}
         />
       )}
+
+      {/* Choosing several jobs, then watching them go. Rendered beside the
+          live panel rather than inside it: the panel is about one application
+          and closes with it, while this outlives every run in the queue. */}
+      <BulkApplyBar
+        selectedCount={selectedIds.size}
+        eligibleCount={
+          filteredJobs.filter(
+            (job) => selectedIds.has(job.id) && !bulkBlocker(job, (j) => appliedJobIds.has(j.id)),
+          ).length
+        }
+        queue={bulkQueue}
+        onStart={handleBulkStart}
+        onClear={exitSelectMode}
+        onSkip={handleBulkSkip}
+        onStop={handleBulkStop}
+        onDismiss={() => setBulkQueue(null)}
+      />
 
       {/* The chrome, decomposed the way iCloud's is: a ribbon welded to the top
         * edge for identity and navigation, then the work floating under it as
@@ -1265,6 +1446,9 @@ export function App() {
                     onSelect={handleOpenJobPage}
                     onToggleSave={handleToggleSave}
                     onApply={handleFastApply}
+                    selectable={selectMode}
+                    isChecked={selectedIds.has(job.id)}
+                    onToggleCheck={toggleSelected}
                   />
                 ))}
               </div>

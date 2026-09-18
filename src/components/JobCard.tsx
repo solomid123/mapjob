@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Heart, ChevronLeft, ChevronRight, Zap, ArrowUpRight, Star } from 'lucide-react';
+import { Heart, ChevronLeft, ChevronRight, Zap, ArrowUpRight, Star, Check } from 'lucide-react';
 import type { Job } from '../types/job';
 import type { ApplyOutcome } from '../services/directAtsApi';
 
@@ -15,6 +15,10 @@ interface JobCardProps {
   onSelect: (job: Job) => void;
   onToggleSave: (id: string) => void;
   onApply?: (job: Job) => void;
+  /** True while the list is in pick-several mode. */
+  selectable?: boolean;
+  isChecked?: boolean;
+  onToggleCheck?: (id: string) => void;
 }
 
 /**
@@ -84,6 +88,9 @@ export const JobCard: React.FC<JobCardProps> = ({
   onSelect,
   onToggleSave,
   onApply,
+  selectable = false,
+  isChecked = false,
+  onToggleCheck,
 }) => {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
 
@@ -104,15 +111,22 @@ export const JobCard: React.FC<JobCardProps> = ({
 
   return (
     <div
-      onClick={() => onSelect(job)}
+      onClick={() => (selectable ? onToggleCheck?.(job.id) : onSelect(job))}
       onMouseEnter={() => onHover(job.id)}
       onMouseLeave={() => onHover(null)}
       tabIndex={0}
       role="link"
-      onKeyDown={(e) => { if (e.key === 'Enter' && e.target === e.currentTarget) onSelect(job); }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' && e.target === e.currentTarget) {
+          if (selectable) onToggleCheck?.(job.id);
+          else onSelect(job);
+        }
+      }}
       className={`group ic-tile flex flex-col cursor-pointer select-none p-2.5 ${
         isSelected ? 'is-selected' : ''
-      } ${isHovered ? 'is-hovered' : ''}`}
+      } ${isHovered ? 'is-hovered' : ''} ${
+        selectable && isChecked ? 'ring-2 ring-[#0a84ff] ring-offset-0' : ''
+      } ${selectable && !isChecked ? 'opacity-[0.72]' : ''}`}
     >
       {/* The cover. The card is the surface now, so this sits inside it with a
         * smaller radius -- concentric, the way an iOS icon sits in its tile --
@@ -131,7 +145,20 @@ export const JobCard: React.FC<JobCardProps> = ({
 
         {/* Top Badges */}
         <div className="absolute top-3 left-3 right-3 flex items-start justify-between pointer-events-none z-10">
-          {job.postedDaysAgo !== undefined && job.postedDaysAgo <= 3 ? (
+          {selectable ? (
+            // Shown rather than described: in pick-several mode the whole card
+            // is the hit area, and this is the only thing that says which way
+            // it currently sits.
+            <span
+              className={`pointer-events-none w-6 h-6 rounded-full flex items-center justify-center shadow-md transition-[background-color,transform] duration-200 ease-apple-spring ${
+                isChecked
+                  ? 'bg-[#0a84ff] scale-100'
+                  : 'bg-black/35 backdrop-blur-sm ring-[1.5px] ring-inset ring-white/80 scale-95'
+              }`}
+            >
+              {isChecked && <Check className="w-3.5 h-3.5 text-white stroke-[3]" />}
+            </span>
+          ) : job.postedDaysAgo !== undefined && job.postedDaysAgo <= 3 ? (
             <span className="px-2.5 py-1 rounded-full bg-white/95 text-neutral-900 text-[11px] font-bold shadow-xs tracking-tight flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-[#FF385C]" />
               <span>Top Match</span>

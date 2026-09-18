@@ -1,3 +1,10 @@
+import {
+  encodePostedRange,
+  formatPostedRange,
+  monthGrid,
+  parsePostedRange,
+  toISODate,
+} from '../utils/postedRange';
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { WallpaperPicker } from './WallpaperPicker';
 import { 
@@ -96,7 +103,33 @@ export const Navbar: React.FC<NavbarProps> = ({
     }
   };
 
+  /* Calendar state. `pendingStart` holds the first click while the second is
+   * still to come; `selectedRange` is the committed interval, derived from the
+   * filter value itself so the popover reopens showing what is actually
+   * applied rather than a stale local copy. */
+  const today = new Date();
+  const todayISO = toISODate(today);
+  const selectedRange = parsePostedRange(lastPosted);
+  const [pendingStart, setPendingStart] = useState<string | null>(null);
+  const [hoverDay, setHoverDay] = useState<string | null>(null);
+  const [calMonth, setCalMonth] = useState(() => new Date(today.getFullYear(), today.getMonth(), 1));
+
+  const handleDayClick = (iso: string) => {
+    // Third click starts a fresh range rather than silently extending the old
+    // one, which is the behaviour every booking calendar has trained people on.
+    if (selectedRange || !pendingStart) {
+      setLastPosted('all');
+      setPendingStart(iso);
+      return;
+    }
+    // Clicking backwards past the start is an ordering, not a mistake.
+    const [start, end] = iso < pendingStart ? [iso, pendingStart] : [pendingStart, iso];
+    setPendingStart(null);
+    setLastPosted(encodePostedRange(start, end));
+  };
+
   const getLastPostedLabel = () => {
+    if (selectedRange) return formatPostedRange(selectedRange);
     switch (lastPosted) {
       case '24h': return 'Past 24 hours';
       case '3d': return 'Past 3 days';
@@ -658,16 +691,30 @@ export const Navbar: React.FC<NavbarProps> = ({
                     </div>
                   </div>
 
-                  {/* Calendar simulation */}
+                  {/* A real calendar. Weekday-aligned, navigable, and it
+                    * selects an interval: first click sets the start, second
+                    * sets the end, a third starts over. Future days are
+                    * disabled -- nothing can have been posted tomorrow. */}
                   <div className="mb-5 border-b border-white/10 pb-5">
                     <div className="flex items-center justify-between mb-3 px-2">
-                      <button type="button" className="p-1 hover:bg-white/[0.1] rounded-full text-[rgba(235,235,245,0.62)] transition">
+                      <button
+                        type="button"
+                        onClick={() => setCalMonth((m) => new Date(m.getFullYear(), m.getMonth() - 1, 1))}
+                        className="p-1 hover:bg-white/[0.1] rounded-full text-[rgba(235,235,245,0.62)] transition"
+                        aria-label="Previous month"
+                      >
                         <ChevronLeft className="w-4 h-4" />
                       </button>
                       <span className="font-extrabold text-sm text-[#f5f5f7]">
-                        September 2026
+                        {calMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
                       </span>
-                      <button type="button" className="p-1 hover:bg-white/[0.1] rounded-full text-[rgba(235,235,245,0.62)] transition">
+                      <button
+                        type="button"
+                        disabled={calMonth.getFullYear() === today.getFullYear() && calMonth.getMonth() === today.getMonth()}
+                        onClick={() => setCalMonth((m) => new Date(m.getFullYear(), m.getMonth() + 1, 1))}
+                        className="p-1 hover:bg-white/[0.1] rounded-full text-[rgba(235,235,245,0.62)] transition disabled:opacity-30 disabled:hover:bg-transparent"
+                        aria-label="Next month"
+                      >
                         <ChevronRight className="w-4 h-4" />
                       </button>
                     </div>
@@ -677,31 +724,62 @@ export const Navbar: React.FC<NavbarProps> = ({
                     </div>
 
                     <div className="grid grid-cols-7 gap-1 text-center text-xs font-semibold">
-                      {[...Array(30)].map((_, i) => {
-                        const day = i + 1;
-                        const isToday = day === 4;
-                        const isSelectedRange = day >= 1 && day <= 4;
+                      {monthGrid(calMonth.getFullYear(), calMonth.getMonth()).map((day, i) => {
+                        if (day === null) return <div key={`blank-${i}`} className="h-9" />;
+
+                        const iso = toISODate(new Date(calMonth.getFullYear(), calMonth.getMonth(), day));
+                        const isFuture = iso > todayISO;
+                        const isToday = iso === todayISO;
+                        // While only the start is set, the cell under the
+                        // cursor previews where the range would end.
+                        const provisionalEnd = pendingStart && !selectedRange ? hoverDay : null;
+                        const lo = selectedRange ? selectedRange.start : pendingStart;
+                        const hi = selectedRange
+                          ? selectedRange.end
+                          : provisionalEnd && pendingStart
+                            ? (provisionalEnd < pendingStart ? pendingStart : provisionalEnd)
+                            : pendingStart;
+                        const loEff = selectedRange
+                          ? lo
+                          : provisionalEnd && pendingStart && provisionalEnd < pendingStart
+                            ? provisionalEnd
+                            : lo;
+                        const isEdge = iso === loEff || iso === hi;
+                        const inRange = Boolean(loEff && hi && iso > loEff && iso < hi);
+
                         return (
-                          <div
-                            key={day}
-                            onClick={() => {
-                              if (day === 4) setLastPosted('24h');
-                              else if (day >= 2) setLastPosted('3d');
-                              else setLastPosted('7d');
-                            }}
-                            className={`h-9 flex items-center justify-center rounded-full cursor-pointer transition airbnb-spring ${
-                              isToday
-                                ? 'bg-[#0a84ff] text-white font-bold scale-105 shadow-sm'
-                                : isSelectedRange
-                                ? 'bg-white/[0.14] text-[#f5f5f7]'
-                                : 'hover:bg-white/[0.08] text-[rgba(235,235,245,0.62)]'
+                          <button
+                            key={iso}
+                            type="button"
+                            disabled={isFuture}
+                            onMouseEnter={() => setHoverDay(iso)}
+                            onMouseLeave={() => setHoverDay(null)}
+                            onClick={() => handleDayClick(iso)}
+                            className={`h-9 flex items-center justify-center rounded-full transition airbnb-spring ${
+                              isFuture
+                                ? 'text-[rgba(235,235,245,0.18)] cursor-default'
+                                : isEdge
+                                  ? 'bg-[#0a84ff] text-white font-bold shadow-sm'
+                                  : inRange
+                                    ? 'bg-white/[0.14] text-[#f5f5f7] cursor-pointer'
+                                    : `cursor-pointer hover:bg-white/[0.08] ${
+                                        isToday ? 'text-[#0a84ff] font-bold' : 'text-[rgba(235,235,245,0.62)]'
+                                      }`
                             }`}
                           >
                             {day}
-                          </div>
+                          </button>
                         );
                       })}
                     </div>
+
+                    <p className="mt-3 text-center text-[11px] text-[rgba(235,235,245,0.42)]">
+                      {selectedRange
+                        ? formatPostedRange(selectedRange)
+                        : pendingStart
+                          ? 'Now pick the end of the range'
+                          : 'Pick a start date'}
+                    </p>
                   </div>
 
                   {/* Bottom Quick Select Pills */}
@@ -717,6 +795,9 @@ export const Navbar: React.FC<NavbarProps> = ({
                         key={item.id}
                         type="button"
                         onClick={() => {
+                          // Drop a half-finished range, or it would still be
+                          // sitting there highlighted behind a bucket filter.
+                          setPendingStart(null);
                           setLastPosted(item.id);
                           setActiveSegment(null);
                         }}

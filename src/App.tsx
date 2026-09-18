@@ -7,6 +7,7 @@ import {
   Check, 
   Loader2 
 } from 'lucide-react';
+import { daysAgo, parsePostedRange } from './utils/postedRange';
 import { Navbar } from './components/Navbar';
 import { FilterBar } from './components/FilterBar';
 import { JobCard } from './components/JobCard';
@@ -861,6 +862,14 @@ export function App() {
       // Last posted timeframe filter
       if (lastPosted !== 'all') {
         const days = job.postedDaysAgo ?? Infinity;
+        const range = parsePostedRange(lastPosted);
+        if (range) {
+          // An explicit interval, so it is bounded at BOTH ends -- picking
+          // 1-10 September means jobs from the 11th onward are excluded too.
+          // daysAgo(start) is the older edge, so it is the larger number.
+          if (days > daysAgo(range.start) || days < daysAgo(range.end)) return false;
+          return true;
+        }
         if (lastPosted === '24h' && days > 1) return false;
         if (lastPosted === '3d' && days > 3) return false;
         if (lastPosted === '7d' && days > 7) return false;

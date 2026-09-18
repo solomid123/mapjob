@@ -1,3 +1,4 @@
+import { daysAgo, parsePostedRange } from '../utils/postedRange';
 import { isDirectAts, type Job, type AtsProvider } from '../types/job';
 
 const ADZUNA_APP_ID = import.meta.env.VITE_ADZUNA_APP_ID || '';
@@ -877,6 +878,13 @@ function cleanQueryForAdzuna(q: string): string {
 }
 
 function getMaxDaysOldParam(lastPosted?: string): string {
+  // An explicit range asks the API for everything back to the older edge; the
+  // newer edge is trimmed client-side, because max_days_old has no lower
+  // bound to give it. A couple of days of slack for the same reason the fixed
+  // buckets carry it -- feeds date posts inconsistently.
+  const range = parsePostedRange(lastPosted);
+  if (range) return `&max_days_old=${Math.max(1, daysAgo(range.start) + 2)}`;
+
   switch (lastPosted) {
     case '24h': return '&max_days_old=2';
     case '3d': return '&max_days_old=4';

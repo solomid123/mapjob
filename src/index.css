@@ -215,7 +215,12 @@ html[data-wallpaper='sage'] {
   z-index: 40;
   margin: 10px 12px 0;
   border-radius: 24px;
-  background: rgba(8, 14, 32, 0.46);
+  /* The same fill as a card, not a lighter one. At 0.46 the wallpaper came
+   * through strongly enough that the header took on the wallpaper's hue --
+   * green on sage, red on crimson -- while the cards and menus in front of it
+   * stayed neutral navy, so the header read as a different material from
+   * everything sitting on it. Matching --tile ties the three together. */
+  background: var(--tile);
   -webkit-backdrop-filter: saturate(180%) blur(24px);
   backdrop-filter: saturate(180%) blur(24px);
   /* Same three-layer ladder as the tiles, so the header reads as the same

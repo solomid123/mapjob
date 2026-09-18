@@ -51,6 +51,30 @@
   --ink-tertiary: rgba(235, 235, 245, 0.42);
   --tint: #0a84ff; /* systemBlue, dark variant. #0071e3 goes muddy on blue. */
 
+  /* ---- Wallpapers -------------------------------------------------------
+   *
+   * Each theme supplies the image, the colour behind it, the gradients that
+   * stand in before it loads, and the scrim over it. Set by
+   * `data-wallpaper` on <html>; the default here is what an unset attribute
+   * gets, so the app still has a canvas if the script never runs.
+   *
+   * The tile colours below are deliberately NOT themed. They are a very dark
+   * desaturated navy, which reads as neutral shadow under either wallpaper;
+   * tinting them to match would make each card look like a coloured panel
+   * rather than a hole of shade the content sits in. */
+  --wallpaper: url('/wallpaper-azure.jpg');
+  --canvas-base: #0a2e8f;
+  --canvas-scrim: linear-gradient(
+    168deg,
+    rgba(4, 16, 48, 0.34) 0%,
+    rgba(3, 12, 38, 0.46) 55%,
+    rgba(2, 9, 30, 0.58) 100%
+  );
+  --canvas-under: radial-gradient(130% 100% at 8% 0%, #2d7bef 0%, rgba(45, 123, 239, 0) 56%),
+    radial-gradient(100% 120% at 96% 10%, #0c49c2 0%, rgba(12, 73, 194, 0) 60%),
+    radial-gradient(140% 120% at 66% 112%, #03123d 0%, rgba(3, 18, 61, 0) 70%),
+    linear-gradient(150deg, #1355db 0%, #0a2e8f 48%, #05164a 100%);
+
   /* Tile materials. */
   /* At 0.5 alpha over a saturated blue the tile just tints the wallpaper and
    * the grid reads as flat. A block has to be visibly denser than the ground
@@ -61,6 +85,44 @@
     inset 0 0 0 0.5px rgba(255, 255, 255, 0.07);
   --fill: rgba(255, 255, 255, 0.11);
   --fill-hover: rgba(255, 255, 255, 0.17);
+}
+
+/* The crimson wallpaper. Only the canvas changes: type, tiles, controls and
+ * the systemBlue accent are shared, which is what keeps the two from feeling
+ * like two different applications. */
+html[data-wallpaper='crimson'] {
+  --wallpaper: url('/wallpaper-crimson.jpg');
+  --canvas-base: #4a1226;
+  --canvas-scrim: linear-gradient(
+    168deg,
+    rgba(38, 8, 20, 0.3) 0%,
+    rgba(30, 6, 16, 0.44) 55%,
+    rgba(22, 4, 12, 0.58) 100%
+  );
+  --canvas-under: radial-gradient(130% 100% at 8% 0%, #a03050 0%, rgba(160, 48, 80, 0) 56%),
+    radial-gradient(100% 120% at 96% 10%, #6d1630 0%, rgba(109, 22, 48, 0) 60%),
+    radial-gradient(140% 120% at 66% 112%, #1a0510 0%, rgba(26, 5, 16, 0) 70%),
+    linear-gradient(150deg, #8e2444 0%, #4a1226 48%, #1c0510 100%);
+}
+
+/* The sage wallpaper. This one is far less saturated than the other two, so
+ * its scrim is lighter -- the same 0.34-0.58 ramp over a muted olive turns it
+ * into grey sludge. The colours below are sampled from the image itself
+ * (highlight #809384 top-left, shadow #152018 bottom-right) so the CSS ground
+ * under the JPEG matches it rather than guessing at "green". */
+html[data-wallpaper='sage'] {
+  --wallpaper: url('/wallpaper-sage.jpg');
+  --canvas-base: #3d4c41;
+  --canvas-scrim: linear-gradient(
+    168deg,
+    rgba(14, 22, 16, 0.24) 0%,
+    rgba(11, 18, 13, 0.36) 55%,
+    rgba(8, 14, 10, 0.5) 100%
+  );
+  --canvas-under: radial-gradient(130% 100% at 8% 0%, #8a9c8b 0%, rgba(138, 156, 139, 0) 56%),
+    radial-gradient(100% 120% at 96% 10%, #5a6a5c 0%, rgba(90, 106, 92, 0) 60%),
+    radial-gradient(140% 120% at 66% 112%, #131d16 0%, rgba(19, 29, 22, 0) 70%),
+    linear-gradient(150deg, #72856f 0%, #3d4c41 48%, #151f18 100%);
 }
 
 /* Apple tightens tracking as type grows and loosens it as type shrinks. One
@@ -327,47 +389,29 @@
     -moz-osx-font-smoothing: grayscale;
     letter-spacing: -0.01em;
     color: var(--ink);
-    /* The canvas: a generated wallpaper, with the CSS arcs kept underneath.
+    /* The canvas: a generated wallpaper, with CSS gradients kept underneath.
      *
-     * Two layers on purpose. The image is 1376x768, so on a large display it
-     * is being stretched past 2x and the smooth ribbons would go soft -- the
-     * gradients beneath it mean that even where the JPEG is blurry there is
-     * still real colour structure there, and they cover the first paint
-     * before the image has loaded.
+     * Every part of it comes from a custom property so the whole thing can be
+     * swapped by setting one attribute on <html> -- see the themes below. The
+     * gradients have to swap along with the image, not just the image: they
+     * are what paints before the JPEG has downloaded, and a blue flash in
+     * front of a crimson wallpaper is worse than no wallpaper at all.
      *
-     * The scrim above the image is the load-bearing part. The wallpaper's
-     * left side is much brighter than its right, and the tiles are a fixed
-     * translucent dark; without it a card in the top-left sat on near-white
-     * blue and a card at the bottom-right sat on navy, so the same component
-     * read as two different materials down the page. Knocking the whole
-     * image back evens that out and buys back the contrast the labels need.
+     * Two layers on purpose. The images are 1376x768, so on a large display
+     * they are stretched well past 2x and their ribbons go soft; the
+     * gradients mean there is still real colour structure underneath.
+     *
+     * The scrim on top is the load-bearing part. Both wallpapers are much
+     * brighter on one side than the other, and the tiles are a fixed
+     * translucent dark -- so without it a card at the top-left sat on a pale
+     * ground while a card at the bottom-right sat on near-black, and the same
+     * component read as two different materials down the page.
      *
      * `fixed` so it stays put while the list scrolls. A background that
      * scrolls with the content reads as a very tall coloured box; one that
      * stays put reads as the space the tiles float in, which is the point. */
-    background-color: #0a2e8f;
-    background-image:
-      linear-gradient(
-        168deg,
-        rgba(4, 16, 48, 0.34) 0%,
-        rgba(3, 12, 38, 0.46) 55%,
-        rgba(2, 9, 30, 0.58) 100%
-      ),
-      url('/wallpaper.jpg'),
-      radial-gradient(
-        ellipse 170% 140% at 6% 116%,
-        rgba(255, 255, 255, 0.07) 0 45.6%,
-        rgba(255, 255, 255, 0) 47.4%
-      ),
-      radial-gradient(
-        ellipse 210% 165% at -12% 104%,
-        rgba(0, 0, 0, 0.11) 0 51.2%,
-        rgba(0, 0, 0, 0) 53.2%
-      ),
-      radial-gradient(130% 100% at 8% 0%, #2d7bef 0%, rgba(45, 123, 239, 0) 56%),
-      radial-gradient(100% 120% at 96% 10%, #0c49c2 0%, rgba(12, 73, 194, 0) 60%),
-      radial-gradient(140% 120% at 66% 112%, #03123d 0%, rgba(3, 18, 61, 0) 70%),
-      linear-gradient(150deg, #1355db 0%, #0a2e8f 48%, #05164a 100%);
+    background-color: var(--canvas-base);
+    background-image: var(--canvas-scrim), var(--wallpaper), var(--canvas-under);
     background-size: cover;
     background-position: center center;
     background-repeat: no-repeat;

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MapJob | Discover & Apply for Jobs on the Map</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  </head>
+  <body>
+    <!--
+      Restore the chosen wallpaper before anything paints. This has to be
+      inline and synchronous in <head>'s shadow rather than a React effect:
+      by the time React mounts, the browser has already painted <body> with
+      the default azure canvas, and a saved crimson would land as a blue
+      flash. Wrapped because localStorage throws outright in some privacy
+      modes, and a background preference is not worth a blank page.
+    -->
+    <script>
+      try {
+        var w = localStorage.getItem('mapjob.wallpaper');
+        if (w === 'crimson' || w === 'azure' || w === 'sage') {
+          document.documentElement.setAttribute('data-wallpaper', w);
+        }
+      } catch (e) {}
+    </script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

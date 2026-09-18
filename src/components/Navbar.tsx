@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { WallpaperPicker } from './WallpaperPicker';
 import { 
   Search, 
   MapPin, 
@@ -168,6 +169,8 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               Post a Job
             </button>
+
+            <WallpaperPicker />
 
             {/* Saved Wishlist */}
             <button

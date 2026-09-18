@@ -58,5 +58,9 @@ Badreddine_Barki_CV.pdf
 *.jpeg
 /*.html
 scratch/
+
+# ...but the app's own wallpaper is a source asset, not an artefact. Without
+# this the build has no background on any machine but the one it was added on.
+!public/wallpaper.jpg
 .claude/
 nul

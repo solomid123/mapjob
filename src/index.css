@@ -87,6 +87,92 @@
   box-shadow: var(--shadow-lift), 0 0 0 2.5px var(--tint);
 }
 
+/* The header. Apple's chrome is never opaque: it is the page colour at ~72%
+ * with a heavy blur and a saturation boost, over a hairline that is a shadow
+ * rather than a border (a border would take a layout pixel and shift the whole
+ * page down by one). Content scrolling under it stays faintly visible, which
+ * is what makes the bar read as glass sitting on the page instead of a slab
+ * bolted above it. */
+.ic-header {
+  background: rgba(255, 255, 255, 0.72);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  box-shadow: 0 0.5px 0 rgba(0, 0, 0, 0.1);
+}
+/* Safari and Firefox without backdrop-filter get the solid colour instead of a
+ * transparent bar with text showing through it. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .ic-header {
+    background: #ffffff;
+  }
+}
+
+/* A search-bar segment. The resting state is nothing at all; hover and focus
+ * are washes of black, not a named grey, so they sit correctly on whatever the
+ * bar's background turns out to be. */
+.ic-segment {
+  border-radius: 9999px;
+  transition: background-color var(--dur-fast) var(--ease-apple-out);
+}
+.ic-segment:hover {
+  background-color: rgba(0, 0, 0, 0.035);
+}
+.ic-segment.is-active {
+  background-color: rgba(0, 0, 0, 0.055);
+}
+
+/* A filter pill. Off: hairline ring, no fill. On: solid ink. Apple never puts
+ * a 1px solid #ddd border on a control -- it uses a half-pixel ring at 12%,
+ * which is why their chrome looks drawn rather than boxed. */
+.ic-chip {
+  border-radius: 9999px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.8);
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.14);
+  transition:
+    background-color var(--dur-fast) var(--ease-apple-out),
+    box-shadow var(--dur-fast) var(--ease-apple-out),
+    color var(--dur-fast) var(--ease-apple-out),
+    transform var(--dur-fast) var(--ease-apple-spring);
+}
+.ic-chip:hover {
+  background: #ffffff;
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.26), var(--shadow-rest);
+}
+.ic-chip:active {
+  transform: scale(0.96);
+}
+.ic-chip.is-on {
+  color: #ffffff;
+  background: var(--ink);
+  box-shadow: 0 0 0 0.5px var(--ink), var(--shadow-rest);
+}
+.ic-chip.is-on:hover {
+  background: #000000;
+}
+
+/* A popover surface: no border, a deep soft shadow plus the hairline ring.
+ *
+ * Near-opaque on purpose. These panels are children of `.ic-header`, which has
+ * a backdrop-filter of its own and therefore its own stacking context, so the
+ * popover's blur samples the wrong thing and the category strip showed through
+ * it crisp and unblurred -- a menu you have to read past. 0.98 keeps the faint
+ * translucency Apple's menus have without ever costing legibility. */
+.ic-popover {
+  background: rgba(255, 255, 255, 0.98);
+  -webkit-backdrop-filter: saturate(180%) blur(24px);
+  backdrop-filter: saturate(180%) blur(24px);
+  border-radius: 20px;
+  box-shadow: var(--shadow-pop), var(--hairline);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .ic-popover {
+    background: #ffffff;
+  }
+}
+
 /* Anything that appears from nothing: menus, popovers, suggestion lists.
  * Scales from 98% so it reads as coming forward rather than sliding in. */
 @keyframes icPop {

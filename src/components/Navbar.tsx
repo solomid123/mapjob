@@ -106,7 +106,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   };
 
   return (
-    <header className="sticky top-0 z-40 bg-white border-b border-gray-200 select-none transition-all">
+    <header className="ic-header sticky top-0 z-40 select-none">
       <div className="max-w-[1760px] mx-auto px-4 sm:px-6 lg:px-8">
         
         {/* ROW 1: Logo (Left) | DEAD-CENTER TOP MENU (Grid centered, NO subpixel translate blur!) | Right Actions */}
@@ -140,16 +140,16 @@ export const Navbar: React.FC<NavbarProps> = ({
             <button
               type="button"
               onClick={() => setActiveTopTab('jobs')}
-              className={`flex items-center gap-2 pb-2.5 transition-colors duration-150 relative group cursor-pointer ${
+              className={`flex items-center gap-2 pb-2.5 transition-colors duration-200 ease-apple-out relative group cursor-pointer ${
                 activeTopTab === 'jobs' 
-                  ? 'text-[#222222] font-bold' 
-                  : 'text-[#717171] hover:text-[#222222]'
+                  ? 'text-[#1d1d1f] font-semibold' 
+                  : 'text-[#6e6e73] hover:text-[#1d1d1f]'
               }`}
             >
               <Briefcase className={`w-4 h-4 ${activeTopTab === 'jobs' ? 'text-[#FF385C]' : ''}`} />
               <span className="text-[15px] tracking-tight">Jobs</span>
               {activeTopTab === 'jobs' && (
-                <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#222222] rounded-full" />
+                <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-[#1d1d1f] rounded-full" />
               )}
             </button>
 
@@ -157,16 +157,16 @@ export const Navbar: React.FC<NavbarProps> = ({
             <button
               type="button"
               onClick={() => setActiveTopTab('emails')}
-              className={`flex items-center gap-2 pb-2.5 transition-colors duration-150 relative group cursor-pointer ${
+              className={`flex items-center gap-2 pb-2.5 transition-colors duration-200 ease-apple-out relative group cursor-pointer ${
                 activeTopTab === 'emails' 
-                  ? 'text-[#222222] font-bold' 
-                  : 'text-[#717171] hover:text-[#222222]'
+                  ? 'text-[#1d1d1f] font-semibold' 
+                  : 'text-[#6e6e73] hover:text-[#1d1d1f]'
               }`}
             >
               <Mail className={`w-4 h-4 ${activeTopTab === 'emails' ? 'text-[#FF385C]' : ''}`} />
               <span className="text-[15px] tracking-tight">Automated Emails</span>
               {activeTopTab === 'emails' && (
-                <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#222222] rounded-full" />
+                <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-[#1d1d1f] rounded-full" />
               )}
             </button>
 
@@ -174,16 +174,16 @@ export const Navbar: React.FC<NavbarProps> = ({
             <button
               type="button"
               onClick={() => setActiveTopTab('interview')}
-              className={`flex items-center gap-2 pb-2.5 transition-colors duration-150 relative group cursor-pointer ${
+              className={`flex items-center gap-2 pb-2.5 transition-colors duration-200 ease-apple-out relative group cursor-pointer ${
                 activeTopTab === 'interview' 
-                  ? 'text-[#222222] font-bold' 
-                  : 'text-[#717171] hover:text-[#222222]'
+                  ? 'text-[#1d1d1f] font-semibold' 
+                  : 'text-[#6e6e73] hover:text-[#1d1d1f]'
               }`}
             >
               <Sparkles className={`w-4 h-4 ${activeTopTab === 'interview' ? 'text-[#FF385C]' : ''}`} />
               <span className="text-[15px] tracking-tight">Interview Helper</span>
               {activeTopTab === 'interview' && (
-                <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#222222] rounded-full" />
+                <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-[#1d1d1f] rounded-full" />
               )}
             </button>
 
@@ -194,7 +194,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <button
               type="button"
               onClick={onOpenPostJob}
-              className="hidden lg:inline-block px-4 py-2 text-sm font-bold text-[#222222] hover:bg-gray-100 rounded-full transition"
+              className="hidden lg:inline-block px-4 py-2 text-sm font-medium tracking-[-0.01em] text-[#1d1d1f] hover:bg-black/[0.05] rounded-full transition-colors duration-200 ease-apple-out"
             >
               Post a Job
             </button>
@@ -217,7 +217,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
 
             {/* Airbnb User Menu Pill */}
-            <div className="border border-gray-300 rounded-full py-1.5 px-3.5 flex items-center gap-3 hover:shadow-md cursor-pointer transition ml-1">
+            <div className="rounded-full py-1.5 px-3.5 flex items-center gap-3 cursor-pointer ml-1 shadow-[0_0_0_0.5px_rgba(0,0,0,0.14)] hover:shadow-[0_0_0_0.5px_rgba(0,0,0,0.2),0_2px_8px_rgba(0,0,0,0.08)] transition-shadow duration-200 ease-apple-out">
               <Menu className="w-4 h-4 text-gray-600" />
               <div className="w-7 h-7 rounded-full bg-gray-600 text-white flex items-center justify-center">
                 <User className="w-4 h-4" />
@@ -233,18 +233,16 @@ export const Navbar: React.FC<NavbarProps> = ({
             <div className="max-w-4xl mx-auto relative">
               
               {/* Floating Multi-segment Search Pill Bar - Razor-sharp HD */}
-              <div className="bg-white h-[66px] rounded-full border border-[#DDDDDD] hover:border-[#B0B0B0] flex items-center shadow-[0_3px_12px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] hover:shadow-[0_4px_16px_rgba(0,0,0,0.1)] p-2 relative transition-[border-color,box-shadow] duration-150">
+              <div className="bg-white h-[66px] rounded-full flex items-center shadow-[0_0_0_0.5px_rgba(0,0,0,0.12),0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_rgba(0,0,0,0.07)] hover:shadow-[0_0_0_0.5px_rgba(0,0,0,0.16),0_2px_6px_rgba(0,0,0,0.06),0_14px_36px_rgba(0,0,0,0.12)] p-2 relative transition-[box-shadow] duration-300 ease-apple-out">
                 
                 {/* 1. WHERE (Location) */}
                 <div
                   onClick={() => setActiveSegment('where')}
-                  className={`flex-1 h-full px-6 flex flex-col justify-center rounded-full cursor-pointer transition-colors ${
-                    activeSegment === 'where'
-                      ? 'bg-[#F7F7F7]'
-                      : 'hover:bg-[#F7F7F7]'
+                  className={`ic-segment flex-1 h-full px-6 flex flex-col justify-center cursor-pointer ${
+                    activeSegment === 'where' ? 'is-active' : ''
                   }`}
                 >
-                  <span className="block text-[12px] font-bold text-[#222222] tracking-wider uppercase leading-none mb-1">
+                  <span className="block text-[10.5px] font-semibold text-[#86868b] tracking-[0.06em] uppercase leading-none mb-1.5">
                     Where
                   </span>
                   <input
@@ -266,11 +264,11 @@ export const Navbar: React.FC<NavbarProps> = ({
                       }
                     }}
                     placeholder="Search city, region, or country..."
-                    className="w-full bg-transparent text-[14px] font-medium text-[#222222] placeholder:text-[#717171] outline-none leading-tight"
+                    className="w-full bg-transparent text-[14px] font-normal tracking-[-0.01em] text-[#1d1d1f] placeholder:text-[#86868b] outline-none leading-tight"
                   />
                 </div>
 
-                <div className="w-[1px] h-8 bg-[#DDDDDD] shrink-0" />
+                <div className="w-[1px] h-7 bg-black/[0.1] shrink-0" />
 
                 {/* 2. JOB TITLE */}
                 <div
@@ -278,13 +276,11 @@ export const Navbar: React.FC<NavbarProps> = ({
                   // and a toggle would read that focus as "already open" and
                   // shut the list again on the very click meant to show it.
                   onClick={() => setActiveSegment('title')}
-                  className={`flex-[1.2] h-full px-6 flex flex-col justify-center rounded-full cursor-pointer transition-colors ${
-                    activeSegment === 'title'
-                      ? 'bg-[#F7F7F7]'
-                      : 'hover:bg-[#F7F7F7]'
+                  className={`ic-segment flex-[1.2] h-full px-6 flex flex-col justify-center cursor-pointer ${
+                    activeSegment === 'title' ? 'is-active' : ''
                   }`}
                 >
-                  <span className="block text-[12px] font-bold text-[#222222] tracking-wider uppercase leading-none mb-1">
+                  <span className="block text-[10.5px] font-semibold text-[#86868b] tracking-[0.06em] uppercase leading-none mb-1.5">
                     Job Title
                   </span>
                   <input
@@ -314,26 +310,24 @@ export const Navbar: React.FC<NavbarProps> = ({
                         e.currentTarget.blur();
                       }
                     }}
-                    className="w-full bg-transparent text-[14px] font-medium text-[#222222] placeholder:text-[#717171] outline-none leading-tight"
+                    className="w-full bg-transparent text-[14px] font-normal tracking-[-0.01em] text-[#1d1d1f] placeholder:text-[#86868b] outline-none leading-tight"
                   />
                 </div>
 
-                <div className="w-[1px] h-8 bg-[#DDDDDD] shrink-0" />
+                <div className="w-[1px] h-7 bg-black/[0.1] shrink-0" />
 
                 {/* 3. LAST POSTED (Matches When/Dates) */}
                 <div
                   onClick={() => setActiveSegment(activeSegment === 'posted' ? null : 'posted')}
-                  className={`flex-1 h-full px-6 flex items-center justify-between rounded-full cursor-pointer transition-colors ${
-                    activeSegment === 'posted'
-                      ? 'bg-[#F7F7F7]'
-                      : 'hover:bg-[#F7F7F7]'
+                  className={`ic-segment flex-1 h-full px-6 flex items-center justify-between cursor-pointer ${
+                    activeSegment === 'posted' ? 'is-active' : ''
                   }`}
                 >
                   <div className="flex flex-col justify-center min-w-0 pr-2">
-                    <span className="block text-[12px] font-bold text-[#222222] tracking-wider uppercase leading-none mb-1">
+                    <span className="block text-[10.5px] font-semibold text-[#86868b] tracking-[0.06em] uppercase leading-none mb-1.5">
                       Last Posted
                     </span>
-                    <span className="block text-[14px] font-medium text-[#222222] truncate leading-tight">
+                    <span className="block text-[14px] font-normal tracking-[-0.01em] text-[#1d1d1f] truncate leading-tight">
                       {getLastPostedLabel()}
                     </span>
                   </div>
@@ -363,9 +357,9 @@ export const Navbar: React.FC<NavbarProps> = ({
                         setActiveSegment(null);
                       }
                     }}
-                    className="h-12 px-6 rounded-full bg-[#FF385C] hover:bg-[#E00B41] text-white font-bold text-[14px] flex items-center gap-2 shadow-sm transition active:scale-95 cursor-pointer"
+                    className="h-12 px-6 rounded-full bg-[#FF385C] hover:bg-[#E00B41] text-white font-semibold tracking-[-0.01em] text-[14px] flex items-center gap-2 shadow-[0_2px_8px_rgba(255,56,92,0.32)] hover:shadow-[0_4px_14px_rgba(255,56,92,0.4)] transition-[background-color,box-shadow,transform] duration-200 ease-apple-spring active:scale-[0.96] cursor-pointer"
                   >
-                    <Search className="w-4 h-4 stroke-[2.8]" />
+                    <Search className="w-4 h-4 stroke-[2.4]" />
                     <span>Search</span>
                   </button>
                 </div>
@@ -374,7 +368,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
               {/* POPOVER 1: WHERE (Suggested Destinations with Airbnb Landmark Icons) */}
               {activeSegment === 'where' && (
-                <div className="absolute left-0 top-full mt-3 w-[440px] bg-white rounded-[28px] shadow-[0_16px_40px_rgba(0,0,0,0.16)] border border-gray-100 p-5 z-50 animate-airbnb-pop">
+                <div className="ic-popover absolute left-0 top-full mt-3 w-[440px] p-5 z-50 animate-airbnb-pop">
                   <div className="flex items-center justify-between mb-3 px-2">
                     <span className="text-xs font-bold text-gray-800">
                       {whereInput.trim() ? `Destinations matching "${whereInput}"` : 'Suggested European hubs'}
@@ -626,7 +620,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
               {/* POPOVER 2: JOB TITLE (real titles, filtered as you type) */}
               {activeSegment === 'title' && titleSuggestions.length > 0 && (
-                <div className="absolute left-1/4 top-full mt-3 w-96 bg-white rounded-3xl shadow-[0_16px_40px_rgba(0,0,0,0.18)] border border-gray-100 p-3 z-50 animate-airbnb-pop">
+                <div className="ic-popover absolute left-1/4 top-full mt-3 w-96 p-3 z-50 animate-airbnb-pop">
                   <div className="text-[11px] font-extrabold text-gray-500 uppercase tracking-wider mb-2 px-3 pt-2">
                     {searchQuery.trim() ? 'Matching Roles' : 'Popular Roles'}
                   </div>
@@ -674,7 +668,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
               {/* POPOVER 3: LAST POSTED (Matches Airbnb Date/Calendar Picker with Airbnb Pop Animation) */}
               {activeSegment === 'posted' && (
-                <div className="absolute right-0 top-full mt-3 w-[460px] bg-white rounded-3xl shadow-[0_16px_40px_rgba(0,0,0,0.18)] border border-gray-100 p-6 z-50 animate-airbnb-pop">
+                <div className="ic-popover absolute right-0 top-full mt-3 w-[460px] p-6 z-50 animate-airbnb-pop">
                   
                   {/* Top toggle: Exact dates / Flexible */}
                   <div className="flex justify-center mb-5">

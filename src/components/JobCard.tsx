@@ -232,8 +232,8 @@ export const JobCard: React.FC<JobCardProps> = ({
         {/* Line 5: ATS platform badge & 1-Click Auto Apply button (Desktop only).
           * Separated by a hairline rule, not a 1px grey border. */}
         <div className="hidden sm:flex pt-2.5 items-center justify-between gap-1.5 mt-1 border-t border-black/[0.06]">
-          <div className="flex items-center gap-1.5">
-            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-bold tracking-tight border ${
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className={`inline-flex items-center gap-1 min-w-0 px-2 py-0.5 rounded-full text-[10.5px] font-semibold tracking-tight border ${
               job.atsProvider === 'Greenhouse' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
               job.atsProvider === 'Lever' ? 'bg-violet-50 text-violet-700 border-violet-200' :
               job.atsProvider === 'Ashby' ? 'bg-sky-50 text-sky-700 border-sky-200' :
@@ -261,7 +261,7 @@ export const JobCard: React.FC<JobCardProps> = ({
                   'bg-slate-400'
                 }`} />
               )}
-              <span>{job.atsProvider || 'Direct Portal'}</span>
+              <span className="truncate">{job.atsProvider || 'Direct Portal'}</span>
             </span>
           </div>
 
@@ -280,7 +280,7 @@ export const JobCard: React.FC<JobCardProps> = ({
                 e.stopPropagation();
                 onApply(job);
               }}
-              className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-[11.5px] font-semibold tracking-[-0.01em] text-white cursor-pointer bg-[#0071e3] hover:bg-[#0077ed] active:scale-[0.96] transition-[background-color,transform] duration-200 ease-apple-spring"
+              className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap px-2.5 py-1 rounded-full text-[11.5px] font-semibold tracking-[-0.01em] text-white cursor-pointer bg-[#0071e3] hover:bg-[#0077ed] active:scale-[0.96] transition-[background-color,transform] duration-200 ease-apple-spring"
               title="Fill this employer's form from your profile, then show you the result before anything is sent"
             >
               <Zap className="w-3 h-3 text-white fill-white" />
@@ -295,7 +295,7 @@ export const JobCard: React.FC<JobCardProps> = ({
               target="_blank"
               rel="noopener noreferrer"
               onClick={(e) => e.stopPropagation()}
-              className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-[11.5px] font-semibold tracking-[-0.01em] text-white cursor-pointer bg-[#0071e3] hover:bg-[#0077ed] active:scale-[0.96] transition-[background-color,transform] duration-200 ease-apple-spring"
+              className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap px-2.5 py-1 rounded-full text-[11.5px] font-semibold tracking-[-0.01em] text-white cursor-pointer bg-[#0071e3] hover:bg-[#0077ed] active:scale-[0.96] transition-[background-color,transform] duration-200 ease-apple-spring"
               title="Open the employer's own application form"
             >
               <span>Apply</span>

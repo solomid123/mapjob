@@ -113,7 +113,7 @@ export const JobCard: React.FC<JobCardProps> = ({
       {/* The cover. The card is the surface now, so this sits inside it with a
         * smaller radius -- concentric, the way an iOS icon sits in its tile --
         * rather than being the outer edge itself. */}
-      <div className="relative aspect-[16/11] sm:aspect-[20/19] w-full rounded-[13px] overflow-hidden bg-gray-100 mb-3">
+      <div className="relative aspect-[16/11] sm:aspect-[20/19] w-full rounded-[13px] overflow-hidden bg-white/5 mb-3">
         {job.images.length > 0 ? (
           <img
             src={job.images[currentImageIndex] || job.images[0]}
@@ -196,24 +196,24 @@ export const JobCard: React.FC<JobCardProps> = ({
 
         {/* Line 1: Company • Location & Rating */}
         <div className="flex items-center justify-between gap-2">
-          <p className="ic-title text-[14px] text-[#1d1d1f] truncate">
-            {job.company} <span className="text-[#6e6e73] font-normal">· {job.location}</span>
+          <p className="ic-title text-[14px] text-[#f5f5f7] truncate">
+            {job.company} <span className="text-[rgba(235,235,245,0.62)] font-normal">· {job.location}</span>
           </p>
           <div className="flex items-center gap-1 shrink-0">
-            <Star className="w-3.5 h-3.5 fill-[#1d1d1f] text-[#1d1d1f]" />
-            <span className="ic-body text-[13px] font-semibold text-[#1d1d1f]">
+            <Star className="w-3.5 h-3.5 fill-[#f5f5f7] text-[#f5f5f7]" />
+            <span className="ic-body text-[13px] font-semibold text-[#f5f5f7]">
               {(4.82 + ((brandHue(job.company || '') % 16) / 100)).toFixed(2)}
             </span>
           </div>
         </div>
 
         {/* Line 2: Job Title */}
-        <h3 className="ic-body text-[13.5px] text-[#6e6e73] font-normal truncate transition-colors duration-200 ease-apple-out group-hover:text-[#1d1d1f]">
+        <h3 className="ic-body text-[13.5px] text-[rgba(235,235,245,0.62)] font-normal truncate transition-colors duration-200 ease-apple-out group-hover:text-[#f5f5f7]">
           {job.title}
         </h3>
 
         {/* Line 3: Format & Time */}
-        <p className="ic-body text-[13px] text-[#86868b] truncate">
+        <p className="ic-body text-[13px] text-[rgba(235,235,245,0.42)] truncate">
           {job.jobType} · {job.remoteType} · {job.postedAt}
         </p>
 
@@ -221,36 +221,36 @@ export const JobCard: React.FC<JobCardProps> = ({
         <div className="pt-[3px] flex items-baseline gap-1">
           {job.salaryDisplay ? (
             <>
-              <span className="text-[15px] font-semibold tracking-[-0.022em] text-[#1d1d1f]">{job.salaryDisplay}</span>
-              <span className="text-[12.5px] text-[#86868b] font-normal">/ year</span>
+              <span className="text-[15px] font-semibold tracking-[-0.022em] text-[#f5f5f7]">{job.salaryDisplay}</span>
+              <span className="text-[12.5px] text-[rgba(235,235,245,0.42)] font-normal">/ year</span>
             </>
           ) : (
-            <span className="text-[13px] text-[#86868b] font-normal">Competitive salary</span>
+            <span className="text-[13px] text-[rgba(235,235,245,0.42)] font-normal">Competitive salary</span>
           )}
         </div>
 
         {/* Line 5: ATS platform badge & 1-Click Auto Apply button (Desktop only).
           * Separated by a hairline rule, not a 1px grey border. */}
-        <div className="hidden sm:flex pt-2.5 items-center justify-between gap-1.5 mt-1 border-t border-black/[0.06]">
+        <div className="hidden sm:flex pt-2.5 items-center justify-between gap-1.5 mt-1 border-t border-white/[0.09]">
           <div className="flex items-center gap-1.5 min-w-0">
             <span className={`inline-flex items-center gap-1 min-w-0 px-2 py-0.5 rounded-full text-[10.5px] font-semibold tracking-tight border ${
-              job.atsProvider === 'Greenhouse' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
-              job.atsProvider === 'Lever' ? 'bg-violet-50 text-violet-700 border-violet-200' :
-              job.atsProvider === 'Ashby' ? 'bg-sky-50 text-sky-700 border-sky-200' :
-              job.atsProvider === 'Workday' ? 'bg-amber-50 text-amber-800 border-amber-200' :
-              job.atsProvider === 'SmartRecruiters' ? 'bg-blue-50 text-blue-700 border-blue-200' :
-              job.atsProvider === 'Teamtailor' ? 'bg-teal-50 text-teal-700 border-teal-200' :
-              job.atsProvider === 'France Travail' ? 'bg-blue-50 text-blue-800 border-blue-200' :
-              job.atsProvider === 'Apec' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' :
-              job.atsProvider === 'HelloWork' ? 'bg-orange-50 text-orange-700 border-orange-200' :
-              job.atsProvider === 'Meteojob' ? 'bg-cyan-50 text-cyan-700 border-cyan-200' :
-              job.atsProvider === 'Agency' ? 'bg-amber-50 text-amber-700 border-amber-200' :
-              job.atsProvider === 'Indeed' ? 'bg-slate-100 text-slate-700 border-slate-200' :
-              job.atsProvider === 'LinkedIn' ? 'bg-blue-50 text-blue-700 border-blue-200' :
-              'bg-slate-50 text-slate-600 border-slate-200'
+              job.atsProvider === 'Greenhouse' ? 'bg-emerald-400/15 text-emerald-200 border-emerald-300/25' :
+              job.atsProvider === 'Lever' ? 'bg-violet-400/15 text-violet-200 border-violet-300/25' :
+              job.atsProvider === 'Ashby' ? 'bg-sky-400/15 text-sky-200 border-sky-300/25' :
+              job.atsProvider === 'Workday' ? 'bg-amber-400/15 text-amber-200 border-amber-300/25' :
+              job.atsProvider === 'SmartRecruiters' ? 'bg-blue-400/15 text-blue-200 border-blue-300/25' :
+              job.atsProvider === 'Teamtailor' ? 'bg-teal-400/15 text-teal-200 border-teal-300/25' :
+              job.atsProvider === 'France Travail' ? 'bg-blue-400/15 text-blue-200 border-blue-300/25' :
+              job.atsProvider === 'Apec' ? 'bg-indigo-400/15 text-indigo-200 border-indigo-300/25' :
+              job.atsProvider === 'HelloWork' ? 'bg-orange-400/15 text-orange-200 border-orange-300/25' :
+              job.atsProvider === 'Meteojob' ? 'bg-cyan-400/15 text-cyan-200 border-cyan-300/25' :
+              job.atsProvider === 'Agency' ? 'bg-amber-400/15 text-amber-200 border-amber-300/25' :
+              job.atsProvider === 'Indeed' ? 'bg-slate-400/15 text-slate-200 border-slate-300/25' :
+              job.atsProvider === 'LinkedIn' ? 'bg-blue-400/15 text-blue-200 border-blue-300/25' :
+              'bg-slate-400/15 text-slate-200 border-slate-300/25'
             }`}>
               {['Greenhouse', 'Lever', 'Ashby', 'SmartRecruiters', 'Teamtailor', 'Workday'].includes(job.atsProvider || '') ? (
-                <Zap className="w-2.5 h-2.5 text-emerald-600 fill-emerald-600" />
+                <Zap className="w-2.5 h-2.5 text-emerald-300 fill-emerald-300" />
               ) : (
                 <span className={`w-1.5 h-1.5 rounded-full ${
                   job.atsProvider === 'France Travail' ? 'bg-blue-600' :
@@ -266,7 +266,7 @@ export const JobCard: React.FC<JobCardProps> = ({
           </div>
 
           {isApplied ? (
-            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-400/15 text-emerald-200 border border-emerald-300/25">
               ✓ Applied
             </span>
           ) : job.applyUrl && onApply ? (
@@ -280,7 +280,7 @@ export const JobCard: React.FC<JobCardProps> = ({
                 e.stopPropagation();
                 onApply(job);
               }}
-              className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap px-2.5 py-1 rounded-full text-[11.5px] font-semibold tracking-[-0.01em] text-white cursor-pointer bg-[#0071e3] hover:bg-[#0077ed] active:scale-[0.96] transition-[background-color,transform] duration-200 ease-apple-spring"
+              className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap px-2.5 py-1 rounded-full text-[11.5px] font-semibold tracking-[-0.01em] text-white cursor-pointer bg-[#0a84ff] hover:bg-[#3b9bff] active:scale-[0.96] transition-[background-color,transform] duration-200 ease-apple-spring"
               title="Fill this employer's form from your profile, then show you the result before anything is sent"
             >
               <Zap className="w-3 h-3 text-white fill-white" />
@@ -295,7 +295,7 @@ export const JobCard: React.FC<JobCardProps> = ({
               target="_blank"
               rel="noopener noreferrer"
               onClick={(e) => e.stopPropagation()}
-              className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap px-2.5 py-1 rounded-full text-[11.5px] font-semibold tracking-[-0.01em] text-white cursor-pointer bg-[#0071e3] hover:bg-[#0077ed] active:scale-[0.96] transition-[background-color,transform] duration-200 ease-apple-spring"
+              className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap px-2.5 py-1 rounded-full text-[11.5px] font-semibold tracking-[-0.01em] text-white cursor-pointer bg-[#0a84ff] hover:bg-[#3b9bff] active:scale-[0.96] transition-[background-color,transform] duration-200 ease-apple-spring"
               title="Open the employer's own application form"
             >
               <span>Apply</span>

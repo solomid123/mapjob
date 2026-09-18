@@ -950,7 +950,9 @@ export function App() {
   const currentCity = CITIES.find((c) => c.id === selectedCity) || CITIES[0];
 
   return (
-    <div className={`bg-white text-gray-900 font-sans antialiased ${activeJobPage ? 'min-h-screen flex flex-col overflow-y-auto' : 'h-screen flex flex-col overflow-hidden'}`}>
+    /* No background of its own: the body carries the blue canvas, and an opaque
+     * root here painted straight over it. */
+    <div className={`text-[#f5f5f7] font-sans antialiased ${activeJobPage ? 'min-h-screen flex flex-col overflow-y-auto' : 'h-screen flex flex-col overflow-hidden'}`}>
       
       {/* Toast notification banner */}
       {toastMessage && (
@@ -1018,7 +1020,7 @@ export function App() {
       ) : (
         <>
           {/* Categories & Filter Bar */}
-          <div className="shrink-0 bg-white">
+          <div className="shrink-0">
             <FilterBar
               selectedCategory={selectedCategory}
               setSelectedCategory={setSelectedCategory}
@@ -1043,23 +1045,19 @@ export function App() {
             
             {/* Left: Job Listings Column (Scrolls independently with slim custom scrollbar) */}
             <div
-              /* Apple's page grey (#f5f5f7) behind the results, so the white
-                 tiles have something to sit on. On white-on-white the layered
-                 shadows were mathematically present and visually invisible --
-                 the cards read as floating text, not as objects. */
-              className={`flex-1 h-full overflow-y-auto custom-scrollbar bg-[#f5f5f7] rounded-[26px] px-5 pt-5 pb-36 md:pb-16 ${
+              className={`flex-1 h-full overflow-y-auto custom-scrollbar pr-2 pb-36 md:pb-16 ${
                 mobileView === 'map' ? 'hidden md:block' : 'block'
               }`}
             >
           {/* Subheader (Desktop only - mobile cards start immediately like Airbnb) */}
-          <div className="hidden md:flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6 pb-2 border-b border-gray-100">
+          <div className="hidden md:flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5 pt-1">
             <div>
               <div className="flex items-center gap-2.5">
-                <h2 className="text-2xl font-black text-[#222222] tracking-tight">
+                <h2 className="text-[28px] font-semibold text-[#f5f5f7] tracking-[-0.028em]">
                    {isLoadingJobs && !jobs.length ? 'Searching jobs...' : `${filteredJobs.length} jobs`}
                 </h2>
               </div>
-              <p className="text-xs text-[#717171] mt-0.5">
+              <p className="text-[13px] text-[rgba(235,235,245,0.42)] mt-1 tracking-[-0.01em]">
                  {searchAsMapMoves ? `Map area: ${activeLocationLabel}. Unmapped results are listed separately.` : `${currentCity.name} and nearby jobs`}
               </p>
             </div>
@@ -1072,15 +1070,15 @@ export function App() {
               {[1, 2, 3, 4, 5, 6].map((n) => (
                 <div key={n} className="flex flex-col">
                   {/* Top pill placeholder */}
-                  <div className="h-3.5 w-28 bg-gray-200 rounded-full mb-2.5" />
+                  <div className="h-3.5 w-28 bg-white/10 rounded-full mb-2.5" />
                   {/* Photo placeholder matching media_1788486684713.png */}
-                  <div className="aspect-[20/19] w-full rounded-2xl bg-gray-200 shadow-xs" />
+                  <div className="aspect-[20/19] w-full rounded-2xl bg-white/10 shadow-xs" />
                   {/* Content line placeholders */}
                   <div className="space-y-2 pt-3">
-                    <div className="h-4 bg-gray-200 rounded-md w-3/4" />
-                    <div className="h-3.5 bg-gray-200/80 rounded-md w-1/2" />
-                    <div className="h-3 bg-gray-200/60 rounded-md w-1/3" />
-                    <div className="h-4 bg-gray-200 rounded-md w-2/5 pt-1" />
+                    <div className="h-4 bg-white/10 rounded-md w-3/4" />
+                    <div className="h-3.5 bg-white/[0.07] rounded-md w-1/2" />
+                    <div className="h-3 bg-white/[0.05] rounded-md w-1/3" />
+                    <div className="h-4 bg-white/10 rounded-md w-2/5 pt-1" />
                   </div>
                 </div>
               ))}
@@ -1105,12 +1103,12 @@ export function App() {
               </div>
 
               {/* Explore More Jobs In This Area Button */}
-              <div className="pt-4 pb-12 flex flex-col items-center justify-center gap-2 border-t border-gray-100">
+              <div className="pt-4 pb-12 flex flex-col items-center justify-center gap-2 border-t border-white/10">
                 <button
                   type="button"
                   onClick={handleLoadMoreInArea}
                   disabled={isLoadingMore || isLoadingJobs}
-                  className="px-8 py-3.5 rounded-full bg-white border border-gray-900 text-gray-900 hover:bg-gray-900 hover:text-white font-bold text-xs tracking-tight shadow-sm hover:shadow-md transition active:scale-95 flex items-center gap-2 select-none disabled:opacity-50 cursor-pointer"
+                  className="px-8 py-3.5 rounded-full bg-white/10 text-[#f5f5f7] hover:bg-white/20 font-bold text-xs tracking-tight shadow-sm hover:shadow-md transition active:scale-95 flex items-center gap-2 select-none disabled:opacity-50 cursor-pointer"
                 >
                   {isLoadingMore ? (
                     <>
@@ -1123,26 +1121,26 @@ export function App() {
                     </>
                   )}
                 </button>
-                <p className="text-[11px] text-gray-400 font-medium">Showing {filteredJobs.length} active opportunities</p>
+                <p className="text-[11px] text-[rgba(235,235,245,0.42)] font-medium">Showing {filteredJobs.length} active opportunities</p>
               </div>
             </div>
           ) : (
             /* Empty State */
             <div className="py-20 text-center space-y-4 max-w-md mx-auto">
-              <div className="w-14 h-14 rounded-full bg-rose-50 text-rose-500 flex items-center justify-center mx-auto">
+              <div className="w-14 h-14 rounded-full bg-white/10 text-[rgba(235,235,245,0.42)] flex items-center justify-center mx-auto">
                 <MapPin className="w-7 h-7" />
               </div>
               <div>
-                <h3 className="text-lg font-bold text-gray-900">
+                <h3 className="text-[17px] font-semibold tracking-[-0.022em] text-[#f5f5f7]">
                   No job offers match your current search
                 </h3>
-                <p className="text-xs text-gray-500 mt-1">
+                <p className="text-xs text-[rgba(235,235,245,0.62)] mt-1">
                   Try clearing your active filters or expanding the timeframe.
                 </p>
               </div>
               <button
                 onClick={handleResetFilters}
-                className="px-5 py-2.5 bg-gray-900 hover:bg-black text-white rounded-xl text-xs font-bold transition shadow-sm"
+                className="px-5 py-2.5 bg-[#0071e3] hover:bg-[#0077ed] text-white rounded-xl text-[13px] font-medium tracking-[-0.01em] transition-[background-color,transform] duration-200 ease-apple-spring active:scale-[0.97]"
               >
                 Clear all filters
               </button>
@@ -1162,7 +1160,7 @@ export function App() {
             at the document root and paint straight over the navbar's search
             dropdowns (which live inside a z-40 sticky header).
           */}
-          <div className="w-full h-full rounded-3xl overflow-hidden border border-gray-200/90 shadow-sm relative isolate z-0">
+          <div className="w-full h-full rounded-[22px] overflow-hidden shadow-[0_0_0_0.5px_rgba(255,255,255,0.12),0_2px_8px_rgba(0,0,0,0.3),0_20px_48px_rgba(0,0,0,0.4)] relative isolate z-0">
             <JobMap
               jobs={filteredJobs}
               selectedCity={selectedCity}

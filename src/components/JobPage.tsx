@@ -183,9 +183,9 @@ export const JobPage: React.FC<JobPageProps> = ({
     <div className="min-h-screen bg-white text-[#222222] font-sans pb-24 animate-in fade-in duration-200">
       
       {/* Top Airbnb Navigation / Header */}
-      <div className="border-b border-gray-100 sticky top-0 z-30 bg-white/95 backdrop-blur-md">
+      <div className="border-b border-gray-100 sticky top-0 z-30 bg-white/95 backdrop-blur-md pt-[max(env(safe-area-inset-top,0px),1rem)]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex items-center justify-between">
-          <div className="flex items-center gap-4 sm:gap-6">
+          <div className="flex items-center gap-3 sm:gap-6">
             {/* Logo link */}
             <button
               type="button"
@@ -196,21 +196,21 @@ export const JobPage: React.FC<JobPageProps> = ({
               <div className="w-8 h-8 rounded-xl bg-[#FF385C] flex items-center justify-center text-white shadow-sm group-hover:scale-105 transition">
                 <MapPin className="w-4 h-4 stroke-[2.3]" />
               </div>
-              <span className="text-xl font-black tracking-tight text-[#FF385C]">
+              <span className="text-xl font-black tracking-tight text-[#FF385C] hidden sm:inline">
                 map<span className="text-gray-900 font-black">job</span>
               </span>
             </button>
 
             <div className="h-5 w-[1px] bg-gray-200" />
 
+            {/* Prominent Back Button */}
             <button
               type="button"
               onClick={onBack}
-              className="flex items-center gap-2 text-sm font-bold text-gray-800 hover:text-black py-1.5 px-3 rounded-full hover:bg-gray-100 transition active:scale-95 cursor-pointer"
+              className="flex items-center gap-2 text-xs sm:text-sm font-bold text-neutral-900 bg-neutral-100 hover:bg-neutral-200 py-1.5 px-3 sm:px-4 rounded-full transition active:scale-95 cursor-pointer shadow-xs"
             >
-              <ArrowLeft className="w-4 h-4 stroke-[2.5]" />
-              <span className="hidden sm:inline">Back to search results</span>
-              <span className="sm:hidden">Back</span>
+              <ArrowLeft className="w-4 h-4 stroke-[2.8]" />
+              <span>Back to jobs</span>
             </button>
           </div>
 

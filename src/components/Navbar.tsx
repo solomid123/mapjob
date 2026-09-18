@@ -10,7 +10,8 @@ import {
   Sparkles, 
   X,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  ChevronDown
 } from 'lucide-react';
 import { CITIES } from '../data/mockJobs';
 import { searchJobTitles } from '../data/jobTitles';
@@ -109,142 +110,107 @@ export const Navbar: React.FC<NavbarProps> = ({
     <header className="ic-header sticky top-0 z-40 select-none">
       <div className="max-w-[1760px] mx-auto px-4 sm:px-6 lg:px-8">
         
-        {/* ROW 1: Logo (Left) | DEAD-CENTER TOP MENU (Grid centered, NO subpixel translate blur!) | Right Actions */}
-        <div className="grid grid-cols-3 items-center h-20">
-          
+        {/* ROW 1. 56px, not 80. Apple's chrome is a thin strip that gets out of
+          * the way; the height here was carrying a 40px logo tile and a row of
+          * underlined tabs, and it read as a masthead. */}
+        <div className="grid grid-cols-3 items-center h-14">
+
           {/* Col 1: Logo */}
           <div className="flex items-center justify-start">
-            <div 
-              className="flex items-center gap-2.5 cursor-pointer select-none shrink-0" 
+            <div
+              className="flex items-center gap-2 cursor-pointer select-none shrink-0"
               onClick={() => {
                 setSearchQuery('');
                 setShowSavedOnly(false);
                 setActiveSegment(null);
               }}
             >
-              <div className="w-10 h-10 rounded-2xl bg-[#FF385C] flex items-center justify-center text-white shadow-md shadow-rose-200">
-                <MapPin className="w-6 h-6 stroke-[2.3]" />
+              <div className="w-7 h-7 rounded-[9px] bg-[#FF385C] flex items-center justify-center text-white">
+                <MapPin className="w-4 h-4 stroke-[2.4]" />
               </div>
               <div className="hidden sm:block">
-                <span className="text-2xl font-black tracking-tight text-[#FF385C]">
-                  map<span className="text-gray-900 font-black">job</span>
+                {/* Semibold, not black. Apple sets its own wordmarks at regular
+                  * or semibold and lets the size carry them. */}
+                <span className="text-[19px] font-semibold tracking-[-0.022em] text-[#FF385C]">
+                  map<span className="text-[#f5f5f7]">job</span>
                 </span>
               </div>
             </div>
           </div>
 
-          {/* Col 2: DEAD-CENTER TOP MENU (Exact physical pixel alignment, zero subpixel translation!) */}
-          <div className="hidden md:flex items-center justify-center gap-8 lg:gap-10 text-sm font-semibold">
-            
-            {/* Tab 1: Jobs */}
-            <button
-              type="button"
-              onClick={() => setActiveTopTab('jobs')}
-              className={`flex items-center gap-2 pb-2.5 transition-colors duration-200 ease-apple-out relative group cursor-pointer ${
-                activeTopTab === 'jobs' 
-                  ? 'text-[#1d1d1f] font-semibold' 
-                  : 'text-[#6e6e73] hover:text-[#1d1d1f]'
-              }`}
-            >
-              <Briefcase className={`w-4 h-4 ${activeTopTab === 'jobs' ? 'text-[#FF385C]' : ''}`} />
-              <span className="text-[15px] tracking-tight">Jobs</span>
-              {activeTopTab === 'jobs' && (
-                <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-[#1d1d1f] rounded-full" />
-              )}
-            </button>
-
-            {/* Tab 2: Automated Emails */}
-            <button
-              type="button"
-              onClick={() => setActiveTopTab('emails')}
-              className={`flex items-center gap-2 pb-2.5 transition-colors duration-200 ease-apple-out relative group cursor-pointer ${
-                activeTopTab === 'emails' 
-                  ? 'text-[#1d1d1f] font-semibold' 
-                  : 'text-[#6e6e73] hover:text-[#1d1d1f]'
-              }`}
-            >
-              <Mail className={`w-4 h-4 ${activeTopTab === 'emails' ? 'text-[#FF385C]' : ''}`} />
-              <span className="text-[15px] tracking-tight">Automated Emails</span>
-              {activeTopTab === 'emails' && (
-                <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-[#1d1d1f] rounded-full" />
-              )}
-            </button>
-
-            {/* Tab 3: Interview Helper */}
-            <button
-              type="button"
-              onClick={() => setActiveTopTab('interview')}
-              className={`flex items-center gap-2 pb-2.5 transition-colors duration-200 ease-apple-out relative group cursor-pointer ${
-                activeTopTab === 'interview' 
-                  ? 'text-[#1d1d1f] font-semibold' 
-                  : 'text-[#6e6e73] hover:text-[#1d1d1f]'
-              }`}
-            >
-              <Sparkles className={`w-4 h-4 ${activeTopTab === 'interview' ? 'text-[#FF385C]' : ''}`} />
-              <span className="text-[15px] tracking-tight">Interview Helper</span>
-              {activeTopTab === 'interview' && (
-                <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-[#1d1d1f] rounded-full" />
-              )}
-            </button>
-
+          {/* Col 2: a real segmented control. */}
+          <div className="hidden md:flex items-center justify-center">
+            <div className="ic-segmented">
+              {([
+                { id: 'jobs', label: 'Jobs', Icon: Briefcase },
+                { id: 'emails', label: 'Automated Emails', Icon: Mail },
+                { id: 'interview', label: 'Interview Helper', Icon: Sparkles },
+              ] as const).map(({ id, label, Icon }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setActiveTopTab(id)}
+                  className={`ic-segmented-item ${activeTopTab === id ? 'is-on' : ''}`}
+                >
+                  <Icon className="w-[15px] h-[15px]" />
+                  <span>{label}</span>
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Col 3: Right Header Actions */}
-          <div className="flex items-center justify-end gap-2">
+          <div className="flex items-center justify-end gap-1.5">
             <button
               type="button"
               onClick={onOpenPostJob}
-              className="hidden lg:inline-block px-4 py-2 text-sm font-medium tracking-[-0.01em] text-[#1d1d1f] hover:bg-black/[0.05] rounded-full transition-colors duration-200 ease-apple-out"
+              className="hidden lg:inline-block px-3 py-1.5 text-[13px] font-medium tracking-[-0.01em] text-[#f5f5f7] hover:bg-white/[0.09] rounded-lg transition-colors duration-200 ease-apple-out"
             >
               Post a Job
             </button>
 
-            {/* Saved Wishlist Button */}
+            {/* Saved Wishlist */}
             <button
               type="button"
               onClick={() => setShowSavedOnly(!showSavedOnly)}
-              className={`p-2.5 rounded-full text-sm font-semibold transition relative hover:bg-gray-100 ${
-                showSavedOnly ? 'text-[#FF385C]' : 'text-gray-700'
-              }`}
+              className="ic-fill w-8 h-8 rounded-full flex items-center justify-center relative cursor-pointer"
               title="Saved Wishlist"
             >
-              <Heart className={`w-5 h-5 ${showSavedOnly ? 'fill-[#FF385C] text-[#FF385C]' : 'text-gray-700'}`} />
+              <Heart className={`w-4 h-4 ${showSavedOnly ? 'fill-[#FF385C] text-[#FF385C]' : 'text-[#f5f5f7]'}`} />
               {savedCount > 0 && (
-                <span className="absolute -top-1 -right-1 bg-[#FF385C] text-white text-[10px] font-extrabold w-4 h-4 rounded-full flex items-center justify-center">
+                <span className="absolute -top-0.5 -right-0.5 bg-[#FF385C] text-white text-[9px] font-semibold min-w-[15px] h-[15px] px-1 rounded-full flex items-center justify-center">
                   {savedCount}
                 </span>
               )}
             </button>
 
-            {/* Airbnb User Menu Pill */}
-            <div className="rounded-full py-1.5 px-3.5 flex items-center gap-3 cursor-pointer ml-1 shadow-[0_0_0_0.5px_rgba(0,0,0,0.14)] hover:shadow-[0_0_0_0.5px_rgba(0,0,0,0.2),0_2px_8px_rgba(0,0,0,0.08)] transition-shadow duration-200 ease-apple-out">
-              <Menu className="w-4 h-4 text-gray-600" />
-              <div className="w-7 h-7 rounded-full bg-gray-600 text-white flex items-center justify-center">
-                <User className="w-4 h-4" />
-              </div>
-            </div>
+            {/* Account. A filled circle, not an outlined Airbnb pill. */}
+            <button type="button" className="ic-fill w-8 h-8 rounded-full flex items-center justify-center cursor-pointer" title="Menu">
+              <Menu className="w-4 h-4 text-[#f5f5f7]" />
+            </button>
+            <button type="button" className="w-8 h-8 rounded-full bg-white/20 text-[#f5f5f7] flex items-center justify-center cursor-pointer transition-transform duration-200 ease-apple-spring active:scale-95" title="Account">
+              <User className="w-4 h-4" />
+            </button>
           </div>
 
         </div>
 
         {/* ROW 2: DEAD-CENTER AIRBNB SEARCH BAR (Where | Job Title | Last Posted + Search) */}
         {activeTopTab === 'jobs' && (
-          <div ref={searchBarRef} className="pb-6 hidden md:block">
+          <div ref={searchBarRef} className="pb-4 hidden md:block">
             <div className="max-w-4xl mx-auto relative">
               
               {/* Floating Multi-segment Search Pill Bar - Razor-sharp HD */}
-              <div className="bg-white h-[66px] rounded-full flex items-center shadow-[0_0_0_0.5px_rgba(0,0,0,0.12),0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_rgba(0,0,0,0.07)] hover:shadow-[0_0_0_0.5px_rgba(0,0,0,0.16),0_2px_6px_rgba(0,0,0,0.06),0_14px_36px_rgba(0,0,0,0.12)] p-2 relative transition-[box-shadow] duration-300 ease-apple-out">
+              <div className="ic-searchfield h-[52px] flex items-center p-1 gap-0.5 relative">
+                <Search className="w-[18px] h-[18px] text-[rgba(235,235,245,0.42)] shrink-0 ml-3 mr-1" />
                 
                 {/* 1. WHERE (Location) */}
                 <div
                   onClick={() => setActiveSegment('where')}
-                  className={`ic-segment flex-1 h-full px-6 flex flex-col justify-center cursor-pointer ${
+                  className={`ic-segment flex-1 h-full px-3 flex items-center cursor-pointer ${
                     activeSegment === 'where' ? 'is-active' : ''
                   }`}
                 >
-                  <span className="block text-[10.5px] font-semibold text-[#86868b] tracking-[0.06em] uppercase leading-none mb-1.5">
-                    Where
-                  </span>
                   <input
                     type="text"
                     value={whereInput}
@@ -263,12 +229,12 @@ export const Navbar: React.FC<NavbarProps> = ({
                         handleSearchWhere(whereInput);
                       }
                     }}
-                    placeholder="Search city, region, or country..."
-                    className="w-full bg-transparent text-[14px] font-normal tracking-[-0.01em] text-[#1d1d1f] placeholder:text-[#86868b] outline-none leading-tight"
+                    placeholder="Where"
+                    className="w-full bg-transparent text-[14px] font-normal tracking-[-0.01em] text-[#f5f5f7] placeholder:text-[rgba(235,235,245,0.42)] outline-none leading-tight"
                   />
                 </div>
 
-                <div className="w-[1px] h-7 bg-black/[0.1] shrink-0" />
+                
 
                 {/* 2. JOB TITLE */}
                 <div
@@ -276,16 +242,13 @@ export const Navbar: React.FC<NavbarProps> = ({
                   // and a toggle would read that focus as "already open" and
                   // shut the list again on the very click meant to show it.
                   onClick={() => setActiveSegment('title')}
-                  className={`ic-segment flex-[1.2] h-full px-6 flex flex-col justify-center cursor-pointer ${
+                  className={`ic-segment flex-[1.4] h-full px-3 flex items-center cursor-pointer ${
                     activeSegment === 'title' ? 'is-active' : ''
                   }`}
                 >
-                  <span className="block text-[10.5px] font-semibold text-[#86868b] tracking-[0.06em] uppercase leading-none mb-1.5">
-                    Job Title
-                  </span>
                   <input
                     type="text"
-                    placeholder="Mechanical Engineer, Ingénieur Mécanique…"
+                    placeholder="Job title"
                     value={searchQuery}
                     onChange={(e) => {
                       setSearchQuery(e.target.value);
@@ -310,27 +273,30 @@ export const Navbar: React.FC<NavbarProps> = ({
                         e.currentTarget.blur();
                       }
                     }}
-                    className="w-full bg-transparent text-[14px] font-normal tracking-[-0.01em] text-[#1d1d1f] placeholder:text-[#86868b] outline-none leading-tight"
+                    className="w-full bg-transparent text-[14px] font-normal tracking-[-0.01em] text-[#f5f5f7] placeholder:text-[rgba(235,235,245,0.42)] outline-none leading-tight"
                   />
                 </div>
 
-                <div className="w-[1px] h-7 bg-black/[0.1] shrink-0" />
+                
 
                 {/* 3. LAST POSTED (Matches When/Dates) */}
                 <div
                   onClick={() => setActiveSegment(activeSegment === 'posted' ? null : 'posted')}
-                  className={`ic-segment flex-1 h-full px-6 flex items-center justify-between cursor-pointer ${
+                  className={`ic-segment flex-[0.8] h-full px-3 flex items-center justify-between gap-1 cursor-pointer ${
                     activeSegment === 'posted' ? 'is-active' : ''
                   }`}
                 >
-                  <div className="flex flex-col justify-center min-w-0 pr-2">
-                    <span className="block text-[10.5px] font-semibold text-[#86868b] tracking-[0.06em] uppercase leading-none mb-1.5">
-                      Last Posted
-                    </span>
-                    <span className="block text-[14px] font-normal tracking-[-0.01em] text-[#1d1d1f] truncate leading-tight">
-                      {getLastPostedLabel()}
-                    </span>
-                  </div>
+                  {/* No caption above it. iCloud never stacks a tiny uppercase
+                    * field name over a value -- the value states its own case
+                    * ("Anytime", "Past week") and the chevron says it opens. */}
+                  <span className={`text-[14px] tracking-[-0.01em] truncate ${
+                    lastPosted === 'all' ? 'text-[rgba(235,235,245,0.42)]' : 'text-[#f5f5f7]'
+                  }`}>
+                    {getLastPostedLabel()}
+                  </span>
+                  <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-[rgba(235,235,245,0.42)] transition-transform duration-200 ease-apple-out ${
+                    activeSegment === 'posted' ? 'rotate-180' : ''
+                  }`} />
 
                   {lastPosted !== 'all' && (
                     <button
@@ -339,30 +305,31 @@ export const Navbar: React.FC<NavbarProps> = ({
                         e.stopPropagation();
                         setLastPosted('all');
                       }}
-                      className="p-1 hover:bg-gray-200 rounded-full text-gray-500 hover:text-gray-900 shrink-0"
+                      className="p-1 hover:bg-white/[0.12] rounded-full text-[rgba(235,235,245,0.42)] hover:text-[#f5f5f7] shrink-0"
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>
                   )}
                 </div>
 
-                {/* 4. SEARCH BUTTON (Airbnb Pink Pill) */}
-                <div className="pl-2 pr-1 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (activeSegment === 'where') {
-                        handleSearchWhere(whereInput);
-                      } else {
-                        setActiveSegment(null);
-                      }
-                    }}
-                    className="h-12 px-6 rounded-full bg-[#FF385C] hover:bg-[#E00B41] text-white font-semibold tracking-[-0.01em] text-[14px] flex items-center gap-2 shadow-[0_2px_8px_rgba(255,56,92,0.32)] hover:shadow-[0_4px_14px_rgba(255,56,92,0.4)] transition-[background-color,box-shadow,transform] duration-200 ease-apple-spring active:scale-[0.96] cursor-pointer"
-                  >
-                    <Search className="w-4 h-4 stroke-[2.4]" />
-                    <span>Search</span>
-                  </button>
-                </div>
+                {/* The action lives inside the well as a tinted pill, the way
+                  * Apple puts "Go" inside a field. A 48px red capsule bolted to
+                  * the right end of a white bar is the Airbnb search bar's most
+                  * recognisable single feature, and while it stayed the header
+                  * could not read as anything else. */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (activeSegment === 'where') {
+                      handleSearchWhere(whereInput);
+                    } else {
+                      setActiveSegment(null);
+                    }
+                  }}
+                  className="h-[44px] px-5 mr-0.5 shrink-0 rounded-[12px] bg-[#0a84ff] hover:bg-[#3b9bff] text-white font-medium tracking-[-0.01em] text-[14px] flex items-center cursor-pointer transition-[background-color,transform] duration-200 ease-apple-spring active:scale-[0.97]"
+                >
+                  Search
+                </button>
 
               </div>
 
@@ -370,10 +337,10 @@ export const Navbar: React.FC<NavbarProps> = ({
               {activeSegment === 'where' && (
                 <div className="ic-popover absolute left-0 top-full mt-3 w-[440px] p-5 z-50 animate-airbnb-pop">
                   <div className="flex items-center justify-between mb-3 px-2">
-                    <span className="text-xs font-bold text-gray-800">
+                    <span className="text-xs font-bold text-[#f5f5f7]">
                       {whereInput.trim() ? `Destinations matching "${whereInput}"` : 'Suggested European hubs'}
                     </span>
-                    <span className="text-[11px] text-gray-400 font-medium">Type any city or select</span>
+                    <span className="text-[11px] text-[rgba(235,235,245,0.42)] font-medium">Type any city or select</span>
                   </div>
 
                   <div className="max-h-[390px] overflow-y-auto pr-1 space-y-1">
@@ -381,16 +348,16 @@ export const Navbar: React.FC<NavbarProps> = ({
                     {whereInput.trim().length > 1 && (
                       <div
                         onClick={() => handleSearchWhere(whereInput)}
-                        className="flex items-center gap-3 p-3 rounded-2xl cursor-pointer bg-rose-50/80 hover:bg-rose-100 text-[#FF385C] font-bold text-sm border border-rose-200/80 transition mb-2"
+                        className="flex items-center gap-3 p-3 rounded-2xl cursor-pointer bg-[#FF385C]/15 hover:bg-[#FF385C]/25 text-[#ff7089] font-bold text-sm border border-[#FF385C]/30 transition mb-2"
                       >
                         <div className="w-9 h-9 rounded-xl bg-[#FF385C] flex items-center justify-center text-white shrink-0 shadow-xs">
                           <Search className="w-4 h-4" />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <span className="block truncate text-gray-900">
+                          <span className="block truncate text-[#f5f5f7]">
                             Search <span className="font-black text-[#FF385C]">"{whereInput.trim()}"</span> on live map
                           </span>
-                          <span className="block text-[11px] text-gray-500 font-normal truncate">
+                          <span className="block text-[11px] text-[rgba(235,235,245,0.42)] font-normal truncate">
                             Fly map to visible area and fetch live jobs
                           </span>
                         </div>
@@ -596,18 +563,18 @@ export const Navbar: React.FC<NavbarProps> = ({
                             onClick={() => handleSelectCity(dest.cityTarget)}
                             className={`flex items-center gap-4 p-2.5 rounded-2xl cursor-pointer transition-all duration-150 airbnb-spring group ${
                               isSelected 
-                                ? 'bg-rose-50/70 border border-rose-200/80 shadow-xs' 
-                                : 'hover:bg-gray-100/80 border border-transparent'
+                                ? 'bg-[#FF385C]/15 border border-[#FF385C]/30' 
+                                : 'hover:bg-white/[0.08] border border-transparent'
                             }`}
                           >
                             <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 border transition-transform duration-200 group-hover:scale-105 ${dest.bgColor} ${dest.borderColor} ${dest.iconColor}`}>
                               {dest.icon}
                             </div>
                             <div className="min-w-0 flex-1">
-                              <span className="block font-bold text-sm text-gray-900 group-hover:text-black truncate">
+                              <span className="block font-bold text-sm text-[#f5f5f7] truncate">
                                 {dest.name}
                               </span>
-                              <span className="block text-xs text-gray-500 truncate">
+                              <span className="block text-xs text-[rgba(235,235,245,0.42)] truncate">
                                 {dest.subtitle}
                               </span>
                             </div>
@@ -621,7 +588,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               {/* POPOVER 2: JOB TITLE (real titles, filtered as you type) */}
               {activeSegment === 'title' && titleSuggestions.length > 0 && (
                 <div className="ic-popover absolute left-1/4 top-full mt-3 w-96 p-3 z-50 animate-airbnb-pop">
-                  <div className="text-[11px] font-extrabold text-gray-500 uppercase tracking-wider mb-2 px-3 pt-2">
+                  <div className="text-[11px] font-extrabold text-[rgba(235,235,245,0.42)] uppercase tracking-wider mb-2 px-3 pt-2">
                     {searchQuery.trim() ? 'Matching Roles' : 'Popular Roles'}
                   </div>
                   <div className="max-h-80 overflow-y-auto">
@@ -639,14 +606,14 @@ export const Navbar: React.FC<NavbarProps> = ({
                         }}
                         className={`w-full flex items-center justify-between gap-3 text-left px-3 py-2.5 rounded-2xl transition-all airbnb-spring active:scale-[0.98] ${
                           searchQuery === role.title
-                            ? 'bg-gray-900 text-white'
-                            : 'hover:bg-gray-100 text-gray-900'
+                            ? 'bg-[#0a84ff] text-white'
+                            : 'hover:bg-white/[0.08] text-[#f5f5f7]'
                         }`}
                       >
                         <span className="flex items-center gap-2.5 min-w-0">
                           <Search
                             className={`w-3.5 h-3.5 shrink-0 ${
-                              searchQuery === role.title ? 'text-white' : 'text-gray-400'
+                              searchQuery === role.title ? 'text-white' : 'text-[rgba(235,235,245,0.42)]'
                             }`}
                           />
                           <span className="text-sm font-semibold truncate">{role.title}</span>
@@ -655,7 +622,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                           className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md shrink-0 ${
                             searchQuery === role.title
                               ? 'bg-white/20 text-white'
-                              : 'bg-gray-100 text-gray-500'
+                              : 'bg-white/10 text-[rgba(235,235,245,0.62)]'
                           }`}
                         >
                           {role.lang}
@@ -672,16 +639,16 @@ export const Navbar: React.FC<NavbarProps> = ({
                   
                   {/* Top toggle: Exact dates / Flexible */}
                   <div className="flex justify-center mb-5">
-                    <div className="inline-flex p-1 bg-gray-100 rounded-full">
+                    <div className="inline-flex p-1 bg-white/10 rounded-full">
                       <button
                         type="button"
-                        className="px-6 py-2 rounded-full text-xs font-bold bg-white text-gray-900 shadow-sm transition"
+                        className="px-6 py-2 rounded-full text-xs font-bold bg-white/20 text-[#f5f5f7] shadow-sm transition"
                       >
                         Dates
                       </button>
                       <button
                         type="button"
-                        className="px-6 py-2 rounded-full text-xs font-semibold text-gray-500 hover:text-gray-900 transition"
+                        className="px-6 py-2 rounded-full text-xs font-semibold text-[rgba(235,235,245,0.62)] hover:text-[#f5f5f7] transition"
                       >
                         Flexible
                       </button>
@@ -689,20 +656,20 @@ export const Navbar: React.FC<NavbarProps> = ({
                   </div>
 
                   {/* Calendar simulation */}
-                  <div className="mb-5 border-b border-gray-100 pb-5">
+                  <div className="mb-5 border-b border-white/10 pb-5">
                     <div className="flex items-center justify-between mb-3 px-2">
-                      <button type="button" className="p-1 hover:bg-gray-100 rounded-full text-gray-500 transition">
+                      <button type="button" className="p-1 hover:bg-white/[0.1] rounded-full text-[rgba(235,235,245,0.62)] transition">
                         <ChevronLeft className="w-4 h-4" />
                       </button>
-                      <span className="font-extrabold text-sm text-gray-900">
+                      <span className="font-extrabold text-sm text-[#f5f5f7]">
                         September 2026
                       </span>
-                      <button type="button" className="p-1 hover:bg-gray-100 rounded-full text-gray-500 transition">
+                      <button type="button" className="p-1 hover:bg-white/[0.1] rounded-full text-[rgba(235,235,245,0.62)] transition">
                         <ChevronRight className="w-4 h-4" />
                       </button>
                     </div>
 
-                    <div className="grid grid-cols-7 gap-1 text-center text-xs font-bold text-gray-400 mb-2">
+                    <div className="grid grid-cols-7 gap-1 text-center text-xs font-bold text-[rgba(235,235,245,0.42)] mb-2">
                       <span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span>
                     </div>
 
@@ -721,10 +688,10 @@ export const Navbar: React.FC<NavbarProps> = ({
                             }}
                             className={`h-9 flex items-center justify-center rounded-full cursor-pointer transition airbnb-spring ${
                               isToday
-                                ? 'bg-gray-900 text-white font-bold scale-105 shadow-sm'
+                                ? 'bg-[#0a84ff] text-white font-bold scale-105 shadow-sm'
                                 : isSelectedRange
-                                ? 'bg-gray-100 text-gray-900'
-                                : 'hover:bg-gray-100 text-gray-700'
+                                ? 'bg-white/[0.14] text-[#f5f5f7]'
+                                : 'hover:bg-white/[0.08] text-[rgba(235,235,245,0.62)]'
                             }`}
                           >
                             {day}
@@ -752,8 +719,8 @@ export const Navbar: React.FC<NavbarProps> = ({
                         }}
                         className={`px-3.5 py-1.5 rounded-full text-xs font-bold border transition airbnb-spring active:scale-95 ${
                           lastPosted === item.id
-                            ? 'bg-gray-900 text-white border-gray-900 shadow-sm'
-                            : 'bg-white border-gray-200 text-gray-700 hover:border-gray-900'
+                            ? 'bg-[#0a84ff] text-white border-transparent shadow-sm'
+                            : 'bg-white/[0.08] border-white/15 text-[rgba(235,235,245,0.62)] hover:border-white/40'
                         }`}
                       >
                         {item.label}
@@ -776,9 +743,9 @@ export const Navbar: React.FC<NavbarProps> = ({
               placeholder="Search roles, locations, skills..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2.5 bg-gray-100 focus:bg-white border border-transparent focus:border-[#FF385C] rounded-full text-sm outline-none transition"
+              className="w-full pl-10 pr-4 py-2.5 bg-white/10 focus:bg-white/[0.16] border border-transparent focus:border-[#FF385C] rounded-full text-sm outline-none transition"
             />
-            <Search className="w-4 h-4 text-gray-400 absolute left-3.5 top-3" />
+            <Search className="w-4 h-4 text-[rgba(235,235,245,0.42)] absolute left-3.5 top-3" />
           </div>
         </div>
 

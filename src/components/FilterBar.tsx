@@ -35,7 +35,7 @@ interface FilterBarProps {
 
 const renderCategoryIcon = (iconName: string, isActive: boolean) => {
   const iconClass = `w-6 h-6 transition-all duration-150 ${
-    isActive ? 'text-neutral-900 stroke-[2.4]' : 'text-neutral-500 group-hover:text-neutral-800 stroke-[1.8]'
+    isActive ? 'text-[#f5f5f7] stroke-[2.4]' : 'text-[rgba(235,235,245,0.42)] group-hover:text-[#f5f5f7] stroke-[1.8]'
   }`;
 
   switch (iconName) {
@@ -105,7 +105,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({
           <button
             type="button"
             onClick={() => handleScroll('left')}
-            className="hidden md:flex absolute left-0 z-10 w-8 h-8 rounded-full bg-white/90 backdrop-blur shadow-[0_0_0_0.5px_rgba(0,0,0,0.14),0_2px_6px_rgba(0,0,0,0.08)] items-center justify-center text-[#1d1d1f] hover:scale-105 active:scale-95 transition-transform duration-200 ease-apple-spring"
+            className="hidden md:flex absolute left-0 z-10 w-8 h-8 rounded-full bg-[rgba(24,30,52,0.9)] backdrop-blur shadow-[0_0_0_0.5px_rgba(255,255,255,0.14),0_2px_8px_rgba(0,0,0,0.4)] items-center justify-center text-[#f5f5f7] hover:scale-105 active:scale-95 transition-transform duration-200 ease-apple-spring"
             aria-label="Scroll categories left"
           >
             <ChevronLeft className="w-4 h-4 stroke-[2.5]" />
@@ -114,7 +114,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({
           {/* Category Carousel Scroll Area */}
           <div
             ref={scrollContainerRef}
-            className="flex items-center gap-7 sm:gap-9 overflow-x-auto no-scrollbar scroll-smooth w-full px-1 md:px-9"
+            className="flex items-center gap-1 overflow-x-auto no-scrollbar scroll-smooth w-full px-1 md:px-9"
           >
             {CATEGORIES.map((cat) => {
               const isActive = selectedCategory === cat.id;
@@ -126,15 +126,16 @@ export const FilterBar: React.FC<FilterBarProps> = ({
                   key={cat.id}
                   type="button"
                   onClick={() => setSelectedCategory(cat.id)}
-                  className={`group flex flex-col items-center gap-1.5 pb-2 border-b-2 shrink-0 transition-all cursor-pointer ${
+                  /* A selected item is a filled rounded rect, not a 2px rule under
+                    * the label. The underline is a browser-tab metaphor; Apple
+                    * marks selection by filling the control's own shape. */
+                  className={`group flex flex-col items-center gap-1 px-3 py-2 rounded-xl shrink-0 cursor-pointer transition-[background-color,color] duration-200 ease-apple-out ${
                     isActive
-                      ? 'border-[#1d1d1f] text-[#1d1d1f]'
-                      : 'border-transparent text-[#86868b] hover:text-[#1d1d1f] hover:border-black/15'
+                      ? 'bg-white/[0.14] text-[#f5f5f7]'
+                      : 'text-[rgba(235,235,245,0.42)] hover:text-[#f5f5f7] hover:bg-white/[0.07]'
                   }`}
                 >
-                  <div className="p-1">
-                    {renderCategoryIcon(cat.icon, isActive)}
-                  </div>
+                  {renderCategoryIcon(cat.icon, isActive)}
                   <span
                     className={`text-[11px] tracking-[-0.01em] whitespace-nowrap ${
                       isActive ? 'font-semibold' : 'font-normal'
@@ -151,7 +152,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({
           <button
             type="button"
             onClick={() => handleScroll('right')}
-            className="hidden md:flex absolute right-0 z-10 w-8 h-8 rounded-full bg-white/90 backdrop-blur shadow-[0_0_0_0.5px_rgba(0,0,0,0.14),0_2px_6px_rgba(0,0,0,0.08)] items-center justify-center text-[#1d1d1f] hover:scale-105 active:scale-95 transition-transform duration-200 ease-apple-spring"
+            className="hidden md:flex absolute right-0 z-10 w-8 h-8 rounded-full bg-[rgba(24,30,52,0.9)] backdrop-blur shadow-[0_0_0_0.5px_rgba(255,255,255,0.14),0_2px_8px_rgba(0,0,0,0.4)] items-center justify-center text-[#f5f5f7] hover:scale-105 active:scale-95 transition-transform duration-200 ease-apple-spring"
             aria-label="Scroll categories right"
           >
             <ChevronRight className="w-4 h-4 stroke-[2.5]" />
@@ -272,7 +273,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({
                 setVisaSponsorshipOnly(false);
                 if (setDirectAtsOnly) setDirectAtsOnly(false);
               }}
-              className="flex items-center gap-1 text-xs font-bold text-neutral-500 hover:text-neutral-900 underline ml-auto shrink-0 px-2 cursor-pointer"
+              className="flex items-center gap-1 text-xs font-bold text-[rgba(235,235,245,0.62)] hover:text-[#f5f5f7] underline ml-auto shrink-0 px-2 cursor-pointer"
             >
               <X className="w-3.5 h-3.5" />
               <span>Reset</span>
@@ -284,13 +285,13 @@ export const FilterBar: React.FC<FilterBarProps> = ({
         {/* Filter Popover Modal / Dropdown */}
         {showFilterDropdown && (
           <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-            <div className="bg-white rounded-3xl shadow-2xl border border-neutral-200 w-full max-w-md p-6 animate-in fade-in zoom-in-95 duration-150">
-              <div className="flex items-center justify-between pb-4 border-b border-neutral-100">
-                <h3 className="text-base font-bold text-neutral-900">Job Filters</h3>
+            <div className="ic-popover rounded-3xl w-full max-w-md p-6 animate-in fade-in zoom-in-95 duration-150">
+              <div className="flex items-center justify-between pb-4 border-b border-white/10">
+                <h3 className="text-base font-bold text-[#f5f5f7]">Job Filters</h3>
                 <button
                   type="button"
                   onClick={() => setShowFilterDropdown(false)}
-                  className="p-1.5 text-neutral-400 hover:text-neutral-700 rounded-full"
+                  className="p-1.5 text-[rgba(235,235,245,0.42)] hover:text-[#f5f5f7] rounded-full"
                 >
                   <X className="w-5 h-5" />
                 </button>
@@ -299,7 +300,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({
               <div className="py-5 space-y-5">
                 {/* Workplace Format */}
                 <div>
-                  <label className="block text-xs font-bold text-neutral-400 uppercase tracking-wider mb-2">
+                  <label className="block text-xs font-bold text-[rgba(235,235,245,0.42)] uppercase tracking-wider mb-2">
                     Work Location
                   </label>
                   <div className="grid grid-cols-3 gap-2">
@@ -310,8 +311,8 @@ export const FilterBar: React.FC<FilterBarProps> = ({
                         onClick={() => setRemoteType(type)}
                         className={`px-3 py-2 text-xs font-semibold rounded-xl border text-center transition ${
                           remoteType === type
-                            ? 'bg-neutral-900 text-white border-neutral-900'
-                            : 'border-neutral-200 text-neutral-700 hover:bg-neutral-50'
+                            ? 'bg-[#0a84ff] text-white border-transparent'
+                            : 'border-white/15 text-[rgba(235,235,245,0.62)] hover:bg-white/[0.08]'
                         }`}
                       >
                         {type || 'All'}
@@ -322,7 +323,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({
 
                 {/* Employment Type */}
                 <div>
-                  <label className="block text-xs font-bold text-neutral-400 uppercase tracking-wider mb-2">
+                  <label className="block text-xs font-bold text-[rgba(235,235,245,0.42)] uppercase tracking-wider mb-2">
                     Employment Type
                   </label>
                   <div className="grid grid-cols-3 gap-2">
@@ -333,8 +334,8 @@ export const FilterBar: React.FC<FilterBarProps> = ({
                         onClick={() => setJobType(type)}
                         className={`px-3 py-2 text-xs font-semibold rounded-xl border text-center transition ${
                           jobType === type
-                            ? 'bg-neutral-900 text-white border-neutral-900'
-                            : 'border-neutral-200 text-neutral-700 hover:bg-neutral-50'
+                            ? 'bg-[#0a84ff] text-white border-transparent'
+                            : 'border-white/15 text-[rgba(235,235,245,0.62)] hover:bg-white/[0.08]'
                         }`}
                       >
                         {type || 'All'}
@@ -346,7 +347,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({
                 {/* Salary slider */}
                 <div>
                   <div className="flex justify-between items-center mb-2">
-                    <span className="text-xs font-bold text-neutral-400 uppercase tracking-wider">
+                    <span className="text-xs font-bold text-[rgba(235,235,245,0.42)] uppercase tracking-wider">
                       Minimum Salary
                     </span>
                     <span className="text-sm font-extrabold text-[#FF385C]">
@@ -360,7 +361,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({
                     step="10000"
                     value={minSalary}
                     onChange={(e) => setMinSalary(Number(e.target.value))}
-                    className="w-full h-1.5 bg-neutral-200 rounded-lg appearance-none cursor-pointer accent-[#FF385C]"
+                    className="w-full h-1.5 bg-white/20 rounded-lg appearance-none cursor-pointer accent-[#FF385C]"
                   />
                 </div>
 
@@ -371,27 +372,27 @@ export const FilterBar: React.FC<FilterBarProps> = ({
                       type="checkbox"
                       checked={visaSponsorshipOnly}
                       onChange={(e) => setVisaSponsorshipOnly(e.target.checked)}
-                      className="w-4 h-4 text-[#FF385C] rounded border-neutral-300 focus:ring-[#FF385C]"
+                      className="w-4 h-4 text-[#FF385C] rounded border-white/25 bg-transparent focus:ring-[#FF385C]"
                     />
-                    <span className="text-xs font-bold text-neutral-800">
+                    <span className="text-xs font-bold text-[#f5f5f7]">
                       Visa Sponsorship Available
                     </span>
                   </label>
                 </div>
               </div>
 
-              <div className="pt-4 border-t border-neutral-100 flex items-center justify-between">
+              <div className="pt-4 border-t border-white/10 flex items-center justify-between">
                 <button
                   type="button"
                   onClick={onResetFilters}
-                  className="text-xs font-bold text-neutral-600 hover:text-black underline"
+                  className="text-xs font-bold text-[rgba(235,235,245,0.62)] hover:text-[#f5f5f7] underline"
                 >
                   Clear all
                 </button>
                 <button
                   type="button"
                   onClick={() => setShowFilterDropdown(false)}
-                  className="px-6 py-2.5 bg-neutral-900 text-white rounded-xl text-xs font-bold hover:bg-black transition"
+                  className="px-6 py-2.5 bg-[#0a84ff] text-white rounded-xl text-xs font-bold hover:bg-[#3b9bff] transition"
                 >
                   Show {totalResults} Jobs
                 </button>

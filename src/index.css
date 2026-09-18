@@ -35,16 +35,32 @@
   --radius-tile: 22px;
   --radius-card: 16px;
   --radius-inner: 13px;
-  --hairline: 0 0 0 0.5px rgba(0, 0, 0, 0.08);
-  --shadow-rest: 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.05);
-  --shadow-lift: 0 2px 6px rgba(0, 0, 0, 0.06), 0 12px 32px rgba(0, 0, 0, 0.11);
-  --shadow-pop: 0 8px 20px rgba(0, 0, 0, 0.09), 0 24px 56px rgba(0, 0, 0, 0.16);
+  --hairline: 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+  /* Deeper than the light-mode set. A shadow on a dark ground has to work
+   * harder to separate a surface from what is behind it. */
+  --shadow-rest: 0 2px 6px rgba(0, 0, 0, 0.22), 0 10px 28px rgba(0, 0, 0, 0.26);
+  --shadow-lift: 0 4px 12px rgba(0, 0, 0, 0.28), 0 20px 48px rgba(0, 0, 0, 0.38);
+  --shadow-pop: 0 10px 24px rgba(0, 0, 0, 0.32), 0 30px 70px rgba(0, 0, 0, 0.5);
 
-  /* Text. Apple's greys, not Airbnb's. */
-  --ink: #1d1d1f;
-  --ink-secondary: #6e6e73;
-  --ink-tertiary: #86868b;
-  --tint: #0071e3;
+  /* Text on the dark canvas: Apple's own dark-mode label colours. A near-white
+   * primary and two translucent whites under it, so secondary text picks up
+   * whatever is behind the tile instead of being a flat grey that only works
+   * against one background. */
+  --ink: #f5f5f7;
+  --ink-secondary: rgba(235, 235, 245, 0.62);
+  --ink-tertiary: rgba(235, 235, 245, 0.42);
+  --tint: #0a84ff; /* systemBlue, dark variant. #0071e3 goes muddy on blue. */
+
+  /* Tile materials. */
+  /* At 0.5 alpha over a saturated blue the tile just tints the wallpaper and
+   * the grid reads as flat. A block has to be visibly denser than the ground
+   * it floats on before the shadow under it means anything. */
+  --tile: rgba(9, 15, 33, 0.72);
+  --tile-hover: rgba(14, 22, 46, 0.82);
+  --tile-edge: inset 0 0.5px 0 rgba(255, 255, 255, 0.14),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.07);
+  --fill: rgba(255, 255, 255, 0.11);
+  --fill-hover: rgba(255, 255, 255, 0.17);
 }
 
 /* Apple tightens tracking as type grows and loosens it as type shrinks. One
@@ -62,9 +78,19 @@
 
 /* A tile: the whole card is the surface, the way an iCloud app tile is. */
 .ic-tile {
-  background: #ffffff;
+  /* Translucent, but deliberately NOT blurred. A frosted tile needs
+   * backdrop-filter, and there are sixty of these on screen at once; sixty
+   * backdrop filters is about the most expensive thing you can ask a
+   * compositor for and it stutters the list on scroll. Over a smooth gradient
+   * plain alpha is indistinguishable from frost, so the blur is spent only
+   * where the background behind it is busy: the header and the menus.
+   *
+   * The top-edge highlight is what makes a tile read as a raised block rather
+   * than a hole cut in the page: half a pixel of white along the top, as if
+   * lit from above. */
+  background: var(--tile);
   border-radius: var(--radius-tile);
-  box-shadow: var(--shadow-rest), var(--hairline);
+  box-shadow: var(--shadow-rest), var(--tile-edge);
   transition:
     box-shadow var(--dur-base) var(--ease-apple-out),
     transform var(--dur-base) var(--ease-apple-spring);
@@ -76,7 +102,8 @@
  * its card too -- and has to produce exactly what the pointer does. */
 .ic-tile:hover,
 .ic-tile.is-hovered {
-  box-shadow: var(--shadow-lift), var(--hairline);
+  background: var(--tile-hover);
+  box-shadow: var(--shadow-lift), var(--tile-edge);
   transform: translateY(-3px);
 }
 .ic-tile:active {
@@ -84,7 +111,7 @@
   transition-duration: var(--dur-fast);
 }
 .ic-tile.is-selected {
-  box-shadow: var(--shadow-lift), 0 0 0 2.5px var(--tint);
+  box-shadow: var(--shadow-lift), 0 0 0 2.5px var(--tint), var(--tile-edge);
 }
 
 /* The header. Apple's chrome is never opaque: it is the page colour at ~72%
@@ -94,31 +121,119 @@
  * is what makes the bar read as glass sitting on the page instead of a slab
  * bolted above it. */
 .ic-header {
-  background: rgba(255, 255, 255, 0.72);
-  -webkit-backdrop-filter: saturate(180%) blur(20px);
-  backdrop-filter: saturate(180%) blur(20px);
-  box-shadow: 0 0.5px 0 rgba(0, 0, 0, 0.1);
+  background: rgba(8, 14, 32, 0.42);
+  -webkit-backdrop-filter: saturate(180%) blur(24px);
+  backdrop-filter: saturate(180%) blur(24px);
+  box-shadow: 0 0.5px 0 rgba(255, 255, 255, 0.1);
 }
 /* Safari and Firefox without backdrop-filter get the solid colour instead of a
  * transparent bar with text showing through it. */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .ic-header {
-    background: #ffffff;
+    background: #0b1533;
   }
+}
+
+/* UISegmentedControl, as it is drawn on iOS and in every Apple web property
+ * that needs a small set of exclusive choices. A recessed grey track with a
+ * white thumb that has a real shadow: the selected item reads as raised out of
+ * the track. This replaces three text buttons with a 2px underline under the
+ * active one, which is a web-2010 tab bar and the single most un-Apple thing in
+ * the header.
+ *
+ * The greys are Apple's own systemFill values, expressed the way they are in
+ * UIKit: a neutral #787880 at low alpha rather than an opaque grey, so the
+ * track darkens whatever is behind it instead of covering it. */
+.ic-segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.1);
+}
+.ic-segmented-item {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease-apple-out),
+    box-shadow var(--dur-fast) var(--ease-apple-out),
+    color var(--dur-fast) var(--ease-apple-out);
+}
+.ic-segmented-item:hover:not(.is-on) {
+  background: rgba(255, 255, 255, 0.08);
+}
+.ic-segmented-item:active {
+  transform: scale(0.98);
+}
+.ic-segmented-item.is-on {
+  /* In dark mode UIKit raises the thumb with a lighter fill, not a white one.
+   * A white thumb here would be the brightest object on the page and would
+   * pull the eye clean off the content. */
+  background: rgba(255, 255, 255, 0.2);
+  font-weight: 600;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.28),
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.2);
+}
+
+/* Apple's control fill. Every field, chip and quiet button on icloud.com is
+ * this: a translucent neutral wash with no outline at all. The outlined pill
+ * -- white fill, 1px grey border -- is the Airbnb idiom, and it is what kept
+ * this header looking like Airbnb no matter how the type was tuned. */
+.ic-fill {
+  background: var(--fill);
+  transition:
+    background-color var(--dur-fast) var(--ease-apple-out),
+    box-shadow var(--dur-fast) var(--ease-apple-out),
+    color var(--dur-fast) var(--ease-apple-out),
+    transform var(--dur-fast) var(--ease-apple-spring);
+}
+.ic-fill:hover {
+  background: var(--fill-hover);
 }
 
 /* A search-bar segment. The resting state is nothing at all; hover and focus
  * are washes of black, not a named grey, so they sit correctly on whatever the
  * bar's background turns out to be. */
 .ic-segment {
-  border-radius: 9999px;
+  border-radius: 12px;
   transition: background-color var(--dur-fast) var(--ease-apple-out);
 }
 .ic-segment:hover {
-  background-color: rgba(0, 0, 0, 0.035);
+  background-color: rgba(255, 255, 255, 0.07);
 }
 .ic-segment.is-active {
-  background-color: rgba(0, 0, 0, 0.055);
+  background-color: rgba(255, 255, 255, 0.16);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3),
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.18);
+}
+
+/* The bar the segments sit in. Apple's search fields are recessed -- a grey
+ * well in the page -- not white capsules floating above it on a drop shadow.
+ * The corner is a 16px squircle-ish radius, not a full capsule: Apple only
+ * goes fully round on a control with one short word in it. */
+.ic-searchfield {
+  border-radius: 16px;
+  /* Recessed on a dark ground means *darker* than the surround, with a
+   * half-pixel of light along the top lip -- the well is cut into the glass,
+   * so the edge nearest the light catches it. */
+  background: rgba(0, 0, 0, 0.22);
+  box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.1),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.06);
+  transition: background-color var(--dur-base) var(--ease-apple-out);
+}
+.ic-searchfield:focus-within {
+  background: rgba(0, 0, 0, 0.3);
 }
 
 /* A filter pill. Off: hairline ring, no fill. On: solid ink. Apple never puts
@@ -129,8 +244,7 @@
   font-weight: 500;
   letter-spacing: -0.01em;
   color: var(--ink);
-  background: rgba(255, 255, 255, 0.8);
-  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.14);
+  background: var(--fill);
   transition:
     background-color var(--dur-fast) var(--ease-apple-out),
     box-shadow var(--dur-fast) var(--ease-apple-out),
@@ -138,19 +252,19 @@
     transform var(--dur-fast) var(--ease-apple-spring);
 }
 .ic-chip:hover {
-  background: #ffffff;
-  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.26), var(--shadow-rest);
+  background: var(--fill-hover);
 }
 .ic-chip:active {
   transform: scale(0.96);
 }
+/* Selected is the accent, not black. Apple marks a chosen filter by tinting it;
+ * a black pill is a different vocabulary and it is Airbnb's. */
 .ic-chip.is-on {
   color: #ffffff;
-  background: var(--ink);
-  box-shadow: 0 0 0 0.5px var(--ink), var(--shadow-rest);
+  background: var(--tint);
 }
 .ic-chip.is-on:hover {
-  background: #000000;
+  background: #3b9bff;
 }
 
 /* A popover surface: no border, a deep soft shadow plus the hairline ring.
@@ -161,15 +275,16 @@
  * it crisp and unblurred -- a menu you have to read past. 0.98 keeps the faint
  * translucency Apple's menus have without ever costing legibility. */
 .ic-popover {
-  background: rgba(255, 255, 255, 0.98);
-  -webkit-backdrop-filter: saturate(180%) blur(24px);
-  backdrop-filter: saturate(180%) blur(24px);
+  background: rgba(24, 30, 52, 0.9);
+  -webkit-backdrop-filter: saturate(180%) blur(30px);
+  backdrop-filter: saturate(180%) blur(30px);
   border-radius: 20px;
-  box-shadow: var(--shadow-pop), var(--hairline);
+  color: var(--ink);
+  box-shadow: var(--shadow-pop), var(--tile-edge);
 }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .ic-popover {
-    background: #ffffff;
+    background: #161c33;
   }
 }
 
@@ -212,7 +327,21 @@
     -moz-osx-font-smoothing: grayscale;
     letter-spacing: -0.01em;
     color: var(--ink);
-    background-color: #ffffff;
+    /* The canvas. Four stacked radial gradients over a diagonal base rather
+       than a photograph: it fits any viewport, weighs nothing, and the soft
+       diagonal bands read the same as the wallpaper iCloud ships.
+
+       `fixed` so it stays put while the list scrolls. A gradient that scrolls
+       with the content reads as a very tall coloured box; one that stays put
+       reads as the space the tiles are floating in, which is the whole point
+       of it. */
+    background-color: #0a2e8f;
+    background-image:
+      radial-gradient(120% 90% at 10% 4%, #2f7ef0 0%, rgba(47, 126, 240, 0) 52%),
+      radial-gradient(90% 110% at 92% 16%, #0b47bd 0%, rgba(11, 71, 189, 0) 58%),
+      radial-gradient(130% 110% at 60% 108%, #041646 0%, rgba(4, 22, 70, 0) 68%),
+      linear-gradient(152deg, #1052d6 0%, #0a2e8f 46%, #061a52 100%);
+    background-attachment: fixed;
     margin: 0;
     padding: 0;
   }
@@ -335,11 +464,11 @@
   background: transparent;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.16);
+  background: rgba(255, 255, 255, 0.22);
   border-radius: 9999px;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.3);
+  background: rgba(255, 255, 255, 0.38);
 }
 
 /* Clean custom Leaflet popup styling */

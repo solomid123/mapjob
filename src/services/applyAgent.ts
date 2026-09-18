@@ -1,4 +1,4 @@
-const BACKEND_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
+const BACKEND_URL = import.meta.env.VITE_API_BASE_URL || (typeof window !== 'undefined' ? `http://${window.location.hostname || 'localhost'}:8000` : 'http://localhost:8000');
 
 export interface EmailStatus {
   receipt_email_configured: boolean;

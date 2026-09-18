@@ -32,6 +32,7 @@ import math
 import re
 import threading
 import time
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -59,6 +60,17 @@ CITY_COUNTRY = {
     "it": ("rome", "roma", "milan", "milano", "turin", "torino", "naples", "italy"),
     "gb": ("london", "manchester", "birmingham", "edinburgh", "glasgow", "bristol",
            "leeds", "uk", "united kingdom", "england", "scotland"),
+    # Belgium was missing entirely, so "Brussels" matched no market here, fell
+    # through to the default fan-out, and asked France, Germany, the
+    # Netherlands, Spain, Italy and the UK for Brussels jobs. They answered with
+    # their own listings, the radius filter round Brussels then discarded every
+    # one, and the city returned a permanent, confident zero. The map-drag path
+    # never had this problem because it goes through COUNTRY_BOUNDS, which has
+    # always known about "be".
+    "be": ("brussels", "bruxelles", "brussel", "antwerp", "antwerpen", "anvers",
+           "ghent", "gent", "gand", "liege", "liège", "luik", "charleroi",
+           "bruges", "brugge", "leuven", "louvain", "namur", "mons", "hasselt",
+           "kortrijk", "aalst", "mechelen", "belgium", "belgique", "belgië"),
 }
 
 # Roughly where each market is, so a map viewport can be answered by the one or
@@ -202,6 +214,42 @@ def _countries_for(city: str) -> tuple:
     return COUNTRIES
 
 
+# What a market calls a city, where that differs from the English name this app
+# uses internally.
+#
+# Adzuna matches `where` against its own location index and aliases most English
+# names itself -- "cologne", "munich", "the hague", "milan", "rome", "naples",
+# "turin", "ghent" and "liege" all resolve fine. Three do not, and they fail
+# silently: a term the index does not know returns an empty result set, not an
+# error, so the city reads as "no jobs here" forever. Measured against the live
+# API, one page each:
+#
+#     brussels -> 0    brussel  -> 87
+#     seville  -> 0    sevilla  -> 50
+#     bruges   -> 0    brugge   -> 49
+#
+# Only entries proven by that measurement are listed. Guessing at more would
+# risk replacing a name that works with one that does not.
+MARKET_CITY_ALIAS = {
+    ("be", "brussels"): "brussel",
+    ("es", "seville"): "sevilla",
+    ("be", "bruges"): "brugge",
+}
+
+
+def _fold_accents(text: str) -> str:
+    """Drop combining marks: Adzuna's index stores "Ingenieur", never "Ingénieur"."""
+    return "".join(
+        ch for ch in unicodedata.normalize("NFD", text or "")
+        if unicodedata.category(ch) != "Mn"
+    )
+
+
+def _market_term(country: str, city: str) -> str:
+    """The name the given market indexes this city under."""
+    return MARKET_CITY_ALIAS.get((country.casefold(), city.casefold().strip()), city)
+
+
 def _fetch_page(
     country: str, page: int, keywords: str, city: str, distance_km: Optional[int] = None
 ) -> List[Dict[str, Any]]:
@@ -212,9 +260,25 @@ def _fetch_page(
         "content-type": "application/json",
     }
     if keywords:
-        params["what"] = keywords
+        # `what_or`, not `what`, and stripped of accents. Both matter, and both
+        # were returning confident zeroes for searches that have plenty of
+        # results. Measured against the Belgian market at Brussels, one page:
+        #
+        #     what=ingenieur              45     what=ingénieur            0
+        #     what=mecanique              18     what=mécanique            0
+        #     what=ingenieur mecanique     0     what_or=same             50
+        #
+        # Adzuna's index is unaccented, so "Ingénieur" matches nothing at all --
+        # and that is the exact string this app's own job-title suggestions
+        # offer. `what` is AND across every word, so a two-word role name only
+        # matches a posting carrying both, which in a bilingual market is often
+        # none of them. `what_or` asks for either and lets our own scorer -- it
+        # counts query tokens across title, company, description and category --
+        # put the postings that match both at the top. Broader and ranked beats
+        # precise and empty.
+        params["what_or"] = _fold_accents(keywords)
     if city and city.casefold() not in ("all", "any", "europe", "eu"):
-        params["where"] = city
+        params["where"] = _market_term(country, city)
         # Only meaningful alongside a place. Adzuna's own default is 5km, which
         # is smaller than most of the cities this app shows.
         if distance_km:
@@ -526,8 +590,12 @@ def fetch_adzuna_feed(
     if pages is None:
         pages = max(MIN_PAGES, PAGE_BUDGET // max(1, len(countries)))
 
+    # Folded, because the request this key stands for is folded: "Ingénieur" and
+    # "Ingenieur" now send byte-identical queries, so giving them separate cache
+    # entries would just fetch the same thing twice and let one spelling go
+    # stale independently of the other.
     key = "%s|%s|%s|%s|%s" % (
-        keywords.casefold().strip(),
+        _fold_accents(keywords.casefold().strip()),
         city.casefold().strip(),
         ",".join(countries),
         pages,

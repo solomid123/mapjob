@@ -7,6 +7,7 @@ Focused primarily on: France, Germany, Netherlands, Belgium, and Luxembourg (Mec
 """
 
 import re
+import unicodedata
 import time
 import logging
 import math
@@ -377,6 +378,16 @@ CACHE_TTL = 300  # 5 minutes
 _REFRESH_LOCK = threading.Lock()
 _REFRESHING = False
 NEARBY_RADIUS_KM = 50  # Consistent city-search radius, independent of result count.
+
+
+def _fold_accents(text: str) -> str:
+    """Strip combining marks so "Mécanique" and "Mecanique" compare equal."""
+    return "".join(
+        ch for ch in unicodedata.normalize("NFD", text or "")
+        if unicodedata.category(ch) != "Mn"
+    )
+
+
 COUNTRY_ALIASES = {
     "FR": ("fr", "france"),
     "NL": ("nl", "netherlands", "holland", "nederland"),
@@ -1584,12 +1595,19 @@ def fetch_all_direct_ats_jobs(
             filtered = [job for _, _, job in nearby]
 
     if keywords:
-        kw_tokens = keywords.casefold().split()
+        # Folded on both sides. A job scoring no tokens is dropped outright, so
+        # comparing "mécanique" against a listing that spells it "mecanique"
+        # scored zero on every field and threw the whole result set away --
+        # "Ingénieur Mécanique" in Brussels returned nothing while the plain
+        # city returned 254. The app's own title suggestions are accented, so
+        # this was reachable from the UI in one click.
+        kw_tokens = _fold_accents(keywords.casefold()).split()
         if kw_tokens:
             ranked = []
             for job in filtered:
                 score = tuple(
-                    sum(token in (job.get(field) or "").casefold() for token in kw_tokens)
+                    sum(token in _fold_accents((job.get(field) or "").casefold())
+                        for token in kw_tokens)
                     for field in ("title", "company", "description", "category")
                 )
                 if any(score):

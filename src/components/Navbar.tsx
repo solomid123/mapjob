@@ -254,19 +254,13 @@ export const Navbar: React.FC<NavbarProps> = ({
         * the ribbon, with its own shadow and its own hover lift. */}
       {activeTopTab === 'jobs' && !hideSearch && (
         <div className="px-4 sm:px-6 lg:px-8 pt-2.5 select-none">
-          {/* This row is measured to the main grid below it, not to itself:
-            * max-w-[1696px] is the 1760px content width minus its lg padding,
-            * so the left edge here lands exactly on the left edge of the
-            * listings column. That is the whole point of the row -- the result
-            * count sits out there, level with the search field, which lets the
-            * column start at the same height as the map instead of a heading's
-            * worth lower. */}
+          {/* Measured to the content width below, so anything parked in the
+            * gap beside the centred field lines up with it. The result count
+            * used to live in that gap, to pull the listings column level with
+            * the map; the map is the canvas now and the count sits in the
+            * results island, so the slot is normally empty and the field reads
+            * as what it is -- one pill, centred on the page. */}
           <div className="relative mx-auto max-w-[1696px] hidden md:block">
-            {/* Only once there is room for it. The slot is the gap the centred
-              * search field leaves on its left: half the row, less half the
-              * field (448px), less a little air. Below 2xl that gap is too
-              * narrow to hold a number and a glyph without crowding the field,
-              * so the count stays at the top of the column instead. */}
             {resultsSummary && (
               <div className="hidden 2xl:flex absolute inset-y-0 left-0 w-[calc(50%-472px)] items-center">
                 {resultsSummary}

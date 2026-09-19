@@ -4,8 +4,11 @@ import {
   Map as MapIcon, 
   ListFilter, 
   MapPin, 
-  Check, 
-  Loader2 
+  Check,
+  Loader2,
+  ChevronsLeft,
+  ChevronsRight,
+  X,
 } from 'lucide-react';
 import { daysAgo, parsePostedRange } from './utils/postedRange';
 import { Navbar } from './components/Navbar';
@@ -775,6 +778,12 @@ export function App() {
   const [isStoppingApply, setIsStoppingApply] = useState(false);
   const [isPostJobOpen, setIsPostJobOpen] = useState(false);
   const [mobileView, setMobileView] = useState<'both' | 'map' | 'list'>('list');
+  /**
+   * How much of the map the results are allowed to cover. The map is the canvas
+   * now, so the list is a guest on it: `rows` is the reading width, `grid`
+   * widens to the two-up cards for browsing, `hidden` gives the map back.
+   */
+  const [listPane, setListPane] = useState<'rows' | 'grid' | 'hidden'>('rows');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   /**
@@ -1382,7 +1391,10 @@ export function App() {
    * column. Same markup either way, so the two cannot drift apart. */
   const resultsSummary = (
     <div className="min-w-0">
-      <div className="flex items-center gap-2.5">
+      {/* Wraps rather than squeezes. The count is the one thing on this line
+        * that has to stay readable, and on a phone "587 jobs" was losing its
+        * tail to make room for two pills. */}
+      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
         <h2 className="text-[22px] md:text-[26px] leading-tight font-semibold text-[#f5f5f7] tracking-[-0.028em] truncate">
            {isLoadingJobs && !jobs.length
              ? 'Searching jobs...'
@@ -1553,7 +1565,8 @@ export function App() {
           onOpenPostJob={() => setIsPostJobOpen(true)}
           activeTopTab={activeTopTab}
           setActiveTopTab={setActiveTopTab}
-          resultsSummary={searchBrief ? resultsSummary : null}
+          /* The results island carries its own count now. */
+          resultsSummary={null}
           hideSearch={activeTopTab === 'jobs' && !searchBrief}
         />
         </div>
@@ -1583,143 +1596,29 @@ export function App() {
       ) : (
         <>
 
-          {/* MAIN SPLIT LAYOUT (Matches English Airbnb: Cards on Left, Map on Right) */}
-          <main className="flex-1 max-w-[1760px] w-full mx-auto px-4 sm:px-6 lg:px-8 pt-2 pb-3 flex flex-col md:flex-row gap-6 xl:gap-8 overflow-hidden min-h-0 relative">
-            
-            {/* Left: Job Listings Column (Scrolls independently with slim custom scrollbar) */}
-            <div
-              /* px-3 -mx-3 is not decoration: `overflow-y: auto` forces
-                 `overflow-x: auto` too, so this box clips horizontally, and
-                 the cards sat flush against both of its edges -- which cut
-                 the side shadows off and left the cards looking lit only from
-                 below while the map, clipped by nothing, kept its shadow all
-                 the way round. The padding gives the shadow somewhere to fall
-                 and the negative margin gives the padding back to the layout. */
-              className={`flex-1 h-full overflow-y-auto custom-scrollbar px-3 -mx-3 pb-36 md:pb-16 ${
-                mobileView === 'map' ? 'hidden md:block' : 'block'
-              }`}
-            >
-          {/* Subheader, for the widths where it cannot sit beside the search
-            * field. Above 2xl the navbar is showing this same block up there,
-            * and the cards begin at the top of the column, level with the map. */}
-          <div className="2xl:hidden mb-4 md:mb-5 pt-1">
-            {resultsSummary}
-          </div>
+          {/* THE CANVAS.
+            * The map is no longer a panel beside the results; it is the page,
+            * and the results float on it. Two columns meant six vertical edges
+            * to reconcile -- listings, search field and map each aligned to a
+            * different one -- and a card whose cover was 61% of its height so
+            * that two jobs filled a screen. One surface has no edges to
+            * reconcile, and the list can lie down. */}
+          <main className="flex-1 min-h-0 w-full px-4 sm:px-6 lg:px-8 pt-2 pb-3 overflow-hidden">
+            <div className="relative h-full w-full max-w-[1760px] mx-auto">
 
-           {searchError && <p role="alert" className="mb-4 rounded-xl bg-rose-50 p-3 text-sm text-rose-800">{searchError}</p>}
-           {/* Keep existing cards usable while refreshing the feed. */}
-          {isLoadingJobs && jobs.length === 0 ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-8 animate-pulse">
-              {[1, 2, 3, 4, 5, 6].map((n) => (
-                <div key={n} className="flex flex-col">
-                  {/* Top pill placeholder */}
-                  <div className="h-3.5 w-28 bg-white/10 rounded-full mb-2.5" />
-                  {/* Photo placeholder matching media_1788486684713.png */}
-                  <div className="aspect-[20/19] w-full rounded-2xl bg-white/10 shadow-xs" />
-                  {/* Content line placeholders */}
-                  <div className="space-y-2 pt-3">
-                    <div className="h-4 bg-white/10 rounded-md w-3/4" />
-                    <div className="h-3.5 bg-white/[0.07] rounded-md w-1/2" />
-                    <div className="h-3 bg-white/[0.05] rounded-md w-1/3" />
-                    <div className="h-4 bg-white/10 rounded-md w-2/5 pt-1" />
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : filteredJobs.length > 0 ? (
-            <div className="space-y-8">
-               <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-6">
-                 {filteredJobs.slice(0, visibleCardCount).map((job) => (
-                  <JobCard
-                    key={job.id}
-                    job={job}
-                    isHovered={hoveredJobId === job.id}
-                    isSelected={false}
-                    isSaved={savedJobIds.has(job.id)}
-                    isApplied={appliedJobIds.has(job.id)}
-                    applyOutcome={applyOutcomes[job.id]}
-                    onHover={handleCardHover}
-                    onSelect={handleOpenJobPage}
-                    onToggleSave={handleToggleSave}
-                    onApply={handleFastApply}
-                    selectable={selectMode}
-                    isChecked={selectedIds.has(job.id)}
-                    onToggleCheck={toggleSelected}
-                  />
-                ))}
-              </div>
-
-              {/* Explore More Jobs In This Area Button */}
-              <div className="pt-4 pb-12 flex flex-col items-center justify-center gap-2 border-t border-white/10">
-                <button
-                  type="button"
-                  onClick={handleLoadMoreInArea}
-                  disabled={isLoadingMore || isLoadingJobs}
-                  className="px-8 py-3.5 rounded-full bg-white/10 text-[#f5f5f7] hover:bg-white/20 font-bold text-xs tracking-tight shadow-sm hover:shadow-md transition active:scale-95 flex items-center gap-2 select-none disabled:opacity-50 cursor-pointer"
-                >
-                  {isLoadingMore ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin text-rose-500" />
-                      <span>Fetching more jobs in this area...</span>
-                    </>
-                  ) : (
-                    <>
-                       <span>{visibleCardCount < filteredJobs.length ? 'Show more jobs' : 'Refresh this area'}</span>
-                    </>
-                  )}
-                </button>
-                <p className="text-[11px] text-[rgba(235,235,245,0.42)] font-medium">Showing {filteredJobs.length} active opportunities</p>
-              </div>
-            </div>
-          ) : (
-            /* Empty State */
-            <div className="py-20 text-center space-y-4 max-w-md mx-auto">
-              <div className="w-14 h-14 rounded-full bg-white/10 text-[rgba(235,235,245,0.42)] flex items-center justify-center mx-auto">
-                <MapPin className="w-7 h-7" />
-              </div>
-              <div>
-                <h3 className="text-[17px] font-semibold tracking-[-0.022em] text-[#f5f5f7]">
-                  No job offers match your current search
-                </h3>
-                <p className="text-xs text-[rgba(235,235,245,0.62)] mt-1">
-                  Try clearing your active filters or expanding the timeframe.
-                </p>
-              </div>
-              <button
-                onClick={handleResetFilters}
-                className="px-5 py-2.5 bg-[#0071e3] hover:bg-[#0077ed] text-white rounded-xl text-[13px] font-medium tracking-[-0.01em] transition-[background-color,transform] duration-200 ease-apple-spring active:scale-[0.97]"
+              {/*
+                `isolate` is load-bearing: Leaflet gives its internal panes
+                z-index 400-800, and without a stacking context here those
+                numbers compete at the document root and paint straight over
+                the navbar's search dropdowns (which live inside a z-40 sticky
+                header). It also keeps the map below the island, which is the
+                whole arrangement.
+              */}
+              <div
+                className={`absolute inset-0 rounded-[22px] overflow-hidden ic-panel isolate z-0 ${
+                  mobileView === 'list' ? 'hidden md:block' : 'block'
+                }`}
               >
-                Clear all filters
-              </button>
-            </div>
-          )}
-
-          {/* The iCloud footer band, at the only place on this view where
-            * scrolling ends. Pinning it to the window instead would cost every
-            * screen ~130px of map, permanently, to show something iCloud only
-            * ever shows you below the fold. */}
-          <FooterInfo
-            savedCount={savedJobIds.size}
-            appliedCount={appliedJobIds.size}
-            jobCount={filteredJobs.length}
-            locationLabel={searchAsMapMoves ? activeLocationLabel : currentCity.name}
-            onShowSaved={() => setShowSavedOnly(true)}
-          />
-        </div>
-
-        {/* Right: Framed Interactive Map Container (Permanent Fixed Full-Height) */}
-        <div
-          className={`w-full md:w-[48%] xl:w-[46%] h-full pb-2 shrink-0 ${
-            mobileView === 'list' ? 'hidden md:block' : 'block'
-          }`}
-        >
-          {/*
-            `isolate` is load-bearing: Leaflet gives its internal panes z-index
-            400-800, and without a stacking context here those numbers compete
-            at the document root and paint straight over the navbar's search
-            dropdowns (which live inside a z-40 sticky header).
-          */}
-          <div className="w-full h-full rounded-[22px] overflow-hidden ic-panel relative isolate z-0">
             <JobMap
               jobs={filteredJobs}
               selectedCity={selectedCity}
@@ -1739,10 +1638,206 @@ export function App() {
               savedJobIds={savedJobIds}
               onToggleSave={handleToggleSave}
             />
-          </div>
-        </div>
+              </div>
 
-      </main>
+              {/* THE ISLAND.
+                * Absolutely placed rather than floated in a flex row: the map
+                * must run underneath it, edge to edge, or the canvas is just a
+                * column again. Width is the only thing that animates. */}
+              {listPane !== 'hidden' && (
+                <div
+                  className={`absolute inset-y-0 left-0 z-10 p-3 max-w-full flex transition-[width] duration-300 ease-apple-spring ${
+                    mobileView === 'map' ? 'hidden md:flex' : 'flex'
+                  } ${
+                    listPane === 'grid'
+                      ? 'w-full md:w-[64%] xl:w-[58%]'
+                      : 'w-full md:w-[440px] xl:w-[476px]'
+                  }`}
+                >
+                  <div className="ic-panel w-full flex flex-col min-h-0 rounded-[20px] overflow-hidden bg-[rgba(16,18,22,0.72)] backdrop-blur-2xl">
+
+                    {/* The island's own header, welded above the scroll so the
+                      * count and the way out never scroll away. */}
+                    <div className="shrink-0 flex items-start justify-between gap-2 px-3.5 pt-3 pb-2.5 border-b border-white/[0.09]">
+                      {/* The count lives here at every width now. It was put
+                        * beside the search field to line the listings column up
+                        * with the map; there is no column left to line up, and
+                        * up there it read as a caption for the whole page
+                        * rather than for this list. */}
+                      <div className="min-w-0">{resultsSummary}</div>
+                      {/* Desktop only: on a phone the island is the screen, and
+                        * the floating Map/List pill already does this job. */}
+                      <div className="shrink-0 hidden md:flex items-center gap-1 pt-0.5">
+                        <button
+                          type="button"
+                          onClick={() => setListPane(listPane === 'grid' ? 'rows' : 'grid')}
+                          className="p-1.5 rounded-full text-[rgba(235,235,245,0.62)] hover:text-[#f5f5f7] hover:bg-white/[0.08] transition-colors duration-200 cursor-pointer"
+                          title={listPane === 'grid' ? 'Narrow the list, widen the map' : 'Widen the list to cards'}
+                        >
+                          {listPane === 'grid'
+                            ? <ChevronsLeft className="w-4 h-4 stroke-[2.2]" />
+                            : <ChevronsRight className="w-4 h-4 stroke-[2.2]" />}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setListPane('hidden')}
+                          className="p-1.5 rounded-full text-[rgba(235,235,245,0.62)] hover:text-[#f5f5f7] hover:bg-white/[0.08] transition-colors duration-200 cursor-pointer"
+                          title="Hide the list and show the whole map"
+                        >
+                          <X className="w-4 h-4 stroke-[2.2]" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* px-3 -mx-3 is not decoration: `overflow-y: auto` forces
+                      * `overflow-x: auto` too, so this box clips horizontally,
+                      * and the cards sat flush against both of its edges --
+                      * which cut the side shadows off. The padding gives the
+                      * shadow somewhere to fall. */}
+                    <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-3.5 pt-3 pb-28 md:pb-4">
+                       {searchError && <p role="alert" className="mb-4 rounded-xl bg-rose-50 p-3 text-sm text-rose-800">{searchError}</p>}
+                       {/* Keep existing cards usable while refreshing the feed. */}
+                      {isLoadingJobs && jobs.length === 0 ? (
+                        listPane === 'grid' ? (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-8 animate-pulse">
+                          {[1, 2, 3, 4, 5, 6].map((n) => (
+                            <div key={n} className="flex flex-col">
+                              {/* Top pill placeholder */}
+                              <div className="h-3.5 w-28 bg-white/10 rounded-full mb-2.5" />
+                              {/* Photo placeholder matching media_1788486684713.png */}
+                              <div className="aspect-[20/19] w-full rounded-2xl bg-white/10 shadow-xs" />
+                              {/* Content line placeholders */}
+                              <div className="space-y-2 pt-3">
+                                <div className="h-4 bg-white/10 rounded-md w-3/4" />
+                                <div className="h-3.5 bg-white/[0.07] rounded-md w-1/2" />
+                                <div className="h-3 bg-white/[0.05] rounded-md w-1/3" />
+                                <div className="h-4 bg-white/10 rounded-md w-2/5 pt-1" />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        ) : (
+                        /* The same skeleton lying down, so the wait has the shape of what
+                           is coming rather than of the layout that was replaced. */
+                        <div className="flex flex-col gap-2.5 animate-pulse">
+                          {[1, 2, 3, 4, 5, 6].map((n) => (
+                            <div key={n} className="flex gap-3 p-2.5 rounded-2xl bg-white/[0.04]">
+                              <div className="w-[104px] h-[104px] shrink-0 rounded-[13px] bg-white/10" />
+                              <div className="flex-1 min-w-0 space-y-2 py-1">
+                                <div className="h-4 bg-white/10 rounded-md w-3/4" />
+                                <div className="h-3.5 bg-white/[0.07] rounded-md w-1/2" />
+                                <div className="h-3 bg-white/[0.05] rounded-md w-1/3" />
+                                <div className="h-4 bg-white/10 rounded-md w-2/5" />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        )
+                      ) : filteredJobs.length > 0 ? (
+                        <div className="space-y-8">
+                           <div className={listPane === 'grid'
+                             ? 'grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-6'
+                             : 'flex flex-col gap-2.5'}>
+                             {filteredJobs.slice(0, visibleCardCount).map((job) => (
+                              <JobCard
+                                key={job.id}
+                                layout={listPane === 'grid' ? 'tile' : 'row'}
+                                job={job}
+                                isHovered={hoveredJobId === job.id}
+                                isSelected={false}
+                                isSaved={savedJobIds.has(job.id)}
+                                isApplied={appliedJobIds.has(job.id)}
+                                applyOutcome={applyOutcomes[job.id]}
+                                onHover={handleCardHover}
+                                onSelect={handleOpenJobPage}
+                                onToggleSave={handleToggleSave}
+                                onApply={handleFastApply}
+                                selectable={selectMode}
+                                isChecked={selectedIds.has(job.id)}
+                                onToggleCheck={toggleSelected}
+                              />
+                            ))}
+                          </div>
+
+                          {/* Explore More Jobs In This Area Button */}
+                          <div className="pt-4 pb-12 flex flex-col items-center justify-center gap-2 border-t border-white/10">
+                            <button
+                              type="button"
+                              onClick={handleLoadMoreInArea}
+                              disabled={isLoadingMore || isLoadingJobs}
+                              className="px-8 py-3.5 rounded-full bg-white/10 text-[#f5f5f7] hover:bg-white/20 font-bold text-xs tracking-tight shadow-sm hover:shadow-md transition active:scale-95 flex items-center gap-2 select-none disabled:opacity-50 cursor-pointer"
+                            >
+                              {isLoadingMore ? (
+                                <>
+                                  <Loader2 className="w-4 h-4 animate-spin text-rose-500" />
+                                  <span>Fetching more jobs in this area...</span>
+                                </>
+                              ) : (
+                                <>
+                                   <span>{visibleCardCount < filteredJobs.length ? 'Show more jobs' : 'Refresh this area'}</span>
+                                </>
+                              )}
+                            </button>
+                            <p className="text-[11px] text-[rgba(235,235,245,0.42)] font-medium">Showing {filteredJobs.length} active opportunities</p>
+                          </div>
+                        </div>
+                      ) : (
+                        /* Empty State */
+                        <div className="py-20 text-center space-y-4 max-w-md mx-auto">
+                          <div className="w-14 h-14 rounded-full bg-white/10 text-[rgba(235,235,245,0.42)] flex items-center justify-center mx-auto">
+                            <MapPin className="w-7 h-7" />
+                          </div>
+                          <div>
+                            <h3 className="text-[17px] font-semibold tracking-[-0.022em] text-[#f5f5f7]">
+                              No job offers match your current search
+                            </h3>
+                            <p className="text-xs text-[rgba(235,235,245,0.62)] mt-1">
+                              Try clearing your active filters or expanding the timeframe.
+                            </p>
+                          </div>
+                          <button
+                            onClick={handleResetFilters}
+                            className="px-5 py-2.5 bg-[#0071e3] hover:bg-[#0077ed] text-white rounded-xl text-[13px] font-medium tracking-[-0.01em] transition-[background-color,transform] duration-200 ease-apple-spring active:scale-[0.97]"
+                          >
+                            Clear all filters
+                          </button>
+                        </div>
+                      )}
+
+                      {/* The iCloud footer band, at the only place on this view where
+                        * scrolling ends. Pinning it to the window instead would cost every
+                        * screen ~130px of map, permanently, to show something iCloud only
+                        * ever shows you below the fold. */}
+                      <FooterInfo
+                        savedCount={savedJobIds.size}
+                        appliedCount={appliedJobIds.size}
+                        jobCount={filteredJobs.length}
+                        locationLabel={searchAsMapMoves ? activeLocationLabel : currentCity.name}
+                        onShowSaved={() => setShowSavedOnly(true)}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* What is left of the island when it is put away. */}
+              {listPane === 'hidden' && (
+                <button
+                  type="button"
+                  onClick={() => setListPane('rows')}
+                  className="absolute top-3 left-3 z-10 px-4 py-2.5 rounded-full ic-panel bg-[rgba(16,18,22,0.78)] backdrop-blur-2xl text-[13px] font-semibold tracking-[-0.01em] text-[#f5f5f7] hover:bg-[rgba(28,30,36,0.86)] transition-colors duration-200 cursor-pointer flex items-center gap-2"
+                >
+                  <ListFilter className="w-4 h-4 stroke-[2.2]" />
+                  <span>
+                    {isLoadingJobs && !jobs.length
+                      ? 'Searching jobs...'
+                      : `${filteredJobs.length} ${filteredJobs.length === 1 ? 'job' : 'jobs'}`}
+                  </span>
+                </button>
+              )}
+
+            </div>
+          </main>
 
       {/* Floating Toggle for Mobile Screens (Map vs List) - Airbnb floating pill */}
       {activeBottomTab === 'explore' && (

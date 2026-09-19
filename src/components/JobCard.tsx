@@ -19,6 +19,16 @@ interface JobCardProps {
   selectable?: boolean;
   isChecked?: boolean;
   onToggleCheck?: (id: string) => void;
+  /**
+   * `tile` is the two-up card. `row` is the same card laid on its side for the
+   * narrow results island, where the tile's cover was 61% of its height and
+   * only two jobs fitted on a screen.
+   *
+   * `row` applies from `md` up only. On a phone the island is the whole screen
+   * and a 104px band beside the text leaves about 200px for a job title, so
+   * below that width a row goes back to being a tile.
+   */
+  layout?: 'tile' | 'row';
 }
 
 /**
@@ -48,7 +58,7 @@ const brandHue = (name: string): number => {
  * name and nothing else, and inventing a photo of an unrelated workplace was
  * both dishonest and the reason every card looked identical.
  */
-const CompanyCover: React.FC<{ job: Job }> = ({ job }) => {
+const CompanyCover: React.FC<{ job: Job; compact?: boolean }> = ({ job, compact = false }) => {
   const hue = brandHue(job.company || job.title || '');
   const initials = (job.company || '?')
     .split(/\s+/)
@@ -65,12 +75,26 @@ const CompanyCover: React.FC<{ job: Job }> = ({ job }) => {
       }}
     >
       <div className="absolute inset-0 bg-[radial-gradient(#fff_1px,transparent_1px)] [background-size:16px_16px] opacity-15 pointer-events-none" />
-      <div className="w-14 h-14 rounded-2xl bg-white/95 backdrop-blur-md shadow-md flex items-center justify-center z-10">
-        <span className="text-lg font-black tracking-tight" style={{ color: `hsl(${hue} 65% 34%)` }}>
+      <div
+        className={`rounded-2xl bg-white/95 backdrop-blur-md shadow-md flex items-center justify-center z-10 ${
+          compact ? 'w-14 h-14 md:w-11 md:h-11' : 'w-14 h-14'
+        }`}
+      >
+        <span
+          className={`font-black tracking-tight ${compact ? 'text-lg md:text-[15px]' : 'text-lg'}`}
+          style={{ color: `hsl(${hue} 65% 34%)` }}
+        >
           {initials}
         </span>
       </div>
-      <span className="px-5 text-center text-white text-xs font-bold tracking-tight drop-shadow-sm line-clamp-1 z-10">
+      {/* The name is already the first line of the row card's text; repeating it
+        * on a 104px band would only be a truncated echo of it. Below md the row
+        * is a tile again, and the band is wide enough to carry it. */}
+      <span
+        className={`px-5 text-center text-white text-xs font-bold tracking-tight drop-shadow-sm line-clamp-1 z-10 ${
+          compact ? 'md:hidden' : ''
+        }`}
+      >
         {job.company}
       </span>
     </div>
@@ -91,8 +115,10 @@ export const JobCard: React.FC<JobCardProps> = ({
   selectable = false,
   isChecked = false,
   onToggleCheck,
+  layout = 'tile',
 }) => {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  const row = layout === 'row';
 
   const handlePrevImage = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -122,16 +148,22 @@ export const JobCard: React.FC<JobCardProps> = ({
           else onSelect(job);
         }
       }}
-      className={`group ic-tile flex flex-col cursor-pointer select-none p-2.5 ${
-        isSelected ? 'is-selected' : ''
-      } ${isHovered ? 'is-hovered' : ''} ${
+      className={`group ic-tile flex cursor-pointer select-none p-2.5 ${
+        row ? 'flex-col md:flex-row md:items-stretch md:gap-3' : 'flex-col'
+      } ${isSelected ? 'is-selected' : ''} ${isHovered ? 'is-hovered' : ''} ${
         selectable && isChecked ? 'ring-2 ring-[#0a84ff] ring-offset-0' : ''
       } ${selectable && !isChecked ? 'opacity-[0.72]' : ''}`}
     >
       {/* The cover. The card is the surface now, so this sits inside it with a
         * smaller radius -- concentric, the way an iOS icon sits in its tile --
         * rather than being the outer edge itself. */}
-      <div className="relative aspect-[16/11] sm:aspect-[20/19] w-full rounded-[13px] overflow-hidden bg-white/5 mb-3">
+      <div
+        className={`relative rounded-[13px] overflow-hidden bg-white/5 ${
+          row
+            ? 'aspect-[16/11] w-full mb-3 md:aspect-auto md:w-[104px] md:shrink-0 md:self-stretch md:min-h-[104px] md:mb-0'
+            : 'aspect-[16/11] sm:aspect-[20/19] w-full mb-3'
+        }`}
+      >
         {job.images.length > 0 ? (
           <img
             src={job.images[currentImageIndex] || job.images[0]}
@@ -140,11 +172,17 @@ export const JobCard: React.FC<JobCardProps> = ({
             loading="lazy"
           />
         ) : (
-          <CompanyCover job={job} />
+          <CompanyCover job={job} compact={row} />
         )}
 
-        {/* Top Badges */}
-        <div className="absolute top-3 left-3 right-3 flex items-start justify-between pointer-events-none z-10">
+        {/* Top Badges. On a row the heart moves to the text column -- there is
+          * no room for it beside a checkbox on a 104px band -- and "Top Match"
+          * becomes a chip in the detail line. */}
+        <div
+          className={`absolute flex items-start justify-between pointer-events-none z-10 ${
+            row ? 'top-3 left-3 right-3 md:top-1.5 md:left-1.5 md:right-1.5' : 'top-3 left-3 right-3'
+          }`}
+        >
           {selectable ? (
             // Shown rather than described: in pick-several mode the whole card
             // is the hit area, and this is the only thing that says which way
@@ -159,17 +197,24 @@ export const JobCard: React.FC<JobCardProps> = ({
               {isChecked && <Check className="w-3.5 h-3.5 text-white stroke-[3]" />}
             </span>
           ) : job.postedDaysAgo !== undefined && job.postedDaysAgo <= 3 ? (
-            <span className="px-2.5 py-1 rounded-full bg-white/95 text-neutral-900 text-[11px] font-bold shadow-xs tracking-tight flex items-center gap-1.5">
+            <span
+              className={`px-2.5 py-1 rounded-full bg-white/95 text-neutral-900 text-[11px] font-bold shadow-xs tracking-tight flex items-center gap-1.5 ${
+                row ? 'md:hidden' : ''
+              }`}
+            >
               <span className="w-1.5 h-1.5 rounded-full bg-[#FF385C]" />
               <span>Top Match</span>
             </span>
           ) : <div />}
 
-          {/* Favorite Heart Button */}
+          {/* Favorite Heart Button. On a row it is repeated in the text
+            * column, where there is room for it beside the rating. */}
           <button
             type="button"
             onClick={handleToggleHeart}
-            className="pointer-events-auto p-1.5 transition-transform active:scale-90 hover:scale-110"
+            className={`pointer-events-auto p-1.5 transition-transform active:scale-90 hover:scale-110 ${
+              row ? 'md:hidden' : ''
+            }`}
             title={isSaved ? 'Remove from saved' : 'Save this job'}
           >
             <Heart
@@ -183,7 +228,7 @@ export const JobCard: React.FC<JobCardProps> = ({
         </div>
 
         {/* Image Navigation Arrows (Visible on hover like Airbnb) */}
-        {job.images.length > 1 && (
+        {!row && job.images.length > 1 && (
           <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200">
             <button
               type="button"
@@ -223,7 +268,11 @@ export const JobCard: React.FC<JobCardProps> = ({
         * Weight 600 rather than 700-800: SF at semibold is as emphatic as Inter
         * at bold, and the wall of extrabold was most of what made the list feel
         * loud next to iCloud's. */}
-      <div className="flex flex-col space-y-[3px] px-1 pb-1">
+      <div
+        className={`flex flex-col space-y-[3px] ${
+          row ? 'px-1 pb-1 md:flex-1 md:min-w-0 md:justify-center md:px-0 md:pr-0.5 md:py-0.5 md:pb-0' : 'px-1 pb-1'
+        }`}
+      >
 
         {/* Line 1: Company • Location & Rating */}
         <div className="flex items-center justify-between gap-2">
@@ -235,6 +284,22 @@ export const JobCard: React.FC<JobCardProps> = ({
             <span className="ic-body text-[13px] font-semibold text-[#f5f5f7]">
               {(4.82 + ((brandHue(job.company || '') % 16) / 100)).toFixed(2)}
             </span>
+            {row && (
+              <button
+                type="button"
+                onClick={handleToggleHeart}
+                className="hidden md:block ml-0.5 p-0.5 transition-transform active:scale-90 hover:scale-110"
+                title={isSaved ? 'Remove from saved' : 'Save this job'}
+              >
+                <Heart
+                  className={`w-[17px] h-[17px] transition ${
+                    isSaved
+                      ? 'fill-[#FF385C] text-[#FF385C]'
+                      : 'fill-transparent stroke-[rgba(235,235,245,0.62)] stroke-[2] hover:stroke-[#f5f5f7]'
+                  }`}
+                />
+              </button>
+            )}
           </div>
         </div>
 
@@ -244,8 +309,14 @@ export const JobCard: React.FC<JobCardProps> = ({
         </h3>
 
         {/* Line 3: Format & Time */}
-        <p className="ic-body text-[13px] text-[rgba(235,235,245,0.42)] truncate">
-          {job.jobType} · {job.remoteType} · {job.postedAt}
+        <p className="ic-body text-[13px] text-[rgba(235,235,245,0.42)] truncate flex items-center gap-1.5">
+          {row && job.postedDaysAgo !== undefined && job.postedDaysAgo <= 3 && (
+            <span className="shrink-0 hidden md:inline-flex items-center gap-1 px-1.5 py-[1px] rounded-full bg-white/[0.12] text-[10.5px] font-semibold text-[#f5f5f7]">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#FF385C]" />
+              Top Match
+            </span>
+          )}
+          <span className="truncate">{job.jobType} · {job.remoteType} · {job.postedAt}</span>
         </p>
 
         {/* Line 4: Salary */}
@@ -262,7 +333,11 @@ export const JobCard: React.FC<JobCardProps> = ({
 
         {/* Line 5: ATS platform badge & 1-Click Auto Apply button (Desktop only).
           * Separated by a hairline rule, not a 1px grey border. */}
-        <div className="hidden sm:flex pt-2.5 items-center justify-between gap-1.5 mt-1 border-t border-white/[0.09]">
+        <div
+          className={`items-center justify-between gap-1.5 border-t border-white/[0.09] ${
+            row ? 'hidden sm:flex pt-2.5 mt-1 md:pt-1.5' : 'hidden sm:flex pt-2.5 mt-1'
+          }`}
+        >
           <div className="flex items-center gap-1.5 min-w-0">
             <span className={`inline-flex items-center gap-1 min-w-0 px-2 py-0.5 rounded-full text-[10.5px] font-semibold tracking-tight border ${
               job.atsProvider === 'Greenhouse' ? 'bg-emerald-400/15 text-emerald-200 border-emerald-300/25' :

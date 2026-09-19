@@ -14,15 +14,16 @@ import queue
 import threading
 import time
 from datetime import datetime, timezone
-import shutil
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from services.automation import arbeitsagentur as agentur
+from services.automation import campaign as sender
 from services.automation import contact_pipeline as contacts
+from services.automation import gmail_send
 from services.automation import lead_discovery as discovery
 from services.automation import outreach_store as store
 from services.automation import site_harvest as harvester
@@ -34,6 +35,36 @@ router = APIRouter(prefix="/api/outreach", tags=["outreach"])
 def _has(*names: str) -> bool:
     """True when any of these is set to something non-empty in the environment."""
     return any((os.getenv(name) or "").strip() for name in names)
+
+
+def _pdf_ready() -> bool:
+    try:
+        import pypdf  # noqa: F401
+        import reportlab  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+# The Gmail check costs a round trip to Google, and the overview is polled.
+# Cached for a minute: long enough that a dashboard refresh is free, short
+# enough that reconnecting the mailbox shows up while the user is still
+# looking at the screen.
+_gmail_cache: Dict[str, Any] = {"at": 0.0, "value": None}
+GMAIL_CHECK_SECONDS = 60
+
+
+def _gmail_state(force: bool = False) -> Dict[str, Any]:
+    now = time.time()
+    if (not force and _gmail_cache["value"] is not None
+            and now - float(_gmail_cache["at"]) < GMAIL_CHECK_SECONDS):
+        return dict(_gmail_cache["value"])
+    try:
+        value = gmail_send.check()
+    except Exception as exc:  # noqa: BLE001 - the dashboard must still render
+        value = {"ok": False, "how": "", "address": "", "reason": str(exc)[:160]}
+    _gmail_cache.update({"at": now, "value": value})
+    return dict(value)
 
 
 def capabilities() -> Dict[str, Any]:
@@ -69,20 +100,25 @@ def capabilities() -> Dict[str, Any]:
             "detail": "Writes the cover letter for each prospect.",
         },
         "dossier": {
-            "ready": bool(shutil.which("xelatex") or shutil.which("pdflatex")),
-            "env": "xelatex on PATH",
+            "ready": _pdf_ready(),
+            "env": "reportlab + pypdf",
             "label": "PDF dossier",
-            "detail": "Typesets the letter and merges the application PDF.",
+            "detail": "Typesets the letter and merges it with the CV.",
         },
         "gmail": {
-            "ready": _has("GOOGLE_OAUTH_REFRESH_TOKEN"),
+            # Asked of Google, not of the filesystem. Three variables existing
+            # in `.env` is what a revoked token looks like too, and a dashboard
+            # that says "Connected" because a file has three lines in it is
+            # telling the user something it has not checked.
+            "ready": bool(_gmail_state()["ok"]),
             "env": "GOOGLE_OAUTH_REFRESH_TOKEN",
             "label": "Gmail (OAuth2)",
             # A refresh token is not a key you can copy out of a console: it is
             # what the first consent returns. So this row points at the script
             # that performs that consent rather than at a field to paste into.
-            "detail": "Sends as you, from your own account. "
-                      "Run scripts/gmail_oauth_setup.py once to grant it.",
+            "detail": str(_gmail_state()["reason"] or
+                          "Sends as you, from your own account. "
+                          "Run scripts/gmail_oauth_setup.py once to grant it."),
         },
         "smtp": {
             "ready": _has("GMAIL_APP_PASSWORD", "SMTP_PASSWORD"),
@@ -621,6 +657,150 @@ def post_enrich(prospect_id: int) -> Dict[str, Any]:
 @router.get("/discover/status")
 def get_discover_status() -> Dict[str, Any]:
     return dict(_discovery)
+
+
+# ---------------------------------------------------------------- the campaign
+
+class CampaignIn(BaseModel):
+    """
+    One bulk run of spontaneous applications.
+
+    `dry_run` defaults to True and the UI has to say otherwise on purpose. The
+    cap and the gap are here rather than buried in the module because the right
+    numbers depend on the mailbox: an account that has been sending for years
+    survives more than one that sent its first cold letter this morning.
+    """
+    role: str = ""
+    dry_run: bool = True
+    limit: int = 25
+    cap: int = sender.DEFAULT_CAP
+    gap: float = sender.DEFAULT_GAP
+    city: str = ""
+    source: str = ""
+
+
+# Separate from `_discovery`: finding companies and writing to them are
+# different runs, and a search in progress is no reason to refuse a send.
+_campaign: Dict[str, Any] = {
+    "running": False, "started_at": "", "dry_run": True, "error": "",
+    "cancel": False, "done": 0, "total": 0, "sent": 0, "drafted": 0,
+    "failed": 0, "skipped": 0,
+}
+
+
+def _run_campaign(spec: CampaignIn) -> None:
+    def say(message: str, level: str = "info", pid: Optional[int] = None) -> None:
+        store.log_event(message, phase="campaign", level=level, prospect_id=pid)
+        # The Pipeline tab wants a bar, not a log. Counting the "n/m" lines the
+        # runner emits is enough to drive one without threading a second
+        # callback through every layer.
+        head = message.split(" - ", 1)[0]
+        if "/" in head and head.replace("/", "").isdigit():
+            done, total = head.split("/", 1)
+            _campaign["done"] = int(done)
+            _campaign["total"] = int(total)
+
+    try:
+        tally = sender.run(
+            role=spec.role, dry_run=spec.dry_run, limit=spec.limit,
+            cap=spec.cap, gap=spec.gap, city=spec.city, source=spec.source,
+            on_event=say, should_stop=lambda: bool(_campaign["cancel"]),
+        )
+        _campaign.update({k: tally.get(k, 0) for k in
+                          ("sent", "drafted", "failed", "skipped")})
+    except Exception as exc:  # noqa: BLE001
+        _campaign["error"] = str(exc)
+        store.log_event("The campaign stopped: " + str(exc),
+                        phase="campaign", level="error")
+    finally:
+        _campaign["running"] = False
+        _campaign["cancel"] = False
+
+
+@router.get("/campaign/preview")
+def get_campaign_preview(limit: int = 500, city: str = "",
+                         source: str = "") -> Dict[str, Any]:
+    """Who would be written to, and how much of today's allowance is left."""
+    data = sender.preview(limit=limit, city=city, source=source)
+    data["mailbox"] = _gmail_state()
+    data["cap"] = sender.DEFAULT_CAP
+    return data
+
+
+@router.post("/campaign")
+def post_campaign(body: CampaignIn) -> Dict[str, Any]:
+    if _campaign["running"]:
+        raise HTTPException(409, "A campaign is already running.")
+    if not body.dry_run:
+        state = _gmail_state(force=True)
+        if not state["ok"]:
+            raise HTTPException(400, "Cannot send: " + str(state["reason"]))
+    ready = sender.eligible(limit=body.limit, city=body.city, source=body.source)
+    if not ready:
+        raise HTTPException(
+            400, "Nobody is eligible. Only prospects with a published or proved "
+                 "email address are written to, and every one of those has "
+                 "already had a letter.")
+
+    _campaign.update({
+        "running": True,
+        "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "dry_run": bool(body.dry_run), "error": "", "cancel": False,
+        "done": 0, "total": len(ready),
+        "sent": 0, "drafted": 0, "failed": 0, "skipped": 0,
+    })
+    threading.Thread(target=_run_campaign, args=(body,), daemon=True).start()
+    return {"started": True, "total": len(ready), "dry_run": bool(body.dry_run)}
+
+
+@router.post("/campaign/cancel")
+def post_campaign_cancel() -> Dict[str, Any]:
+    """Stop after the letter in hand. Nothing half-sent is left behind."""
+    if not _campaign["running"]:
+        return {"stopping": False}
+    _campaign["cancel"] = True
+    store.log_event("Stopping after the application in hand",
+                    phase="campaign", level="warn")
+    return {"stopping": True}
+
+
+@router.get("/campaign/status")
+def get_campaign_status() -> Dict[str, Any]:
+    return dict(_campaign)
+
+
+@router.get("/documents/{document_id}/pdf")
+def get_document_pdf(document_id: int, part: str = "pack") -> FileResponse:
+    """
+    The PDF behind a document row, for the previewer.
+
+    Only paths this application wrote into the ledger are served, and only
+    after checking they are still where they were: a route that took a path
+    from the query string would be a file-read endpoint on the user's disk.
+    """
+    with store.connect() as conn:
+        row = conn.execute("SELECT * FROM documents WHERE id=?",
+                           (document_id,)).fetchone()
+    if row is None:
+        raise HTTPException(404, "No such document.")
+    columns = row.keys()
+    chosen = {"letter": "letter_path", "cv": "cv_path"}.get(part, "pdf_path")
+    path = ((row[chosen] if chosen in columns else "") or "").strip()
+    if not path:
+        # Rows written before the pieces were recorded separately have only the
+        # pack. Showing the whole application is a better answer than a 404.
+        path = (row["pdf_path"] or "").strip()
+    if not path:
+        raise HTTPException(404, "That application has no PDF on file.")
+    if not os.path.exists(path):
+        raise HTTPException(404, "The PDF has been moved or deleted.")
+    # `inline`, not `attachment`: this is read in an iframe on the Documents
+    # tab. FileResponse's `filename` argument would set the other one and the
+    # previewer would become a download button.
+    return FileResponse(
+        path, media_type="application/pdf",
+        headers={"Content-Disposition":
+                 'inline; filename="' + os.path.basename(path) + '"'})
 
 
 @router.get("/overview")

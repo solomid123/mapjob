@@ -84,3 +84,8 @@ services/automation/outreach.db-shm
 services/automation/verify_cache.db
 services/automation/verify_cache.db-wal
 services/automation/verify_cache.db-shm
+
+# Generated applications: a cover letter naming a real company, and the pack
+# with the CV merged after it. Personal data twice over -- the candidate's and
+# the employer's contact's -- and regenerated from the ledger on demand.
+services/automation/dossiers/

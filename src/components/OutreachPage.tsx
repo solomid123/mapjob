@@ -61,12 +61,38 @@ interface DocumentRow {
   subject: string;
   body: string;
   pdf_path: string;
+  letter_path?: string;
+  cv_path?: string;
+  language?: string;
   dry_run: number;
   sent_at: string | null;
+  message_id?: string;
   company?: string;
   contact_name?: string;
   email?: string;
   created_at: string;
+}
+
+/** What a bulk run would do, asked before it is started. */
+interface SendPreview {
+  ready: number;
+  sent_today: number;
+  remaining_today: number;
+  cap: number;
+  companies: string[];
+  mailbox: { ok: boolean; how: string; address: string; reason: string };
+}
+
+interface CampaignState {
+  running: boolean;
+  dry_run: boolean;
+  done: number;
+  total: number;
+  sent: number;
+  drafted: number;
+  failed: number;
+  skipped: number;
+  error: string;
 }
 
 interface Capability {
@@ -193,6 +219,22 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
   const [hunting, setHunting] = useState(false);
   const consoleRef = useRef<HTMLDivElement | null>(null);
 
+  /*
+   * The send campaign.
+   *
+   * `live` is a separate piece of state from the button that starts the run,
+   * and it resets itself every time this page mounts. A toggle that remembers
+   * "yes, really send" across a reload is a toggle that eventually sends two
+   * hundred letters because somebody clicked the wrong thing.
+   */
+  const [sendRole, setSendRole] = useState('');
+  const [sendLimit, setSendLimit] = useState(25);
+  const [live, setLive] = useState(false);
+  const [sendPreview, setSendPreview] = useState<SendPreview | null>(null);
+  const [campaign, setCampaign] = useState<CampaignState | null>(null);
+  const [openDoc, setOpenDoc] = useState<DocumentRow | null>(null);
+  const [docPart, setDocPart] = useState<'pack' | 'letter' | 'cv'>('letter');
+
   const loadOverview = useCallback(async () => {
     try {
       const res = await fetch(`${BACKEND}/api/outreach/overview`);
@@ -236,14 +278,24 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
     }
   }, []);
 
+  const loadSendPreview = useCallback(async () => {
+    try {
+      const res = await fetch(`${BACKEND}/api/outreach/campaign/preview`);
+      setSendPreview(await res.json());
+    } catch {
+      setSendPreview(null);
+    }
+  }, []);
+
   useEffect(() => {
     loadOverview();
     loadDocuments();
+    loadSendPreview();
     fetch(`${BACKEND}/api/outreach/events?limit=200`)
       .then((r) => r.json())
       .then((d) => setEvents(d.events || []))
       .catch(() => undefined);
-  }, [loadOverview, loadDocuments]);
+  }, [loadOverview, loadDocuments, loadSendPreview]);
 
   // Search is debounced, page changes are not: typing should not fire a query
   // per keystroke, and a click on "next" should not wait a quarter second.
@@ -386,6 +438,65 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
       setError(err instanceof Error ? err.message : 'The check could not be started.');
     }
   };
+
+  /**
+   * Start the bulk run.
+   *
+   * `asLive` is passed explicitly rather than read from state at the moment of
+   * the click, so the two buttons cannot be confused for one another by a
+   * stale render: "Draft them" always drafts, whatever the toggle says.
+   */
+  const startCampaign = async (asLive: boolean) => {
+    setError('');
+    try {
+      const res = await fetch(`${BACKEND}/api/outreach/campaign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          role: sendRole, dry_run: !asLive, limit: sendLimit,
+        }),
+      });
+      if (!res.ok) {
+        const detail = await res.json().catch(() => ({}));
+        throw new Error(detail.detail || 'The campaign could not be started.');
+      }
+      setSection('pipeline');
+      setCampaign({
+        running: true, dry_run: !asLive, done: 0, total: sendLimit,
+        sent: 0, drafted: 0, failed: 0, skipped: 0, error: '',
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'The campaign could not be started.');
+    }
+  };
+
+  const stopCampaign = async () => {
+    try {
+      await fetch(`${BACKEND}/api/outreach/campaign/cancel`, { method: 'POST' });
+    } catch {
+      /* if the server is gone the run is gone with it */
+    }
+  };
+
+  // While a run is in flight the progress bar needs a number, and the
+  // documents list needs to grow as the letters are written.
+  useEffect(() => {
+    if (!campaign?.running) return undefined;
+    const id = window.setInterval(async () => {
+      try {
+        const res = await fetch(`${BACKEND}/api/outreach/campaign/status`);
+        const state: CampaignState = await res.json();
+        setCampaign(state);
+        if (!state.running) {
+          await Promise.all([loadDocuments(), loadOverview(), loadSendPreview()]);
+          if (state.error) setError(state.error);
+        }
+      } catch {
+        /* the server is restarting; the next tick will say so */
+      }
+    }, 1500);
+    return () => window.clearInterval(id);
+  }, [campaign?.running, loadDocuments, loadOverview, loadSendPreview]);
 
   /** Call off a run in flight. It stops after the company it is reading. */
   const stopHunt = async () => {
@@ -812,10 +923,155 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
     }
 
     if (section === 'pipeline') {
+      const ready = sendPreview?.ready ?? 0;
+      const mailbox = sendPreview?.mailbox;
+      const running = Boolean(campaign?.running);
+      const done = campaign?.done ?? 0;
+      const total = campaign?.total ?? 0;
+      const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+
       return (
+        <div className="flex flex-col gap-3 h-full min-h-0">
+
+          {/*
+            * The send panel.
+            *
+            * Everything that can cause an irreversible act is on this one card
+            * and says what it will do in plain numbers: how many people, from
+            * which mailbox, and how many of today's allowance are left. The
+            * default button drafts; sending for real needs the switch thrown
+            * first, and the switch says what it costs.
+            */}
+          <div className="ic-panel rounded-2xl bg-[rgba(16,18,22,0.72)] p-3.5 shrink-0">
+            <div className="flex items-center gap-2 pb-2.5">
+              <Send className="w-4 h-4 text-[#0a84ff]" />
+              <h4 className="text-[13.5px] font-semibold tracking-[-0.01em] text-[#f5f5f7]">
+                Send applications
+              </h4>
+              <span className="hidden lg:inline text-[12px] text-[rgba(235,235,245,0.45)]">
+                A tailored letter and your CV to every prospect with a published address
+              </span>
+            </div>
+
+            <div className="flex flex-wrap items-end gap-2.5">
+              <label className="flex-1 min-w-[240px]">
+                <span className="block pb-1 text-[11.5px] text-[rgba(235,235,245,0.52)]">
+                  What you are asking for
+                </span>
+                <input
+                  value={sendRole}
+                  onChange={(e) => setSendRole(e.target.value)}
+                  placeholder="Ausbildung Kaufmann fuer Bueromanagement"
+                  className="w-full rounded-xl bg-white/[0.06] px-3 py-2 text-[13.5px] text-[#f5f5f7] placeholder:text-[rgba(235,235,245,0.3)] outline-none focus:bg-white/[0.09]"
+                />
+              </label>
+              <label className="w-[110px]">
+                <span className="block pb-1 text-[11.5px] text-[rgba(235,235,245,0.52)]">
+                  How many
+                </span>
+                <input
+                  type="number"
+                  min={1}
+                  max={200}
+                  value={sendLimit}
+                  onChange={(e) => setSendLimit(Math.max(1, Number(e.target.value) || 1))}
+                  className="w-full rounded-xl bg-white/[0.06] px-3 py-2 text-[13.5px] text-[#f5f5f7] outline-none focus:bg-white/[0.09] tabular-nums"
+                />
+              </label>
+
+              {running ? (
+                <button
+                  type="button"
+                  onClick={stopCampaign}
+                  className="rounded-xl px-4 py-2 text-[13.5px] font-semibold bg-rose-500/20 text-rose-200 hover:bg-rose-500/30 cursor-pointer transition-colors"
+                >
+                  Stop
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => startCampaign(false)}
+                    disabled={ready === 0}
+                    className="rounded-xl px-4 py-2 text-[13.5px] font-semibold bg-white/[0.1] text-[#f5f5f7] hover:bg-white/[0.16] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                  >
+                    Draft them
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => startCampaign(true)}
+                    disabled={ready === 0 || !live || !mailbox?.ok}
+                    className="rounded-xl px-4 py-2 text-[13.5px] font-semibold bg-[#0a84ff] text-white hover:bg-[#0a84ff]/90 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-colors inline-flex items-center gap-2"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    Send for real
+                  </button>
+                </>
+              )}
+            </div>
+
+            <label className="mt-2.5 flex items-center gap-2 cursor-pointer w-fit">
+              <input
+                type="checkbox"
+                checked={live}
+                onChange={(e) => setLive(e.target.checked)}
+                className="accent-[#0a84ff] w-3.5 h-3.5 cursor-pointer"
+              />
+              <span className="text-[12.5px] text-[rgba(235,235,245,0.62)]">
+                Yes, really send these from{' '}
+                <span className="text-[#f5f5f7]">{mailbox?.address || 'the connected mailbox'}</span>
+                {' '}- one every 40 seconds, up to {sendPreview?.cap ?? 40} a day
+              </span>
+            </label>
+
+            <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px]">
+              <span className="text-[rgba(235,235,245,0.62)]">
+                <span className="text-[#f5f5f7] tabular-nums">{ready}</span> ready to write to
+              </span>
+              <span className="text-[rgba(235,235,245,0.62)]">
+                <span className="text-[#f5f5f7] tabular-nums">{sendPreview?.sent_today ?? 0}</span> sent
+                in the last 24 hours
+              </span>
+              <span className={mailbox?.ok ? 'text-emerald-200' : 'text-rose-200'}>
+                {mailbox?.ok
+                  ? `Gmail ready (${mailbox.how})`
+                  : `Gmail not ready: ${mailbox?.reason || 'unknown'}`}
+              </span>
+            </div>
+
+            <p className="mt-2 text-[11.5px] leading-relaxed text-[rgba(235,235,245,0.42)]">
+              Only prospects whose address the employer published, or the verifier proved,
+              are written to. A guessed address is never sent to and nobody is written to twice.
+            </p>
+
+            {running || total > 0 ? (
+              <div className="mt-3">
+                <div className="flex items-baseline justify-between pb-1.5">
+                  <span className="text-[12.5px] text-[#f5f5f7]">
+                    {campaign?.dry_run ? 'Drafting' : 'Sending'} {done} of {total}
+                  </span>
+                  <span className="text-[12px] text-[rgba(235,235,245,0.52)] tabular-nums">
+                    {campaign?.sent ? `${campaign.sent} sent` : ''}
+                    {campaign?.drafted ? `${campaign.drafted} drafted` : ''}
+                    {campaign?.failed ? ` - ${campaign.failed} failed` : ''}
+                    {campaign?.skipped ? ` - ${campaign.skipped} skipped` : ''}
+                  </span>
+                </div>
+                <div className="h-1.5 rounded-full bg-white/[0.08] overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-[width] duration-500 ${
+                      campaign?.dry_run ? 'bg-amber-400/70' : 'bg-[#0a84ff]'
+                    }`}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+              </div>
+            ) : null}
+          </div>
+
         <div
           ref={consoleRef}
-          className="ic-panel rounded-2xl bg-[rgba(10,11,14,0.86)] p-4 h-full overflow-y-auto custom-scrollbar font-mono text-[12.5px] leading-relaxed"
+          className="ic-panel rounded-2xl bg-[rgba(10,11,14,0.86)] p-4 flex-1 min-h-0 overflow-y-auto custom-scrollbar font-mono text-[12.5px] leading-relaxed"
         >
           {events.length === 0 ? (
             <p className="text-[rgba(235,235,245,0.42)]">
@@ -841,46 +1097,143 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
             ))
           )}
         </div>
+        </div>
       );
     }
 
+    /*
+     * Documents: what was written, and the paper that went with it.
+     *
+     * The list on the left, the application itself on the right. An entry that
+     * cannot be opened and read is a log line, not a record -- the whole point
+     * of keeping a dry run is that somebody looks at the letter before the
+     * live run goes out.
+     */
+    const chosen = openDoc && docs.find((d) => d.id === openDoc.id) ? openDoc : docs[0] || null;
+
     return (
-      <div className="ic-panel rounded-2xl bg-[rgba(16,18,22,0.72)] overflow-hidden">
-        {docs.length === 0 ? (
-          <div className="px-4 py-12 text-center">
-            <FileText className="w-6 h-6 mx-auto mb-2 text-[rgba(235,235,245,0.32)]" />
-            <p className="text-[13.5px] text-[rgba(235,235,245,0.62)]">
-              Nothing has been written yet.
-            </p>
-            <p className="text-[12.5px] text-[rgba(235,235,245,0.42)]">
-              Letters and dossiers are kept here, sent or not, so a dry run can be read afterwards.
-            </p>
-          </div>
-        ) : (
-          docs.map((d) => (
-            <div key={d.id} className="px-4 py-3 border-b border-white/[0.07] last:border-0">
-              <div className="flex items-center gap-2">
-                <span className="text-[13.5px] font-semibold text-[#f5f5f7] truncate">
-                  {d.subject || '(no subject)'}
-                </span>
-                <span
-                  className={`shrink-0 text-[11px] font-semibold px-2 py-[2px] rounded-full ${
-                    d.sent_at && !d.dry_run
-                      ? 'bg-emerald-400/15 text-emerald-200'
-                      : 'bg-white/[0.08] text-[rgba(235,235,245,0.62)]'
-                  }`}
-                >
-                  {d.sent_at && !d.dry_run ? 'Sent' : 'Dry run'}
-                </span>
-              </div>
-              <p className="text-[12.5px] text-[rgba(235,235,245,0.52)]">
-                {d.company || 'Unknown company'}
-                {d.email ? ' - ' + d.email : ''}
-                {d.pdf_path ? ' - dossier attached' : ''}
+      <div className="flex flex-col lg:flex-row gap-3 h-full min-h-0">
+        <div className="ic-panel rounded-2xl bg-[rgba(16,18,22,0.72)] overflow-y-auto custom-scrollbar lg:w-[380px] shrink-0 min-h-0">
+          {docs.length === 0 ? (
+            <div className="px-4 py-12 text-center">
+              <FileText className="w-6 h-6 mx-auto mb-2 text-[rgba(235,235,245,0.32)]" />
+              <p className="text-[13.5px] text-[rgba(235,235,245,0.62)]">
+                Nothing has been written yet.
+              </p>
+              <p className="text-[12.5px] text-[rgba(235,235,245,0.42)]">
+                Letters and dossiers are kept here, sent or not, so a dry run can be read afterwards.
               </p>
             </div>
-          ))
-        )}
+          ) : (
+            docs.map((d) => {
+              const on = chosen?.id === d.id;
+              return (
+                <button
+                  key={d.id}
+                  type="button"
+                  onClick={() => { setOpenDoc(d); setDocPart('letter'); }}
+                  className={`w-full text-left px-4 py-3 border-b border-white/[0.07] last:border-0 cursor-pointer transition-colors ${
+                    on ? 'bg-white/[0.09]' : 'hover:bg-white/[0.04]'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-[13.5px] font-semibold text-[#f5f5f7] truncate">
+                      {d.company || d.subject || '(no subject)'}
+                    </span>
+                    <span
+                      className={`shrink-0 text-[11px] font-semibold px-2 py-[2px] rounded-full ${
+                        d.sent_at && !d.dry_run
+                          ? 'bg-emerald-400/15 text-emerald-200'
+                          : 'bg-white/[0.08] text-[rgba(235,235,245,0.62)]'
+                      }`}
+                    >
+                      {d.sent_at && !d.dry_run ? 'Sent' : 'Draft'}
+                    </span>
+                    {d.language ? (
+                      <span className="shrink-0 px-1 rounded text-[10px] uppercase tracking-wide bg-white/[0.08] text-[rgba(235,235,245,0.62)]">
+                        {d.language}
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="text-[12.5px] text-[rgba(235,235,245,0.52)] truncate">
+                    {d.email || 'no address'}
+                  </p>
+                  <p className="text-[11.5px] text-[rgba(235,235,245,0.36)] truncate">
+                    {(d.sent_at || d.created_at || '').slice(0, 16).replace('T', ' ')}
+                    {d.pdf_path ? ' - CV and letter attached' : ''}
+                  </p>
+                </button>
+              );
+            })
+          )}
+        </div>
+
+        <div className="ic-panel rounded-2xl bg-[rgba(16,18,22,0.72)] flex-1 min-h-0 flex flex-col overflow-hidden">
+          {!chosen ? (
+            <div className="flex-1 flex items-center justify-center text-[13px] text-[rgba(235,235,245,0.42)]">
+              Pick an application to read it.
+            </div>
+          ) : (
+            <>
+              <div className="px-4 py-3 border-b border-white/[0.07]">
+                <p className="text-[13.5px] font-semibold text-[#f5f5f7]">{chosen.subject}</p>
+                <p className="text-[12.5px] text-[rgba(235,235,245,0.52)]">
+                  To {chosen.email || 'nobody yet'}
+                  {chosen.contact_name ? ` - ${chosen.contact_name}` : ''}
+                  {chosen.sent_at && !chosen.dry_run
+                    ? ` - sent ${chosen.sent_at.slice(0, 16).replace('T', ' ')}`
+                    : ' - not sent'}
+                </p>
+                <div className="flex gap-1.5 pt-2">
+                  {([['letter', 'Cover letter'], ['cv', 'CV'], ['pack', 'Both, as one PDF']] as const)
+                    .map(([id, label]) => (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => setDocPart(id)}
+                        className={`rounded-lg px-2.5 py-1 text-[12px] cursor-pointer transition-colors ${
+                          docPart === id
+                            ? 'bg-white/[0.14] text-[#f5f5f7]'
+                            : 'bg-white/[0.05] text-[rgba(235,235,245,0.62)] hover:bg-white/[0.09]'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  <a
+                    href={`${BACKEND}/api/outreach/documents/${chosen.id}/pdf?part=${docPart}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="ml-auto rounded-lg px-2.5 py-1 text-[12px] bg-white/[0.05] text-[rgba(235,235,245,0.62)] hover:bg-white/[0.09] cursor-pointer transition-colors"
+                  >
+                    Open in a tab
+                  </a>
+                </div>
+              </div>
+
+              {/*
+                * The browser's own PDF viewer in an iframe. A bundled renderer
+                * would be another megabyte of JavaScript to show a file the
+                * browser already knows how to show, and this one prints.
+                */}
+              <iframe
+                key={`${chosen.id}-${docPart}`}
+                title="Application PDF"
+                src={`${BACKEND}/api/outreach/documents/${chosen.id}/pdf?part=${docPart}#view=FitH`}
+                className="flex-1 min-h-[320px] w-full bg-[rgba(10,11,14,0.6)]"
+              />
+
+              <details className="shrink-0 border-t border-white/[0.07] px-4 py-2">
+                <summary className="text-[12.5px] text-[rgba(235,235,245,0.62)] cursor-pointer">
+                  The email itself
+                </summary>
+                <pre className="mt-2 max-h-[180px] overflow-y-auto custom-scrollbar whitespace-pre-wrap text-[12.5px] leading-relaxed text-[rgba(235,235,245,0.82)] font-sans">
+                  {chosen.body}
+                </pre>
+              </details>
+            </>
+          )}
+        </div>
       </div>
     );
   };

@@ -92,6 +92,7 @@ def init_db() -> None:
             """
         )
         _add_columns(conn)
+        _add_document_columns(conn)
 
 
 # Columns added after the first version shipped. SQLite has no "ADD COLUMN IF
@@ -130,6 +131,26 @@ def _add_columns(conn: sqlite3.Connection) -> None:
     for name, spec in LATER_COLUMNS:
         if name not in have:
             conn.execute(f"ALTER TABLE prospects ADD COLUMN {name} {spec}")
+
+
+# An application is more than one file, and the previewer has to be able to
+# show each of them. `pdf_path` holds the whole pack -- letter then CV, one
+# document to page through -- and these two hold the pieces that were actually
+# attached to the message. Deriving the letter's name from the pack's by string
+# surgery was the first attempt, and it worked in German and silently returned
+# the pack in French.
+DOCUMENT_COLUMNS = (
+    ("letter_path", "TEXT DEFAULT ''"),
+    ("cv_path", "TEXT DEFAULT ''"),
+    ("language", "TEXT DEFAULT ''"),
+)
+
+
+def _add_document_columns(conn: sqlite3.Connection) -> None:
+    have = {row["name"] for row in conn.execute("PRAGMA table_info(documents)").fetchall()}
+    for name, spec in DOCUMENT_COLUMNS:
+        if name not in have:
+            conn.execute(f"ALTER TABLE documents ADD COLUMN {name} {spec}")
 
 
 def _dedupe_key(company: str, ident: str) -> str:
@@ -377,7 +398,8 @@ def list_prospects(query: str = "", stage: str = "", page: int = 1,
 
 def record_document(prospect_id: int, subject: str, body: str, pdf_path: str = "",
                     dry_run: bool = True, sent_at: Optional[str] = None,
-                    message_id: str = "") -> Dict[str, Any]:
+                    message_id: str = "", letter_path: str = "",
+                    cv_path: str = "", language: str = "") -> Dict[str, Any]:
     """
     What was written to whom, kept whether or not it was sent.
 
@@ -388,12 +410,30 @@ def record_document(prospect_id: int, subject: str, body: str, pdf_path: str = "
     with connect() as conn:
         cur = conn.execute(
             "INSERT INTO documents (prospect_id, subject, body, pdf_path, dry_run,"
-            " sent_at, message_id, created_at) VALUES (?,?,?,?,?,?,?,?)",
+            " sent_at, message_id, letter_path, cv_path, language, created_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (prospect_id, subject, body, pdf_path, 1 if dry_run else 0,
-             sent_at, message_id, _now()),
+             sent_at, message_id, letter_path, cv_path, language, _now()),
         )
         row = conn.execute("SELECT * FROM documents WHERE id=?", (cur.lastrowid,)).fetchone()
     return dict(row)
+
+
+def clear_drafts(prospect_id: int) -> int:
+    """
+    Throw away this prospect's previous unsent drafts.
+
+    A dry run rewrites the letter, and the old one is of no interest: leaving
+    it behind means three identical entries for the same company after three
+    rehearsals, and the reviewer cannot tell which one the live run will
+    actually send. Rows that were really sent are never touched -- those are
+    the record of what a company received.
+    """
+    with connect() as conn:
+        cur = conn.execute(
+            "DELETE FROM documents WHERE prospect_id=? AND dry_run=1"
+            " AND sent_at IS NULL", (prospect_id,))
+    return int(cur.rowcount or 0)
 
 
 def list_documents(limit: int = 100) -> List[Dict[str, Any]]:

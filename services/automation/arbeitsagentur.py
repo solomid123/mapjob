@@ -57,6 +57,14 @@ TIMEOUT = 40
 # whole run is a few hundred requests; there is nothing to gain by hurrying.
 PAUSE = 0.15
 
+# How many listings a search will open looking for `count` employers that
+# actually printed an address. Around one in three does, so twelve tries per
+# wanted result finds them without walking a whole city -- and the point of
+# having a bound at all is that a search for twenty addresses in a town that
+# has six should stop and say so, not read four hundred listings at one
+# detail request each.
+MAX_READ_FACTOR = 12
+
 Event = Callable[..., None]
 
 # What kind of offer the board is being asked for. `angebotsart` is its own
@@ -319,7 +327,7 @@ def to_lead(item: Dict[str, object], det: Dict[str, object],
 
 def run(was: str, wo: str = "", umkreis: int = 25, count: int = 25,
         skip_agencies: bool = True, published_within: int = 0,
-        offer_type: str = "",
+        offer_type: str = "", require_email: bool = True,
         on_event: Optional[Event] = None,
         on_lead: Optional[Callable[[Dict[str, object]], None]] = None,
         should_stop: Optional[Callable[[], bool]] = None) -> Dict[str, int]:
@@ -336,13 +344,22 @@ def run(was: str, wo: str = "", umkreis: int = 25, count: int = 25,
     becomes "everything" on a parameter it does not recognise. The date on each
     listing is the thing that can be checked, and it is checked before the
     detail request is spent, so a stale row costs nothing but a comparison.
+
+    `require_email` decides what `count` counts. With it on, an employer that
+    printed no address is not a find and does not use up one of the twenty that
+    were asked for: this application writes letters, so a row with nothing to
+    write to is a row that can only be deleted. That means reading much deeper
+    into the board than `count` suggests -- most listings print no address at
+    all -- so `MAX_READ_FACTOR` bounds how far the search will chase before it
+    gives up and says how far it got.
     """
     talk = on_event or (lambda *a, **k: None)
     tally = {"seen": 0, "kept": 0, "emails": 0, "phones": 0, "people": 0,
-             "agencies": 0, "stale": 0}
+             "agencies": 0, "stale": 0, "no_email": 0}
     seen_refs: set = set()
     seen_companies: set = set()
     days = max(0, int(published_within or 0))
+    ceiling = max(count * MAX_READ_FACTOR, 60) if require_email else 10 ** 9
 
     def fetch(page_number: int) -> Dict[str, object]:
         return search(was, wo, umkreis, page=page_number, size=PAGE_SIZE,
@@ -367,7 +384,7 @@ def run(was: str, wo: str = "", umkreis: int = 25, count: int = 25,
 
     page = 1
     items: List[Dict[str, object]] = list(first["items"])  # type: ignore[arg-type]
-    while tally["kept"] < count:
+    while tally["kept"] < count and tally["seen"] < ceiling:
         if should_stop and should_stop():
             break
         if not items:
@@ -409,6 +426,16 @@ def run(was: str, wo: str = "", umkreis: int = 25, count: int = 25,
             continue
         seen_companies.add(company)
 
+        # No address, no prospect. This application's one action is to send a
+        # letter, so an employer that printed nothing to send to arrives as a
+        # row whose only available button is delete -- and a table of those
+        # buries the ones that can actually be written to. Counted, so the
+        # console can say how many were passed over rather than leaving a
+        # search for twenty that returned five looking broken.
+        if require_email and not lead["email"]:
+            tally["no_email"] += 1
+            continue
+
         tally["kept"] += 1
         if lead["email"]:
             tally["emails"] += 1
@@ -419,14 +446,21 @@ def run(was: str, wo: str = "", umkreis: int = 25, count: int = 25,
         if on_lead:
             on_lead(lead)
 
-    talk(str(tally["kept"]) + " employers, " + str(tally["emails"]) + " with an address, "
-         + str(tally["phones"]) + " with a telephone number, "
-         + str(tally["people"]) + " naming a person"
+    talk(str(tally["kept"]) + " employers with an address, from "
+         + str(tally["seen"]) + " listings read"
+         + (" - " + str(tally["people"]) + " naming a person"
+            if tally["people"] else "")
+         # Counted separately, because between them these three are the answer
+         # to "why did a search for twenty come back with six".
+         + (", " + str(tally["no_email"]) + " printed no address"
+            if tally["no_email"] else "")
          + (", " + str(tally["agencies"]) + " staffing agencies skipped"
             if tally["agencies"] else "")
-         # Counted separately from the agencies, because this one is the
-         # answer to "why did a search for twenty come back with six".
          + (", " + str(tally["stale"]) + " too old or undated"
             if tally["stale"] else ""))
+    if require_email and tally["kept"] < count and tally["seen"] >= ceiling:
+        talk("Stopped after reading " + str(tally["seen"]) + " listings: this search "
+             "does not have " + str(count) + " employers printing an address. Widen "
+             "the window, the city or the kind of offer.", "warn")
     return tally
 

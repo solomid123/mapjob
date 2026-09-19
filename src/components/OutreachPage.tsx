@@ -1034,6 +1034,28 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
             >
               <ShieldCheck className="w-4 h-4" /> Check addresses
             </button>
+            {/* The engines no longer file an employer that printed no address,
+              * but the ones found before that rule are still on the table, and
+              * a rule the existing rows do not obey is half a rule. Only shown
+              * when there is something to clear, so it is not a permanent
+              * button waiting to be clicked by accident. Rows already written
+              * to are left alone: that row is the record that this employer
+              * was contacted, and without it the same letter goes out twice. */}
+            {prospects.some((p) => !p.email && p.stage !== 'sent') ? (
+              <button
+                type="button"
+                onClick={async () => {
+                  const res = await fetch(
+                    `${BACKEND}/api/outreach/prospects/remove-addressless`,
+                    { method: 'POST' });
+                  if (res.ok) { setPicked(new Set()); await loadProspects(page, query); }
+                }}
+                title="Delete every prospect with no email address. They cannot be written to, which is the only thing this page does."
+                className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-white/[0.08] hover:bg-rose-500/20 text-[rgba(235,235,245,0.72)] hover:text-rose-100 text-[13px] font-semibold transition-colors"
+              >
+                <Trash2 className="w-4 h-4" /> No address
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => setShowAdd((v) => !v)}

@@ -188,6 +188,11 @@ class AgenturIn(BaseModel):
     # different search area on the board, not the word "Ausbildung" typed into
     # the same box.
     offer_type: str = ""
+    # An employer that printed no address is not filed at all. This
+    # application's one action is to send a letter; a row with nothing to send
+    # to can only be deleted, and a table full of them hides the rows that can
+    # be written to. Off only for a caller that wants the board's raw census.
+    require_email: bool = True
 
 
 class HarvestIn(BaseModel):
@@ -220,7 +225,7 @@ def _run_discovery(spec: DiscoverIn) -> None:
     label = spec.company or spec.profession
     store.log_event(f"Searching for {label}" + (f" in {spec.city}" if spec.city else ""),
                     phase="discovery")
-    tally = {"found": 0, "created": 0}
+    tally = {"found": 0, "created": 0, "no_email": 0}
 
     def keep(lead: Dict[str, Any]) -> None:
         # Published, not yet proved. "guessed" is reserved for addresses this
@@ -228,14 +233,22 @@ def _run_discovery(spec: DiscoverIn) -> None:
         # careers page is better evidence than that, and still not proof, so it
         # waits for the verifier like everything else.
         lead["email_status"] = "unknown"
-        row, was_new = store.upsert_prospect(lead, source="parallel")
         tally["found"] += 1
+        # A company with no address is research, not a prospect. It used to be
+        # filed anyway and announced as "no address published", which put a row
+        # in the table whose only working button was delete.
+        if not (lead.get("email") or "").strip():
+            tally["no_email"] += 1
+            store.log_event(
+                str(lead.get("company") or "") + " - no address published, not filed",
+                phase="discovery", level="warn")
+            return
+        row, was_new = store.upsert_prospect(lead, source="parallel")
         tally["created"] += 1 if was_new else 0
         who = row.get("contact_name") or ""
         store.log_event(
             ("Added " if was_new else "Updated ") + row["company"]
-            + (f" - {who}" if who else "")
-            + (f" - {row['email']}" if row.get("email") else " - no address published"),
+            + (f" - {who}" if who else "") + f" - {row['email']}",
             phase="discovery", prospect_id=row["id"],
         )
 
@@ -250,7 +263,9 @@ def _run_discovery(spec: DiscoverIn) -> None:
         )
         store.log_event(
             f"Search finished: {tally['found']} employer"
-            f"{'s' if tally['found'] != 1 else ''}, {tally['created']} new",
+            f"{'s' if tally['found'] != 1 else ''}, {tally['created']} new"
+            + (f", {tally['no_email']} with no address published"
+               if tally['no_email'] else ""),
             phase="discovery",
         )
     except Exception as exc:  # noqa: BLE001 - the console is where this belongs
@@ -426,9 +441,7 @@ def _run_agentur(spec: AgenturIn) -> None:
         store.log_event(
             ("Added " if was_new else "Updated ") + str(lead.get("company"))
             + (" - " + str(lead.get("contact_name")) if lead.get("contact_name") else "")
-            + (" - " + str(lead.get("email")) if lead.get("email")
-               else (" - tel " + str(lead.get("phone")) if lead.get("phone")
-                     else " - no contact printed")),
+            + " - " + str(lead.get("email")),
             phase="agentur", prospect_id=row["id"],
         )
 
@@ -437,16 +450,17 @@ def _run_agentur(spec: AgenturIn) -> None:
             was=spec.was, wo=spec.wo, umkreis=spec.umkreis, count=spec.count,
             skip_agencies=spec.skip_agencies,
             published_within=spec.published_within, offer_type=spec.offer_type,
+            require_email=spec.require_email,
             on_event=lambda msg, level="info": store.log_event(
                 msg, phase="agentur", level=level),
             on_lead=keep,
             should_stop=lambda: bool(_discovery["cancel"]),
         )
         store.log_event(
-            "Finished: " + str(result["kept"]) + " employers, "
-            + str(result["emails"]) + " with an address, "
-            + str(result["phones"]) + " with a telephone number, "
+            "Finished: " + str(result["kept"]) + " employers with an address, "
             + str(tally["created"]) + " new"
+            + (", " + str(result.get("no_email") or 0) + " skipped for printing none"
+               if result.get("no_email") else "")
             + (", " + str(result.get("stale") or 0) + " listings too old"
                if result.get("stale") else ""),
             phase="agentur",
@@ -998,6 +1012,27 @@ def remove_prospects(body: ProspectIds) -> Dict[str, Any]:
             + (" and more" if len(names) > 6 else ""),
             phase="prospects", level="warn")
     return {"removed": gone}
+
+
+@router.post("/prospects/remove-addressless")
+def remove_addressless_prospects() -> Dict[str, Any]:
+    """
+    Drop every row with nothing to write to.
+
+    The engines no longer file these, but the ones already on the table are
+    still there, and the rule is not really in force until the table obeys it
+    too.
+
+    A row that has already been written to is kept even if its address has
+    since been cleared: it is the record that this employer was contacted, and
+    deleting it would let the same letter go out again the next time the
+    company turns up in a search.
+    """
+    with store.connect() as conn:
+        rows = conn.execute(
+            "SELECT id FROM prospects WHERE TRIM(COALESCE(email,'')) = ''"
+            " AND stage <> 'sent'").fetchall()
+    return remove_prospects(ProspectIds(ids=[int(r["id"]) for r in rows]))
 
 
 @router.get("/events")

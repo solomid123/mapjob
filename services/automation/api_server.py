@@ -1340,6 +1340,13 @@ HEURISTIC_ANSWER = (
 )
 
 
+# One connection to Fuelix, kept open between answers. A fresh TCP+TLS
+# handshake on every question is a few hundred milliseconds spent before a
+# single token is asked for, and during an interview that is time the
+# candidate spends silent.
+_FUELIX_SESSION = requests.Session()
+
+
 def _answer_prompt(req: "InterviewAnswerRequest") -> tuple[str, str, str]:
     """The question, the system prompt and the user prompt for one answer.
 
@@ -1443,7 +1450,7 @@ def interview_answer_stream(req: InterviewAnswerRequest):
             if not model or not FUELIX_API_KEY:
                 continue
             try:
-                with requests.post(
+                with _FUELIX_SESSION.post(
                     f"{FUELIX_BASE_URL.rstrip('/')}/chat/completions",
                     headers={"Authorization": f"Bearer {FUELIX_API_KEY}", "Content-Type": "application/json"},
                     json={"model": model, "messages": [

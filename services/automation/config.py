@@ -38,22 +38,27 @@ FUELIX_WRITER_FALLBACK = os.getenv("FUELIX_WRITER_FALLBACK", "gpt-5.6-terra")
 
 # Live interview answers, where a second of silence is a second the candidate
 # spends staring at nothing. Measured on this account, same French prompt,
-# streaming, three runs each, median time to first token:
-#   claude-haiku-4-5  1.16s
-#   gpt-5.4-mini      2.89s
-#   gpt-5.6-luna      2.93s
-#   gpt-5.6-terra     4.86s
-# Haiku is the fastest by a wide margin and the answers read like it: clipped,
-# and the French is the weakest of the four. Luna costs about 1.8s more and
-# writes something a person would be happy to say out loud, which is the whole
-# job. That trade is the right way round, so luna it is; the fallback is the
-# model that matches it on speed.
+# streaming, three questions each, median time to the first token:
+#   claude-sonnet-4-6  1.67s
+#   gpt-5.2-chat       1.80s
+#   claude-haiku-4-5   1.16s
+#   gpt-5.4-mini       2.90s
+#   gpt-5.6-luna       3.71s
+#   gpt-5.6-terra      4.86s
+#   gemini-3.5/3.7-flash  ~5.4s
+# Haiku is the quickest and reads like it -- clipped, the weakest French of the
+# set. Luna writes well but is the slowest thing here that is not a reasoning
+# model, and it opens every answer with "**Situation :**", which is not a
+# sentence anyone says out loud. Sonnet is two seconds quicker than luna AND
+# writes the best French measured, so there is nothing to trade away. It takes
+# longer to finish (~8s against ~5s) and that does not matter: nobody can speak
+# faster than it writes, and reading starts on the first token.
 #
 # The writer stays on the reasoning model when a human asked for the answer and
 # is willing to wait; hands-free uses this one, because it has to keep up with
 # a conversation.
-FUELIX_LIVE = os.getenv("FUELIX_LIVE", "gpt-5.6-luna")
-FUELIX_LIVE_FALLBACK = os.getenv("FUELIX_LIVE_FALLBACK", "gpt-5.4-mini")
+FUELIX_LIVE = os.getenv("FUELIX_LIVE", "claude-sonnet-4-6")
+FUELIX_LIVE_FALLBACK = os.getenv("FUELIX_LIVE_FALLBACK", "gpt-5.2-chat")
 
 # The apply engine's brain: small decisions taken mid-run, while a browser sits
 # waiting on the answer. Speed is the requirement, so these are deliberately

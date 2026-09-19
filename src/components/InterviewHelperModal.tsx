@@ -131,6 +131,13 @@ const HANDS_FREE_SILENCE_MS = 450;
  */
 const HANDS_FREE_SETTLE_MS = 250;
 
+/**
+ * Spoken French, near enough: 150 words a minute at five and a half letters a
+ * word. Used to pace the hands-free pane, which should run out of text at
+ * about the moment the speaker runs out of answer.
+ */
+const SPOKEN_CHARS_PER_SECOND = 14;
+
 function heuristicAnswer(question: string): string {
   return (
     `Bonne question${question ? ` — « ${question.slice(0, 90)} »` : ''}. ` +
@@ -228,6 +235,8 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
    * Legibility comes from the blur behind the glass, not from hiding the video.
    */
   const [autoTint, setAutoTint] = useState<'sheer' | 'soft' | 'solid'>('soft');
+  /** Whether the pane is creeping along on its own. A touch of the wheel stops it. */
+  const [handsFreeScroll, setHandsFreeScroll] = useState(true);
   const handsFreeScrollRef = useRef<HTMLDivElement | null>(null);
   const AUTO_TINT: Record<'sheer' | 'soft' | 'solid', number> = { sheer: 0.4, soft: 0.66, solid: 0.9 };
   const nextTint = { sheer: 'soft', soft: 'solid', solid: 'sheer' } as const;
@@ -970,6 +979,7 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
     }
   }, [lines]);
 
+
   /**
    * Switching hands-free off clears its screen. A stale answer left floating
    * over the interviewer's face is worse than showing nothing at all.
@@ -979,16 +989,51 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
   }, [autoAnswer]);
 
   /**
-   * Keep the newest words of the hands-free answer in view.
+   * The hands-free pane reads itself.
    *
-   * The screen over the call is a few lines tall by design, so an answer
-   * outgrows it within a sentence or two. Following the text is the whole
-   * point of watching it arrive.
+   * Chasing the newest token was the wrong instinct: the answer is being read
+   * aloud from the first word, so jumping to the last one leaves the reader
+   * at the end of a paragraph they have not started, having to scroll back by
+   * hand -- in the one mode whose entire promise is that they do not.
+   *
+   * So it starts at the top and creeps. The speed is not a setting: the
+   * overflow is divided by how long the remaining text takes to say, which
+   * means a long answer in a short pane moves faster, a short one barely
+   * moves, and the last line arrives under the eye at about the moment it is
+   * spoken. It is recomputed every frame, so it keeps adjusting while the
+   * model is still writing.
    */
   useEffect(() => {
     const el = handsFreeScrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [autoCardId, answers]);
+    if (el) el.scrollTop = 0;
+    setHandsFreeScroll(true);
+  }, [autoCardId]);
+
+  useEffect(() => {
+    if (autoCardId === null || !handsFreeScroll) return;
+    let raf = 0;
+    let last = performance.now();
+    const step = (now: number) => {
+      const el = handsFreeScrollRef.current;
+      const dt = Math.min(0.1, (now - last) / 1000);
+      last = now;
+      if (el) {
+        const overflow = el.scrollHeight - el.clientHeight;
+        const left = overflow - el.scrollTop;
+        if (left > 1) {
+          const card = answersRef.current.find((a) => a.id === autoCardId);
+          const chars = card ? card.answer.length : 0;
+          // French out loud is roughly 14 characters a second. What is left to
+          // scroll has to last as long as what is left to say.
+          const seconds = Math.max(4, chars / SPOKEN_CHARS_PER_SECOND);
+          el.scrollTop = Math.min(overflow, el.scrollTop + (overflow / seconds) * dt);
+        }
+      }
+      raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [autoCardId, handsFreeScroll]);
 
   /**
    * Hands-free mode: answer a question without being asked to.
@@ -1407,6 +1452,14 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
                     </span>
                     <button
                       type="button"
+                      onClick={() => setHandsFreeScroll((v) => !v)}
+                      className="ic-fill w-6 h-6 rounded-full text-[#f5f5f7] cursor-pointer shrink-0 flex items-center justify-center"
+                      title={handsFreeScroll ? 'Stop the pane scrolling itself' : 'Let the pane scroll itself again'}
+                    >
+                      {handsFreeScroll ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => setAutoTint((v) => nextTint[v])}
                       className="ic-fill px-2 h-6 rounded-full text-[#f5f5f7] cursor-pointer shrink-0 ic-caption text-[10px] font-semibold flex items-center justify-center"
                       title="How much of the call shows through"
@@ -1440,6 +1493,11 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
                   </div>
                   <div
                     ref={handsFreeScrollRef}
+                    // Touching the wheel means you have taken over: the crawl
+                    // gets out of the way rather than fighting for the
+                    // scrollbar, and the button hands it back.
+                    onWheel={() => setHandsFreeScroll(false)}
+                    onPointerDown={() => setHandsFreeScroll(false)}
                     className="flex-1 overflow-y-auto px-4 py-3 text-white font-medium leading-relaxed whitespace-pre-wrap select-text"
                     style={{
                       fontSize: `${autoFontSize}px`,

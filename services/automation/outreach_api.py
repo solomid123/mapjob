@@ -21,6 +21,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from services.automation import arbeitsagentur as agentur
 from services.automation import contact_pipeline as contacts
 from services.automation import lead_discovery as discovery
 from services.automation import outreach_store as store
@@ -121,6 +122,23 @@ class DiscoverIn(BaseModel):
     city: str = ""
     company: str = ""
     count: int = 8
+
+
+class AgenturIn(BaseModel):
+    """
+    The German federal job board.
+
+    `was` and `wo` are its own two search fields, passed through unchanged so
+    that a search which works on the website works here. `skip_agencies` drops
+    listings the board marks as Arbeitnehmerueberlassung: half of any result
+    set is one staffing firm advertising the same role in nine districts, and
+    a letter to them is not an application to an employer.
+    """
+    was: str = ""
+    wo: str = ""
+    umkreis: int = 25
+    count: int = 25
+    skip_agencies: bool = True
 
 
 class HarvestIn(BaseModel):
@@ -335,6 +353,73 @@ def _run_harvest(spec: HarvestIn) -> None:
     finally:
         _discovery["running"] = False
         _discovery["cancel"] = False
+
+
+def _run_agentur(spec: AgenturIn) -> None:
+    """
+    Read the board, file each employer, and say what was actually obtained.
+
+    Addresses arrive `published` and `unknown`: the employer printed them in
+    its own advertisement, which is the best evidence short of the mail server
+    agreeing, and they go to the verifier like every other address.
+    """
+    store.log_event("Reading the job board for " + (spec.was or "everything")
+                    + (" in " + spec.wo if spec.wo else ""), phase="agentur")
+    tally = {"created": 0}
+
+    def keep(lead: Dict[str, Any]) -> None:
+        row, was_new = store.upsert_prospect(lead, source="arbeitsagentur")
+        tally["created"] += 1 if was_new else 0
+        store.log_event(
+            ("Added " if was_new else "Updated ") + str(lead.get("company"))
+            + (" - " + str(lead.get("contact_name")) if lead.get("contact_name") else "")
+            + (" - " + str(lead.get("email")) if lead.get("email")
+               else (" - tel " + str(lead.get("phone")) if lead.get("phone")
+                     else " - no contact printed")),
+            phase="agentur", prospect_id=row["id"],
+        )
+
+    try:
+        result = agentur.run(
+            was=spec.was, wo=spec.wo, umkreis=spec.umkreis, count=spec.count,
+            skip_agencies=spec.skip_agencies,
+            on_event=lambda msg, level="info": store.log_event(
+                msg, phase="agentur", level=level),
+            on_lead=keep,
+            should_stop=lambda: bool(_discovery["cancel"]),
+        )
+        store.log_event(
+            "Finished: " + str(result["kept"]) + " employers, "
+            + str(result["emails"]) + " with an address, "
+            + str(result["phones"]) + " with a telephone number, "
+            + str(tally["created"]) + " new",
+            phase="agentur",
+        )
+    except Exception as exc:  # noqa: BLE001 - the console is where this belongs
+        _discovery["error"] = str(exc)
+        store.log_event("Board search failed: " + str(exc), phase="agentur", level="error")
+    finally:
+        _discovery["running"] = False
+        _discovery["cancel"] = False
+
+
+@router.post("/agentur")
+def post_agentur(body: AgenturIn) -> Dict[str, Any]:
+    if not body.was.strip():
+        raise HTTPException(400, "Give the board something to search for.")
+    if _discovery["running"]:
+        raise HTTPException(409, "Already searching for " + str(_discovery["label"]) + ".")
+
+    _discovery.update({
+        "running": True,
+        "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "label": body.was,
+        "error": "",
+        "engine": "agentur",
+        "cancel": False,
+    })
+    threading.Thread(target=_run_agentur, args=(body,), daemon=True).start()
+    return {"started": True, "label": _discovery["label"]}
 
 
 @router.post("/harvest")

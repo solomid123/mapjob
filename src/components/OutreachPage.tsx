@@ -34,6 +34,9 @@ export interface Prospect {
   verified_at?: string;
   source_url?: string;
   email_kind?: string;
+  phone?: string;
+  street?: string;
+  postcode?: string;
   website: string;
   city: string;
   source: string;
@@ -186,7 +189,7 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
    * confirm the one that person must have. Slowest, dearest, and the only one
    * that reaches a named human at a firm with nothing but a web form.
    */
-  const [engine, setEngine] = useState<'fast' | 'deep' | 'people'>('fast');
+  const [engine, setEngine] = useState<'fast' | 'deep' | 'people' | 'agentur'>('fast');
   const [hunting, setHunting] = useState(false);
   const consoleRef = useRef<HTMLDivElement | null>(null);
 
@@ -322,24 +325,37 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
    */
   const startHunt = async () => {
     const fast = engine === 'fast';
+    const board = engine === 'agentur';
     if (fast && !hunt.city.trim()) {
       setError('Name a city to sweep.');
       return;
     }
-    if (!fast && !hunt.profession.trim() && !hunt.company.trim()) {
+    if (board && !hunt.profession.trim()) {
+      setError('Say what the board should search for.');
+      return;
+    }
+    if (!fast && !board && !hunt.profession.trim() && !hunt.company.trim()) {
       setError('Say what role you are looking for, or name a company.');
       return;
     }
     setError('');
     setHunting(true);
-    const route = engine === 'fast' ? 'harvest' : engine === 'people' ? 'contacts' : 'discover';
+    const route = engine === 'fast' ? 'harvest'
+      : engine === 'people' ? 'contacts'
+        : engine === 'agentur' ? 'agentur' : 'discover';
     try {
       const res = await fetch(`${BACKEND}/api/outreach/${route}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        // The board speaks its own two words, `was` and `wo`, and they are
+        // passed through as typed: a search that works on the website works
+        // here, which is the point of using its API rather than reading it.
         body: JSON.stringify(fast
           ? { city: hunt.city, keyword: hunt.keyword, limit: hunt.limit }
-          : hunt),
+          : board
+            ? { was: hunt.profession, wo: hunt.city, umkreis: 25,
+                count: hunt.count, skip_agencies: true }
+            : hunt),
       });
       if (!res.ok) {
         const detail = await res.json().catch(() => ({}));
@@ -494,7 +510,9 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                   ? 'Every employer in a city, read off their own websites'
                   : engine === 'people'
                     ? 'The person who reads applications, and their address proved by the company mail server'
-                    : 'A few employers, researched down to whatever mailbox they publish'}
+                    : engine === 'agentur'
+                      ? 'German federal job board, through its own API: addresses and telephone numbers as the employer printed them'
+                      : 'A few employers, researched down to whatever mailbox they publish'}
               </span>
 
               {/* The choice is breadth or depth, so it is one control, not a
@@ -504,6 +522,7 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                   ['fast', 'Sweep', 'Hundreds of published addresses. Free.'],
                   ['deep', 'Research', 'Whatever mailbox the company publishes.'],
                   ['people', 'People', 'Finds the person, builds their address from the company naming pattern, proves it by SMTP. Slowest and dearest.'],
+                  ['agentur', 'Agentur', 'The Bundesagentur fuer Arbeit job board, through its public API. Employers print their own address and telephone number in the listing. Free, fast, Germany only. Staffing agencies are dropped.'],
                 ] as const).map(([key, label, tip]) => (
                   <button
                     key={key}
@@ -526,6 +545,9 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
               {(engine === 'fast' ? ([
                 ['city', 'City to sweep', 'Osnabrueck'],
                 ['keyword', 'Kind of employer (optional)', 'Pflege, Bau, Hotel'],
+              ] as const) : engine === 'agentur' ? ([
+                ['profession', 'What the board calls it', 'Ausbildung-Kaufmann/-frau Bueromanagement'],
+                ['city', 'City', 'Berlin'],
               ] as const) : ([
                 ['profession', 'Role you want', 'Kauffrau fuer Bueromanagement'],
                 ['city', 'City', 'Osnabrueck'],
@@ -548,7 +570,7 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                   <input
                     type="number"
                     min={1}
-                    max={engine === 'fast' ? 800 : 20}
+                    max={engine === 'fast' ? 800 : engine === 'agentur' ? 200 : 20}
                     value={engine === 'fast' ? hunt.limit : hunt.count}
                     onChange={(e) => setHunt(engine === 'fast'
                       ? { ...hunt, limit: Number(e.target.value) || 60 }
@@ -569,7 +591,8 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                     ? <><Loader2 className="w-4 h-4 animate-spin" /> Stop</>
                     : <><Building2 className="w-4 h-4" /> {
                         engine === 'fast' ? 'Sweep city'
-                          : engine === 'people' ? 'Find people' : 'Find leads'
+                          : engine === 'people' ? 'Find people'
+                            : engine === 'agentur' ? 'Read the board' : 'Find leads'
                       }</>}
                 </button>
               </div>
@@ -700,8 +723,22 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                                 className="hover:underline underline-offset-2"
                               >{p.email}</a>
                             : p.email)
-                        : 'no address yet'}
+                        : p.phone
+                          // No mailbox, but a telephone number the employer
+                          // printed itself. For an apprenticeship that is not
+                          // a consolation prize: a two-minute call reaches the
+                          // person a hundred emails do not.
+                          ? <a
+                              href={`tel:${p.phone.replace(/[^\d+]/g, '')}`}
+                              className="hover:underline underline-offset-2"
+                            >{p.phone}</a>
+                          : 'no address yet'}
                     </span>
+                    {!p.email && p.phone ? (
+                      <span className="shrink-0 px-1 rounded text-[10px] uppercase tracking-wide bg-sky-400/15 text-sky-200/90">
+                        phone
+                      </span>
+                    ) : null}
                     {/* Where the address came from, never left to be inferred
                       * from a colour. "Guess" is an address this app built out
                       * of a person's name that no mail server has confirmed;

@@ -111,6 +111,17 @@ LATER_COLUMNS = (
     ("verify_reason", "TEXT DEFAULT ''"),
     ("verify_score", "INTEGER DEFAULT 0"),
     ("verified_at", "TEXT DEFAULT ''"),
+    # A job board that prints a postal address and a telephone number alongside
+    # the email. The telephone is not a fallback for a failed verification --
+    # it is often the better approach for an apprenticeship, where a two-minute
+    # call reaches the person a hundred emails do not.
+    ("phone", "TEXT DEFAULT ''"),
+    ("street", "TEXT DEFAULT ''"),
+    ("postcode", "TEXT DEFAULT ''"),
+    # The board's own reference. Kept so a second run over the same search
+    # recognises a listing it has already read, even after the employer renames
+    # the role.
+    ("ref", "TEXT DEFAULT ''"),
 )
 
 
@@ -230,8 +241,8 @@ def upsert_prospect(data: Dict[str, Any], source: str = "manual") -> Tuple[Dict[
             conn.execute(
                 "INSERT INTO prospects (dedupe_key, company, contact_name, role, email,"
                 " email_status, website, city, source, stage, notes, email_kind,"
-                " source_url, created_at, updated_at)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " source_url, phone, street, postcode, ref, created_at, updated_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     key, company, contact, (data.get("role") or "").strip(), email,
                     (data.get("email_status") or ("guessed" if email else "unknown")),
@@ -239,6 +250,10 @@ def upsert_prospect(data: Dict[str, Any], source: str = "manual") -> Tuple[Dict[
                     source, (data.get("stage") or "new"), (data.get("notes") or "").strip(),
                     (data.get("email_kind") or ("published" if email else "")),
                     (data.get("source_url") or "").strip(),
+                    (data.get("phone") or "").strip(),
+                    (data.get("street") or "").strip(),
+                    (data.get("postcode") or "").strip(),
+                    (data.get("ref") or "").strip(),
                     now, now,
                 ),
             )
@@ -249,7 +264,8 @@ def upsert_prospect(data: Dict[str, Any], source: str = "manual") -> Tuple[Dict[
         else:
             merged = dict(existing)
             for field in ("contact_name", "role", "email", "website", "city", "notes",
-                          "email_kind", "source_url"):
+                          "email_kind", "source_url", "phone", "street", "postcode",
+                          "ref"):
                 value = (data.get(field) or "").strip()
                 if value:
                     merged[field] = value
@@ -275,13 +291,15 @@ def upsert_prospect(data: Dict[str, Any], source: str = "manual") -> Tuple[Dict[
             conn.execute(
                 "UPDATE prospects SET contact_name=?, role=?, email=?, email_status=?,"
                 " website=?, city=?, notes=?, stage=?, email_kind=?, source_url=?,"
-                " updated_at=? WHERE id=?",
+                " phone=?, street=?, postcode=?, ref=?, updated_at=? WHERE id=?",
                 (
                     merged["contact_name"], merged["role"], merged["email"],
                     merged["email_status"], merged["website"], merged["city"],
                     merged["notes"], merged["stage"],
                     merged.get("email_kind") or ("published" if merged["email"] else ""),
                     merged.get("source_url") or "",
+                    merged.get("phone") or "", merged.get("street") or "",
+                    merged.get("postcode") or "", merged.get("ref") or "",
                     now, merged["id"],
                 ),
             )
@@ -295,7 +313,8 @@ def upsert_prospect(data: Dict[str, Any], source: str = "manual") -> Tuple[Dict[
 def update_prospect(prospect_id: int, fields: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     allowed = ("company", "contact_name", "role", "email", "email_status",
                "website", "city", "stage", "notes", "email_kind", "source_url",
-               "verify_reason", "verify_score", "verified_at")
+               "verify_reason", "verify_score", "verified_at",
+               "phone", "street", "postcode", "ref")
     sets, values = [], []
     for name in allowed:
         if name in fields:

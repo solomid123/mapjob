@@ -87,12 +87,77 @@ def init_db() -> None:
                 created_at  TEXT
             );
 
+            /*
+             * Every message that actually left, and the one table nothing in
+             * the app deletes.
+             *
+             * The daily cap and the "have we already written to them?" check
+             * used to be counted off `documents`, which was fine until
+             * documents became deletable. Then clearing out old applications
+             * silently reset the day's allowance and re-opened employers for a
+             * second letter -- a cap you can clear by tidying up is not a cap,
+             * and the account it protects is the user's own mailbox.
+             *
+             * So the fact of sending is recorded apart from the copy of what
+             * was sent. Deleting the letter throws away the letter. It does not
+             * make the letter un-received.
+             */
+            CREATE TABLE IF NOT EXISTS sends (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                prospect_id INTEGER,
+                to_email    TEXT DEFAULT '',
+                message_id  TEXT DEFAULT '',
+                sent_at     TEXT
+            );
+
             CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at);
             CREATE INDEX IF NOT EXISTS idx_docs_prospect ON documents(prospect_id);
+            CREATE INDEX IF NOT EXISTS idx_sends_at ON sends(sent_at);
+            CREATE INDEX IF NOT EXISTS idx_sends_prospect ON sends(prospect_id);
             """
         )
         _add_columns(conn)
         _add_document_columns(conn)
+        _backfill_sends(conn)
+
+
+def _backfill_sends(conn: sqlite3.Connection) -> None:
+    """
+    Seed the send log from the documents that predate it.
+
+    Runs once: on a ledger that already has real sends on file but an empty
+    `sends` table, those sends are history and forgetting them would hand a
+    warm mailbox a fresh allowance the first time the app restarts.
+    """
+    if conn.execute("SELECT 1 FROM sends LIMIT 1").fetchone() is not None:
+        return
+    conn.execute(
+        "INSERT INTO sends (prospect_id, to_email, message_id, sent_at)"
+        " SELECT prospect_id, '', COALESCE(message_id, ''), sent_at FROM documents"
+        " WHERE dry_run=0 AND sent_at IS NOT NULL")
+
+
+def record_send(prospect_id: Optional[int], to_email: str, message_id: str,
+                sent_at: str) -> None:
+    """Write the fact of a send. Nothing in this module ever removes one."""
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO sends (prospect_id, to_email, message_id, sent_at)"
+            " VALUES (?,?,?,?)",
+            (prospect_id, (to_email or "").strip(), (message_id or "").strip(), sent_at))
+
+
+def sends_since(iso_timestamp: str) -> int:
+    with connect() as conn:
+        return int(conn.execute(
+            "SELECT COUNT(*) FROM sends WHERE sent_at >= ?",
+            (iso_timestamp,)).fetchone()[0] or 0)
+
+
+def has_been_sent_to(prospect_id: int) -> bool:
+    with connect() as conn:
+        return conn.execute("SELECT 1 FROM sends WHERE prospect_id=? LIMIT 1",
+                            (prospect_id,)).fetchone() is not None
 
 
 # Columns added after the first version shipped. SQLite has no "ADD COLUMN IF

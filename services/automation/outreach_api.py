@@ -1052,8 +1052,11 @@ def remove_documents(body: DocumentIds) -> Dict[str, Any]:
     where the pieces are indexed. So the count of really-sent records goes back
     in the reply and the interface says it out loud before asking.
 
-    The prospect is untouched, including its `sent` stage, so deleting the
-    record does not quietly re-open that company for a second application.
+    Deleting is safe to offer because the fact of sending is kept somewhere
+    else. The `sends` table records that a message left and nothing in this
+    application removes a row from it, so throwing away the copy does not give
+    back a day's allowance and does not re-open that employer for a second
+    identical letter. The prospect, stage included, is untouched as well.
     """
     found = store.delete_documents(list(body.ids or []))
     files = _erase_generated_files(found.get("paths") or [])

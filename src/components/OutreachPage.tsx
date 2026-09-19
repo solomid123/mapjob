@@ -231,7 +231,10 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
    * hundred letters because somebody clicked the wrong thing.
    */
   const [sendRole, setSendRole] = useState('');
-  const [live, setLive] = useState(false);
+  // The rows a send has been clicked on, waiting for the one question that
+  // decides whether mail leaves. Null means nothing is being asked.
+  const [ask, setAsk] = useState<number[] | null>(null);
+  const askRef = useRef<HTMLDivElement | null>(null);
   const [sendPreview, setSendPreview] = useState<SendPreview | null>(null);
   const [campaign, setCampaign] = useState<CampaignState | null>(null);
   const [openDoc, setOpenDoc] = useState<DocumentRow | null>(null);
@@ -508,16 +511,38 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
   /**
    * One row's send button, and the bulk bar above the table.
    *
-   * Both honour the same `live` switch as the panel in the Pipeline tab: with
-   * it off this writes the letter and files it for reading, and with it on the
-   * message goes. A row button that sent for real while the big red switch
-   * said "draft" would make the switch a lie.
+   * This used to read a switch kept somewhere else on the page -- tick "really
+   * send" first, then click the arrow. It was wrong twice over. It is a mode,
+   * so the same click did two different things depending on a box you could
+   * not see while looking at the row; and the mode defaults to off and resets
+   * on every reload, so the honest description of that button was "drafts,
+   * usually". Clicking send and getting a draft is not a safety feature, it is
+   * the button lying.
+   *
+   * So the question moved onto the click. Nothing is sent and nothing is
+   * drafted until the strip below says which company, at which address, from
+   * which mailbox, and the answer is given there. A decision you cannot forget
+   * having made, because you make it every time.
    */
-  const sendRows = async (ids: number[]) => {
+  const sendRows = (ids: number[]) => {
     if (!ids.length) return;
+    setAsk(ids);
+    // Re-ask the server how much of the day is left. The strip quotes that
+    // number while somebody decides, and a stale one is worse than none: it is
+    // a figure being relied on that is quietly wrong.
+    loadSendPreview();
+    // The question lives above the table, and the row that was clicked may be
+    // eighty rows down. A confirmation nobody can see reads as a dead button.
+    window.requestAnimationFrame(() => {
+      askRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+  };
+
+  const doSend = async (ids: number[], asLive: boolean) => {
+    setAsk(null);
     setRowBusy(ids.length === 1 ? ids[0] : -1);
     try {
-      await startCampaign(live && Boolean(sendPreview?.mailbox?.ok), ids);
+      await startCampaign(asLive, ids);
       setPicked(new Set());
     } finally {
       setRowBusy(null);
@@ -755,12 +780,16 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
     }
 
     if (section === 'prospects') {
-      // Armed means two things are true at once: the operator threw the switch
-      // in the Pipeline tab, and Google actually answered when we asked. Either
-      // one alone drafts. This is why the row buttons can say, before they are
-      // pressed, whether they are about to send anything.
-      const liveArmed = live && Boolean(sendPreview?.mailbox?.ok);
+      // Ready means Google actually answered when we asked, not that an
+      // address is configured. A token can be revoked from a phone; the send
+      // button must not offer to do something the mailbox will refuse.
+      const mailboxReady = Boolean(sendPreview?.mailbox?.ok);
       const allPicked = prospects.length > 0 && prospects.every((p) => picked.has(p.id));
+      // Who the pending question is about. Resolved from the rows on screen so
+      // the strip can name them instead of counting them.
+      const askRows = (ask || []).map((id) => prospects.find((p) => p.id === id));
+      const askNames = askRows.map((p, i) => p?.company || `prospect ${ask?.[i]}`);
+      const askTo = askRows.length === 1 ? (askRows[0]?.email || '') : '';
 
       return (
         <div className="space-y-3">
@@ -957,7 +986,7 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
             * you are asking for, and whether this is real -- live here, in
             * sight of the table, rather than on the page that reports results.
             */}
-          <div className="ic-glass rounded-2xl px-3.5 py-3 space-y-2.5">
+          <div ref={askRef} className="ic-glass rounded-2xl px-3.5 py-3 space-y-2.5">
             <div className="flex flex-wrap items-center gap-2.5">
               <Send className="w-4 h-4 text-[#0a84ff] shrink-0" />
               <input
@@ -966,24 +995,6 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                 placeholder="What you are asking for - Ausbildung Kaufmann fuer Bueromanagement"
                 className="flex-1 min-w-[240px] rounded-xl bg-white/[0.06] px-3 py-1.5 text-[13px] text-[#f5f5f7] placeholder:text-[rgba(235,235,245,0.3)] outline-none focus:bg-white/[0.09]"
               />
-              {/* The one switch that decides whether mail leaves. It names the
-                * mailbox because "send for real" is meaningless until you know
-                * which account carries the consequences. */}
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={live}
-                  onChange={(e) => setLive(e.target.checked)}
-                  disabled={!sendPreview?.mailbox?.ok}
-                  className="accent-[#0a84ff] w-3.5 h-3.5 cursor-pointer disabled:cursor-not-allowed"
-                />
-                <span className="text-[12.5px] text-[rgba(235,235,245,0.62)]">
-                  Really send, from{' '}
-                  <span className="text-[#f5f5f7]">
-                    {sendPreview?.mailbox?.address || 'the connected mailbox'}
-                  </span>
-                </span>
-              </label>
               {/* The rehearsal that is not a rehearsal. It really sends, which
                 * is the point: a dry run proves the letter and proves nothing
                 * about the mailbox, the token or the attachments. Addressed to
@@ -1009,12 +1020,72 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
               <p className="ic-row-in text-[12px] text-emerald-200/90">{testNote}</p>
             ) : null}
 
-            {picked.size === 0 ? (
+            {/*
+              * The question, and the only place an answer to it exists.
+              *
+              * It names the company, the address and the mailbox, because
+              * "send for real?" is not a question anybody can answer -- send
+              * what, to whom, from where. Both answers are offered as buttons
+              * of equal weight and neither is focused by default, so nothing
+              * here can be got through by hitting return twice.
+              */}
+            {ask ? (
+              <div className="ic-row-in rounded-xl bg-[#0a84ff]/[0.1] ring-1 ring-inset ring-[#0a84ff]/30 px-3 py-2.5 space-y-2">
+                <p className="text-[13px] text-[#f5f5f7]">
+                  {ask.length === 1 ? (
+                    <>
+                      Send a real application to{' '}
+                      <span className="font-semibold">{askNames[0]}</span>
+                      {askTo ? <> at <span className="font-semibold">{askTo}</span></> : null}?
+                    </>
+                  ) : (
+                    <>
+                      Send{' '}
+                      <span className="font-semibold tabular-nums">{ask.length}</span>{' '}
+                      real applications - {askNames.slice(0, 3).join(', ')}
+                      {ask.length > 3 ? ` and ${ask.length - 3} more` : ''}?
+                    </>
+                  )}
+                </p>
+                <p className="text-[11.5px] text-[rgba(235,235,245,0.62)]">
+                  {mailboxReady
+                    ? <>They leave from <span className="text-[#f5f5f7]">{sendPreview?.mailbox?.address}</span>
+                        {ask.length > 1 ? ', one every 40 seconds' : ''}. Mail cannot be unsent.
+                        {' '}{sendPreview?.sent_today ?? 0} of {sendPreview?.cap ?? 40} used today.</>
+                    : 'The mailbox is not connected, so only a draft is possible right now.'}
+                </p>
+                <div className="flex flex-wrap gap-2 pt-0.5">
+                  <button
+                    type="button"
+                    onClick={() => doSend(ask, true)}
+                    disabled={!mailboxReady}
+                    className="rounded-xl px-3.5 py-1.5 text-[13px] font-semibold bg-[#0a84ff] text-white hover:bg-[#0a84ff]/90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors inline-flex items-center gap-2"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    {ask.length === 1 ? 'Send it for real' : `Send all ${ask.length} for real`}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => doSend(ask, false)}
+                    className="rounded-xl px-3.5 py-1.5 text-[13px] font-semibold bg-white/[0.1] text-[#f5f5f7] hover:bg-white/[0.16] cursor-pointer transition-colors"
+                  >
+                    Just write {ask.length === 1 ? 'the letter' : 'the letters'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAsk(null)}
+                    className="rounded-xl px-2.5 py-1.5 text-[12.5px] text-[rgba(235,235,245,0.52)] hover:text-[#f5f5f7] cursor-pointer transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : picked.size === 0 ? (
               <p className="text-[11.5px] text-[rgba(235,235,245,0.42)]">
-                Tick the employers you want to write to. Off the switch, the letters are
-                written and filed without being sent - one every 40 seconds when it is on,
-                up to {sendPreview?.cap ?? 40} a day. {sendPreview?.sent_today ?? 0} sent in
-                the last 24 hours.
+                Send from any row, or tick several and send them together. Each send asks
+                once, by name, before anything leaves - one every 40 seconds, up to{' '}
+                {sendPreview?.cap ?? 40} a day. {sendPreview?.sent_today ?? 0} sent in the
+                last 24 hours.
               </p>
             ) : (
               <div className="ic-row-in flex flex-wrap items-center gap-2.5">
@@ -1033,17 +1104,11 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                   type="button"
                   onClick={() => sendRows([...picked])}
                   disabled={rowBusy !== null || Boolean(campaign?.running)}
-                  className={`rounded-xl px-3.5 py-1.5 text-[13px] font-semibold inline-flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors ${
-                    liveArmed
-                      ? 'bg-[#0a84ff] text-white hover:bg-[#0a84ff]/90'
-                      : 'bg-white/[0.1] text-[#f5f5f7] hover:bg-white/[0.16]'
-                  }`}
-                  title={liveArmed
-                    ? `Send ${picked.size} application${picked.size === 1 ? '' : 's'} for real`
-                    : 'Write the letters and file them. Nothing is sent.'}
+                  className="rounded-xl px-3.5 py-1.5 text-[13px] font-semibold inline-flex items-center gap-2 bg-[#0a84ff] text-white hover:bg-[#0a84ff]/90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                  title={`Send ${picked.size} application${picked.size === 1 ? '' : 's'}`}
                 >
                   <Send className="w-3.5 h-3.5" />
-                  {liveArmed ? `Send ${picked.size}` : `Draft ${picked.size}`}
+                  Send {picked.size}
                 </button>
                 <button
                   type="button"
@@ -1178,13 +1243,11 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                           ? 'The mail server said there is no such mailbox'
                           : p.stage === 'sent'
                             ? 'Already written to'
-                            : liveArmed
-                              ? `Send an application to ${p.company} now`
-                              : 'Write the letter and file it (nothing is sent)'}
+                            : `Send an application to ${p.company}`}
                       className={`p-1.5 rounded-lg hover:bg-white/[0.08] disabled:opacity-25 disabled:cursor-not-allowed cursor-pointer transition-colors ${
-                        liveArmed
-                          ? 'text-[#0a84ff] hover:text-[#3b9bff]'
-                          : 'text-[rgba(235,235,245,0.42)] hover:text-[#f5f5f7]'
+                        ask?.includes(p.id)
+                          ? 'text-[#0a84ff] bg-[#0a84ff]/15'
+                          : 'text-[#0a84ff] hover:text-[#3b9bff]'
                       }`}
                     >
                       <Send className="w-4 h-4" />

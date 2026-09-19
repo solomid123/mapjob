@@ -66,27 +66,29 @@ def _now() -> str:
 
 
 def already_written_to(prospect_id: int) -> bool:
-    """Has a real message -- not a dry run -- already gone to this prospect?"""
-    with store.connect() as conn:
-        row = conn.execute(
-            "SELECT 1 FROM documents WHERE prospect_id=? AND dry_run=0"
-            " AND sent_at IS NOT NULL LIMIT 1", (prospect_id,)).fetchone()
-    return row is not None
+    """
+    Has a real message -- not a dry run -- already gone to this prospect?
+
+    Asked of the send log, not of the documents. A document is a copy of what
+    was written and the user is allowed to throw copies away; the send is an
+    event in the world and deleting the copy does not undo it. Reading this off
+    `documents` meant clearing out old applications quietly re-opened those
+    employers for a second identical letter.
+    """
+    return store.has_been_sent_to(int(prospect_id))
 
 
 def sent_today() -> int:
     """
     How much of today's allowance is gone.
 
-    Counted from the ledger rather than from a counter in memory, so a restart
-    in the middle of an afternoon does not hand the account a fresh forty.
+    Counted from the send log rather than from a counter in memory, so a
+    restart in the middle of an afternoon does not hand the account a fresh
+    forty -- and rather than from the documents table, so neither does a
+    tidy-up.
     """
     since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat(timespec="seconds")
-    with store.connect() as conn:
-        count = conn.execute(
-            "SELECT COUNT(*) FROM documents WHERE dry_run=0 AND sent_at IS NOT NULL"
-            " AND sent_at >= ?", (since,)).fetchone()[0]
-    return int(count or 0)
+    return store.sends_since(since)
 
 
 def _reason_to_skip(row: Dict[str, Any], picked: bool = False) -> str:
@@ -279,13 +281,19 @@ def send_one(row: Dict[str, Any], role: str = "", dry_run: bool = True,
              "error", prospect_id)
         return {"ok": False, "reason": str(result.get("reason"))[:200]}
 
+    stamp = _now()
+    # The fact first, the copy second. If recording the document failed the
+    # message would still have gone, and a send that is not in the log is a
+    # send the cap cannot see.
+    store.record_send(prospect_id, row["email"],
+                      str(result.get("message_id") or ""), stamp)
     document = store.record_document(
         prospect_id, built["subject"], built["body"],
         pdf_path=files.get("pack_pdf") or files.get("letter_pdf") or "",
         letter_path=files.get("letter_pdf") or "",
         cv_path=files.get("cv_pdf") or "",
         language=built["letter"]["language"],
-        dry_run=False, sent_at=_now(), message_id=str(result.get("message_id") or ""))
+        dry_run=False, sent_at=stamp, message_id=str(result.get("message_id") or ""))
     store.update_prospect(prospect_id, {"stage": "sent"})
     talk(company + ": sent to " + row["email"], "info", prospect_id)
     return {"ok": True, "dry_run": False, "document_id": document["id"],

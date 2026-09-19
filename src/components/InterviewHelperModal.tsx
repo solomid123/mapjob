@@ -221,7 +221,16 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
    * and a setting that suits one is wrong for the other.
    */
   const [autoFontSize, setAutoFontSize] = useState(17);
+  /**
+   * How much of the call shows through it. Its own setting, and it starts
+   * mostly see-through: this pane sits on top of the person you are talking
+   * to, and a solid slab over their face is worse than a slightly harder read.
+   * Legibility comes from the blur behind the glass, not from hiding the video.
+   */
+  const [autoTint, setAutoTint] = useState<'sheer' | 'soft' | 'solid'>('soft');
   const handsFreeScrollRef = useRef<HTMLDivElement | null>(null);
+  const AUTO_TINT: Record<'sheer' | 'soft' | 'solid', number> = { sheer: 0.4, soft: 0.66, solid: 0.9 };
+  const nextTint = { sheer: 'soft', soft: 'solid', solid: 'sheer' } as const;
   const promptScrollRef = useRef<HTMLDivElement | null>(null);
 
   /**
@@ -272,6 +281,12 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
   const lineId = useRef(1);
   const answerId = useRef(1);
   const autoScrollRef = useRef(true);
+  /**
+   * The answers given so far, readable from inside askAI without making it a
+   * new function on every token. Hands-free fires from a poller that closes
+   * over askAI, so a stale copy there would send a stale conversation.
+   */
+  const answersRef = useRef<AnswerCard[]>([]);
   const sessionIdRef = useRef<string | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
   const answersEndRef = useRef<HTMLDivElement | null>(null);
@@ -280,6 +295,7 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
   const ctxRef = useRef<InterviewContext | null>(null);
 
   autoScrollRef.current = autoScroll;
+  answersRef.current = answers;
   ctxRef.current = ctx;
   thinkingRef.current = thinking;
 
@@ -878,6 +894,14 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
           // Nobody is waiting on a reasoning model's best work here: the
           // recruiter has stopped talking and the silence is running.
           fast: handsFree,
+          // What has already been said out loud. The backend keeps no session,
+          // so without this every answer is written as if it were the first
+          // one of the interview -- which is why the fourth still opened with
+          // "Bonjour, je suis ingénieur avec 3,5 ans d'expérience".
+          answered: answersRef.current
+            .filter((a) => a.model && a.answer.trim())
+            .slice(-4)
+            .map((a) => ({ question: a.question, answer: a.answer })),
         }),
       });
       if (!r.ok || !r.body) throw new Error(`backend ${r.status}`);
@@ -1366,7 +1390,12 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
               {autoCard && (
                 <div
                   className="absolute inset-x-2 bottom-2 max-h-[68%] flex flex-col rounded-xl overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200"
-                  style={{ background: 'rgba(12,17,34,0.93)', boxShadow: '0 12px 40px rgba(0,0,0,0.55), inset 0 0 0 0.5px rgba(255,255,255,0.14)' }}
+                  style={{
+                    background: `rgba(10,14,28,${AUTO_TINT[autoTint]})`,
+                    backdropFilter: 'blur(22px) saturate(150%)',
+                    WebkitBackdropFilter: 'blur(22px) saturate(150%)',
+                    boxShadow: '0 12px 40px rgba(0,0,0,0.5), inset 0 0 0 0.5px rgba(255,255,255,0.16)',
+                  }}
                 >
                   <div className="px-3 py-2 flex items-center gap-2 border-b border-white/10 shrink-0">
                     <span className="px-2 py-0.5 rounded-full ic-caption text-[10px] font-semibold uppercase tracking-[0.08em] bg-[#0a84ff]/15 text-[#0a84ff] flex items-center gap-1.5">
@@ -1376,6 +1405,14 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
                     <span className="ic-caption text-[11px] text-[rgba(235,235,245,0.42)] truncate min-w-0 flex-1">
                       {autoCard.question}
                     </span>
+                    <button
+                      type="button"
+                      onClick={() => setAutoTint((v) => nextTint[v])}
+                      className="ic-fill px-2 h-6 rounded-full text-[#f5f5f7] cursor-pointer shrink-0 ic-caption text-[10px] font-semibold flex items-center justify-center"
+                      title="How much of the call shows through"
+                    >
+                      {Math.round(AUTO_TINT[autoTint] * 100)}%
+                    </button>
                     <button
                       type="button"
                       onClick={() => setAutoFontSize((v) => Math.max(13, v - 2))}
@@ -1403,8 +1440,15 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
                   </div>
                   <div
                     ref={handsFreeScrollRef}
-                    className="flex-1 overflow-y-auto px-4 py-3 text-[#f5f5f7] font-medium leading-relaxed whitespace-pre-wrap select-text"
-                    style={{ fontSize: `${autoFontSize}px`, lineHeight: 1.5 }}
+                    className="flex-1 overflow-y-auto px-4 py-3 text-white font-medium leading-relaxed whitespace-pre-wrap select-text"
+                    style={{
+                      fontSize: `${autoFontSize}px`,
+                      lineHeight: 1.5,
+                      // The pane is see-through, so whatever is behind a given
+                      // line is anyone's guess. The shadow is what keeps the
+                      // words readable over a bright slide.
+                      textShadow: '0 1px 4px rgba(0,0,0,0.75)',
+                    }}
                   >
                     {autoCard.answer
                       ? spoken(autoCard.answer)

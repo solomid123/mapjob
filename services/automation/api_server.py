@@ -1160,6 +1160,11 @@ class InterviewAnswerRequest(pydantic.BaseModel):
     # Hands-free: nobody pressed anything, the interviewer is mid-pause, and a
     # fast first word beats a better-reasoned one that lands five seconds late.
     fast: bool = False
+    # What has already been said out loud in this interview, oldest first:
+    # [{"question": ..., "answer": ...}]. Without it every answer opens by
+    # introducing the candidate again, because to the model each request is
+    # its first -- the backend holds no session state on purpose.
+    answered: list[dict] = pydantic.Field(default_factory=list)
 
 class InterviewAnalyzeRequest(pydantic.BaseModel):
     image: str = ""  # data URL (jpeg/png) screenshot of the shared tab
@@ -1345,6 +1350,19 @@ def _answer_prompt(req: "InterviewAnswerRequest") -> tuple[str, str, str]:
     if not question:
         raise HTTPException(status_code=400, detail="Empty question/transcript")
     lang = "French" if req.lang == "fr" else "English"
+
+    # The conversation so far, in the candidate's own voice. Trimmed hard: the
+    # model needs to know which ground is already covered, not to re-read three
+    # full answers before writing a fourth while a recruiter waits.
+    history = ""
+    for i, qa in enumerate(req.answered[-4:], 1):
+        asked = str(qa.get("question", "")).strip()[:200]
+        said = str(qa.get("answer", "")).strip()
+        if not said:
+            continue
+        said = said[:700] + ("..." if len(said) > 700 else "")
+        history += f"\nQ{i}: {asked}\nYou answered: {said}\n"
+
     system = (
         "You are a real-time interview copilot for Badreddine Barki, mechanical/R&D engineer. "
         f"Answer in {lang}, first person, 60-90 seconds spoken (120-170 words), STAR structure. "
@@ -1353,7 +1371,25 @@ def _answer_prompt(req: "InterviewAnswerRequest") -> tuple[str, str, str]:
         "borrow their vocabulary, but never claim knowledge the brief does not contain. "
         "End with one crisp metric or result. No preamble, answer only."
     )
-    user = f"CANDIDATE CV:\n{_candidate_summary()}\n\n{_interview_brief(req)}LIVE INTERVIEW (last words first):\n{req.transcript.strip()[-2000:]}\n\nCURRENT QUESTION:\n{question}"
+    if history:
+        # Each request is stateless, so without this the model answers every
+        # question as if it were the first and re-introduces the candidate on
+        # question four.
+        system += (
+            " You are MID-INTERVIEW, not at the start: you have already been introduced and have "
+            "already given the answers listed under ALREADY ANSWERED. Do NOT greet, do NOT thank "
+            "them, do NOT state your name, your years of experience or a summary of your "
+            "background again. Open directly on the substance of the question just asked. Do not "
+            "reuse a project, employer example or figure that already appears there unless this "
+            "question is explicitly a follow-up about it; pick a different one from the CV. If it "
+            "is a follow-up, carry on from what you said instead of restating it."
+        )
+    already = f"ALREADY ANSWERED IN THIS INTERVIEW:\n{history}\n" if history else ""
+    user = (
+        f"CANDIDATE CV:\n{_candidate_summary()}\n\n{_interview_brief(req)}{already}"
+        f"LIVE INTERVIEW (last words first):\n{req.transcript.strip()[-2000:]}\n\n"
+        f"CURRENT QUESTION:\n{question}"
+    )
     return question, system, user
 
 

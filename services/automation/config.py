@@ -37,15 +37,22 @@ FUELIX_WRITER = os.getenv("FUELIX_WRITER", "gpt-5.6-terra")
 FUELIX_WRITER_FALLBACK = os.getenv("FUELIX_WRITER_FALLBACK", "gpt-5.6-terra")
 
 # Live interview answers, where a second of silence is a second the candidate
-# spends staring at nothing. Measured on this account, same prompt, streaming:
-#   gpt-5.6-terra     first token 4.85s
-#   gpt-4.1-mini      first token 4.07s
-#   gpt-5.4-mini      first token 2.71s
-#   claude-haiku-4-5  first token 1.45s, full answer in 3.75s
+# spends staring at nothing. Measured on this account, same French prompt,
+# streaming, three runs each, median time to first token:
+#   claude-haiku-4-5  1.16s
+#   gpt-5.4-mini      2.89s
+#   gpt-5.6-luna      2.93s
+#   gpt-5.6-terra     4.86s
+# Haiku is the fastest by a wide margin and the answers read like it: clipped,
+# and the French is the weakest of the four. Luna costs about 1.8s more and
+# writes something a person would be happy to say out loud, which is the whole
+# job. That trade is the right way round, so luna it is; the fallback is the
+# model that matches it on speed.
+#
 # The writer stays on the reasoning model when a human asked for the answer and
 # is willing to wait; hands-free uses this one, because it has to keep up with
 # a conversation.
-FUELIX_LIVE = os.getenv("FUELIX_LIVE", "claude-haiku-4-5")
+FUELIX_LIVE = os.getenv("FUELIX_LIVE", "gpt-5.6-luna")
 FUELIX_LIVE_FALLBACK = os.getenv("FUELIX_LIVE_FALLBACK", "gpt-5.4-mini")
 
 # The apply engine's brain: small decisions taken mid-run, while a browser sits

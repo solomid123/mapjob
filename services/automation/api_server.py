@@ -23,7 +23,7 @@ if sys.platform == "win32":
         pass
 
 from typing import Optional, Dict, Any, List
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse, Response
 import urllib.request
@@ -1148,6 +1148,15 @@ class InterviewAnswerRequest(pydantic.BaseModel):
     question: str = ""
     transcript: str = ""
     lang: str = "fr"
+    # What this particular interview is about, gathered before the call. An
+    # answer that names the company's own product beats a generically good one,
+    # and the model cannot know any of this from the transcript alone.
+    job_title: str = ""
+    company: str = ""
+    job_description: str = ""
+    notes: str = ""
+    # Text pulled out of whatever the employer asked to be read beforehand.
+    documents: str = ""
 
 class InterviewAnalyzeRequest(pydantic.BaseModel):
     image: str = ""  # data URL (jpeg/png) screenshot of the shared tab
@@ -1191,6 +1200,112 @@ def assembly_token():
     except Exception as e:
         return {"configured": False, "token": None, "error": str(e)}
 
+DOC_TEXT_CAP = 40000  # characters kept from one document; past this it is appendices
+
+
+def _text_from_pdf(raw: bytes) -> tuple[str, int]:
+    """Page text out of a PDF, preferring PyMuPDF and falling back to pypdf."""
+    try:
+        import fitz  # PyMuPDF
+
+        with fitz.open(stream=raw, filetype="pdf") as doc:
+            pages = [p.get_text("text") for p in doc]
+        return "\n\n".join(pages), len(pages)
+    except ImportError:
+        pass
+    from pypdf import PdfReader
+
+    reader = PdfReader(io.BytesIO(raw))
+    pages = [(p.extract_text() or "") for p in reader.pages]
+    return "\n\n".join(pages), len(pages)
+
+
+def _text_from_docx(raw: bytes) -> str:
+    import docx
+
+    d = docx.Document(io.BytesIO(raw))
+    blocks = [p.text for p in d.paragraphs]
+    for table in d.tables:
+        for row in table.rows:
+            blocks.append(" | ".join(c.text.strip() for c in row.cells))
+    return "\n".join(b for b in blocks if b.strip())
+
+
+@app.post("/api/interview/context/parse")
+async def interview_context_parse(file: UploadFile = File(...)):
+    """Turn a document the employer asked to be read into plain text.
+
+    The extension decides the reader, and an unknown one is refused rather
+    than guessed at: a .zip renamed to .pdf should fail here, not somewhere
+    deeper. Nothing is written to disk -- the text goes back to the browser,
+    which holds it for the session and sends it with each question.
+    """
+    name = (file.filename or "document").strip()
+    ext = os.path.splitext(name)[1].lower()
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Empty file")
+    if len(raw) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File larger than 20 MB")
+
+    pages = 0
+    try:
+        if ext == ".pdf":
+            text, pages = _text_from_pdf(raw)
+        elif ext == ".docx":
+            text = _text_from_docx(raw)
+        elif ext in (".txt", ".md", ".rtf", ".csv"):
+            text = raw.decode("utf-8", errors="replace")
+        else:
+            raise HTTPException(
+                status_code=415,
+                detail=f"Cannot read {ext or 'that kind of file'}. Use PDF, DOCX, TXT or MD.",
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Could not read {name}: {e}")
+
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    if not text:
+        raise HTTPException(
+            status_code=422,
+            detail="No text in that file -- a scanned PDF needs OCR, which we do not do here.",
+        )
+    truncated = len(text) > DOC_TEXT_CAP
+    return {
+        "filename": name,
+        "pages": pages,
+        "chars": len(text),
+        "truncated": truncated,
+        "text": text[:DOC_TEXT_CAP],
+    }
+
+
+def _interview_brief(req: "InterviewAnswerRequest") -> str:
+    """What this interview is about, as told to us before the call.
+
+    Only the fields that were actually filled in appear: an empty heading is
+    worse than no heading, because the model reads "COMPANY:" followed by
+    nothing as a company with no name. Returns "" when nothing was given, so
+    the caller can concatenate it unconditionally.
+    """
+    parts: list[str] = []
+    if (req.job_title or "").strip():
+        parts.append(f"ROLE: {req.job_title.strip()[:200]}")
+    if (req.company or "").strip():
+        parts.append(f"COMPANY: {req.company.strip()[:200]}")
+    if (req.job_description or "").strip():
+        parts.append(f"JOB DESCRIPTION:\n{req.job_description.strip()[:4000]}")
+    if (req.notes or "").strip():
+        parts.append(f"CANDIDATE NOTES:\n{req.notes.strip()[:2000]}")
+    if (req.documents or "").strip():
+        # The tail is usually appendices; the head is what the employer meant.
+        parts.append(f"PRE-READING SENT BY THE EMPLOYER:\n{req.documents.strip()[:8000]}")
+    if not parts:
+        return ""
+    return "THIS INTERVIEW:\n" + "\n\n".join(parts) + "\n\n"
+
 @app.post("/api/interview/answer")
 def interview_answer(req: InterviewAnswerRequest):
     """Generate a spoken-style interview answer from live transcript + CV via Fuelix."""
@@ -1203,9 +1318,11 @@ def interview_answer(req: InterviewAnswerRequest):
         "You are a real-time interview copilot for Badreddine Barki, mechanical/R&D engineer. "
         f"Answer in {lang}, first person, 60-90 seconds spoken (120-170 words), STAR structure. "
         "Ground every claim in the CV below; never invent employers, degrees, or visa status. "
+        "When a THIS INTERVIEW brief is present, aim the answer at that role and company and "
+        "borrow their vocabulary, but never claim knowledge the brief does not contain. "
         "End with one crisp metric or result. No preamble, answer only."
     )
-    user = f"CANDIDATE CV:\n{_candidate_summary()}\n\nLIVE INTERVIEW (last words first):\n{req.transcript.strip()[-2000:]}\n\nCURRENT QUESTION:\n{question}"
+    user = f"CANDIDATE CV:\n{_candidate_summary()}\n\n{_interview_brief(req)}LIVE INTERVIEW (last words first):\n{req.transcript.strip()[-2000:]}\n\nCURRENT QUESTION:\n{question}"
     for model in [FUELIX_WRITER, FUELIX_WRITER_FALLBACK]:
         if not model or not FUELIX_API_KEY:
             continue

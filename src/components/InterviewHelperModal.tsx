@@ -11,6 +11,11 @@ import {
   recordInterviewQA,
   finishInterviewSession,
 } from '../services/supabase';
+import {
+  InterviewSetup,
+  documentsText,
+  type InterviewContext,
+} from './InterviewSetup';
 
 interface InterviewHelperModalProps {
   isOpen: boolean;
@@ -33,7 +38,15 @@ interface AnswerCard {
 }
 
 const BACKEND = 'http://127.0.0.1:8000';
-const SESSION_SECONDS = 30 * 60;
+
+/** mm:ss, and hh:mm:ss once an interview has run past the hour. */
+function clock(total: number): string {
+  const s = Math.max(0, Math.floor(total));
+  const hh = Math.floor(s / 3600);
+  const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+  const ss = String(s % 60).padStart(2, '0');
+  return hh > 0 ? `${hh}:${mm}:${ss}` : `${mm}:${ss}`;
+}
 
 function nowTs(): string {
   return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -67,7 +80,21 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
   const [thinking, setThinking] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
-  const [secondsLeft, setSecondsLeft] = useState(SESSION_SECONDS);
+  /**
+   * What this interview is about, answered before the call. Null means the
+   * setup has not been done yet, and the setup is all that renders -- there is
+   * no half-configured session, and nothing to transcribe before there is one.
+   */
+  const [ctx, setCtx] = useState<InterviewContext | null>(null);
+  /**
+   * A chronometer, not a countdown. An interview has no fixed length, and a
+   * clock draining towards zero is a distraction during one; what is actually
+   * useful is knowing you are twelve minutes in. Seconds are derived from a
+   * start timestamp rather than accumulated, so a throttled background tab
+   * cannot make the session look shorter than it was.
+   */
+  const [elapsed, setElapsed] = useState(0);
+  const startedAtRef = useRef<number | null>(null);
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [error, setError] = useState('');
 
@@ -116,8 +143,11 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
   const answersEndRef = useRef<HTMLDivElement | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  /** The same context, readable from callbacks that outlive their render. */
+  const ctxRef = useRef<InterviewContext | null>(null);
 
   autoScrollRef.current = autoScroll;
+  ctxRef.current = ctx;
 
   const handleLangChange = useCallback((newLang: 'fr' | 'en') => {
     setLang(newLang);
@@ -427,7 +457,13 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
 
   const startEngine = useCallback(async (stream: MediaStream | null, pref: Engine) => {
     if (!sessionIdRef.current) {
-      void createInterviewSession('Interview Session', 'Mechanical Engineer', lang).then((id) => {
+      // The session is named after the interview it is for, so the history is
+      // readable later; the setup guarantees a title exists by this point.
+      void createInterviewSession(
+        ctxRef.current?.company ? `${ctxRef.current.jobTitle} @ ${ctxRef.current.company}` : (ctxRef.current?.jobTitle || 'Interview Session'),
+        ctxRef.current?.jobTitle || 'Mechanical Engineer',
+        lang,
+      ).then((id) => {
         sessionIdRef.current = id;
       });
     }
@@ -446,11 +482,13 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
     }
   }, [startAssemblyAI, startBackendRelay, startBrowserSpeech, lang]);
 
+  /**
+   * Stop the screen share. The session itself survives: the chronometer keeps
+   * running and the transcript stays on screen, because picking a different
+   * tab mid-interview is a normal thing to do and used to silently close the
+   * recorded session.
+   */
   const stopSharing = useCallback(() => {
-    if (sessionIdRef.current) {
-      void finishInterviewSession(sessionIdRef.current, SESSION_SECONDS - secondsLeft);
-      sessionIdRef.current = null;
-    }
     stopTranscription();
     try {
       streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -462,7 +500,7 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
     setSharing(false);
     setConnected(false);
     setEngine(null);
-  }, [stopTranscription, secondsLeft]);
+  }, [stopTranscription]);
 
   const startSharing = useCallback(async () => {
     setError('');
@@ -476,7 +514,6 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
       const track = stream.getVideoTracks()[0];
       setShareLabel(track?.label || 'Shared tab');
       setSharing(true);
-      setSecondsLeft(SESSION_SECONDS);
       stream.getVideoTracks()[0]?.addEventListener('ended', () => void stopSharing());
       await startEngine(stream, enginePrefRef.current);
       setConnected(true);
@@ -486,25 +523,50 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startEngine]);
 
-  const exitAll = useCallback(() => {
+  /**
+   * Close the session out: stop the share, write the real duration, and drop
+   * back to the setup so the next interview starts from a clean brief rather
+   * than inheriting the last one's company.
+   */
+  const endSession = useCallback(() => {
+    if (sessionIdRef.current) {
+      void finishInterviewSession(sessionIdRef.current, elapsed);
+      sessionIdRef.current = null;
+    }
     stopSharing();
     if (timerRef.current) clearInterval(timerRef.current);
     timerRef.current = null;
-    onClose();
-  }, [stopSharing, onClose]);
+    startedAtRef.current = null;
+    setElapsed(0);
+    setLines([]);
+    setAnswers([]);
+    setTeleprompterOpen(false);
+    setCtx(null);
+  }, [stopSharing, elapsed]);
 
-  // Session countdown while sharing
+  const exitAll = useCallback(() => {
+    endSession();
+    onClose();
+  }, [endSession, onClose]);
+
+  // The chronometer runs for as long as the session exists, not only while a
+  // tab is being shared: the session starts when you finish the setup, and
+  // re-picking the shared tab mid-call should not reset the elapsed time.
   useEffect(() => {
-    if (!isOpen || !sharing) return;
+    if (!isOpen || !ctx) return;
+    if (startedAtRef.current === null) startedAtRef.current = Date.now();
     if (timerRef.current) clearInterval(timerRef.current);
-    timerRef.current = setInterval(() => {
-      setSecondsLeft((s) => (s > 0 ? s - 1 : 0));
-    }, 1000);
+    const tick = () => {
+      const from = startedAtRef.current;
+      if (from !== null) setElapsed(Math.floor((Date.now() - from) / 1000));
+    };
+    tick();
+    timerRef.current = setInterval(tick, 1000);
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
       timerRef.current = null;
     };
-  }, [isOpen, sharing]);
+  }, [isOpen, ctx]);
 
   // Cleanup on unmount / close
   useEffect(() => {
@@ -529,7 +591,19 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
       const r = await fetch(`${BACKEND}/api/interview/answer`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: q || tail.slice(-500), transcript: tail, lang }),
+        // The brief goes with every question, not just the first: the backend
+        // holds no session state, so an answer is only as informed as the
+        // request that asked for it.
+        body: JSON.stringify({
+          question: q || tail.slice(-500),
+          transcript: tail,
+          lang,
+          job_title: ctxRef.current?.jobTitle || '',
+          company: ctxRef.current?.company || '',
+          job_description: ctxRef.current?.jobDescription || '',
+          notes: ctxRef.current?.notes || '',
+          documents: ctxRef.current ? documentsText(ctxRef.current) : '',
+        }),
       });
       if (!r.ok) throw new Error(`backend ${r.status}`);
       const data = await r.json();
@@ -682,51 +756,79 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
 
   if (!isOpen) return null;
 
-  const mm = String(Math.floor(secondsLeft / 60)).padStart(2, '0');
-  const ss = String(secondsLeft % 60).padStart(2, '0');
+  // Nothing about the live session renders until there is a session. The setup
+  // is the page, full width, one question at a time.
+  if (!ctx) {
+    return (
+      <InterviewSetup
+        backend={BACKEND}
+        onStart={(c) => {
+          setCtx(c);
+          setLang(c.lang);
+          startedAtRef.current = Date.now();
+          setElapsed(0);
+          setError('');
+        }}
+        onCancel={onClose}
+      />
+    );
+  }
+
+  const chrono = clock(elapsed);
 
   return (
     <div className="flex-1 w-full max-w-[1760px] mx-auto px-4 sm:px-6 lg:px-8 py-3 flex flex-col h-[calc(100vh-80px)] overflow-hidden animate-in fade-in duration-150">
-      <div className="relative bg-white w-full h-full rounded-2xl border border-gray-200 shadow-sm overflow-hidden flex flex-col">
+      <div className="ic-tile is-static relative w-full h-full rounded-[22px] overflow-hidden flex flex-col">
         {/* Header */}
-        <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between bg-white shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-rose-50 text-[#FF385C] flex items-center justify-center font-black shadow-2xs">
+        <div className="px-5 py-3 border-b border-white/10 flex items-center justify-between shrink-0 gap-3 flex-wrap">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-[#0a84ff]/15 text-[#0a84ff] flex items-center justify-center shrink-0">
               <Sparkles className="w-5 h-5" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="font-extrabold text-gray-900 text-base leading-tight">Interview Copilot</h3>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                  Live Assistant
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 min-w-0">
+                {/* The session is named after the job, not after the tool: on a
+                    page you only open for one interview, the product name is
+                    the least useful thing that could be in the title slot. */}
+                <h3 className="ic-title text-[16px] text-[#f5f5f7] truncate">
+                  {ctx.jobTitle}{ctx.company ? ` · ${ctx.company}` : ''}
+                </h3>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-[0.08em] bg-[#30d158]/15 text-[#30d158] flex items-center gap-1 shrink-0">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#30d158] animate-pulse" />
+                  Live
                 </span>
               </div>
-              <p className="text-xs text-gray-500">
-                {sharing ? `Sharing: ${shareLabel || 'Tab Audio'} · ` : 'Share your interview/Meet tab to transcribe in real-time · '}
-                <span className="font-bold text-gray-800">
-                  {engine === 'google' ? '⚡ Google Speech (Tab Audio Active)' : engine === 'gemini' ? '✨ Gemini Live (gemini-3.5-transcribe-live)' : engine === 'assemblyai' ? '🟣 AssemblyAI (Active)' : engine === 'browser' ? '🎙️ Chrome Speech (Mic)' : connected ? 'Listening...' : 'Ready'}
+              <p className="ic-caption text-[12px] text-[rgba(235,235,245,0.62)] truncate">
+                {sharing ? `Sharing ${shareLabel || 'tab audio'} · ` : 'Share the call tab to transcribe it live · '}
+                <span className="text-[#f5f5f7]">
+                  {engine === 'google' ? 'Google Speech' : engine === 'gemini' ? 'Gemini Live' : engine === 'assemblyai' ? 'AssemblyAI' : engine === 'browser' ? 'Chrome Speech (mic)' : connected ? 'Listening' : 'Ready'}
                 </span>
+                {ctx.docs.length > 0 && (
+                  <span className="text-[rgba(235,235,245,0.42)]">
+                    {` · ${ctx.docs.length} document${ctx.docs.length > 1 ? 's' : ''} in context`}
+                  </span>
+                )}
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-1.5 text-xs font-bold text-gray-800 bg-gray-50 px-3 py-1.5 rounded-xl border border-gray-200">
-              <Clock className="w-3.5 h-3.5 text-gray-500" />
-              <span>{mm}:{ss}</span>
+          <div className="flex items-center gap-2.5">
+            {/* Counting up, not down. */}
+            <div className="ic-fill flex items-center gap-1.5 px-3 py-1.5 rounded-full ic-body text-[13px] font-semibold text-[#f5f5f7] tabular-nums">
+              <Clock className="w-3.5 h-3.5 text-[rgba(235,235,245,0.62)]" />
+              <span>{chrono}</span>
             </div>
-            <div className="flex items-center border border-gray-200 rounded-xl overflow-hidden text-xs font-bold bg-white shadow-2xs">
+            <div className="ic-segmented flex items-center rounded-full overflow-hidden text-[12px] font-semibold">
               <button
                 type="button"
                 onClick={() => handleLangChange('fr')}
-                className={`px-3 py-1.5 transition cursor-pointer ${lang === 'fr' ? 'bg-[#FF385C] text-white font-extrabold' : 'text-gray-600 hover:bg-gray-50'}`}
+                className={`ic-segmented-item px-3 py-1.5 cursor-pointer ${lang === 'fr' ? 'is-on' : ''}`}
               >
                 FR
               </button>
               <button
                 type="button"
                 onClick={() => handleLangChange('en')}
-                className={`px-3 py-1.5 transition cursor-pointer ${lang === 'en' ? 'bg-[#FF385C] text-white font-extrabold' : 'text-gray-600 hover:bg-gray-50'}`}
+                className={`ic-segmented-item px-3 py-1.5 cursor-pointer ${lang === 'en' ? 'is-on' : ''}`}
               >
                 EN
               </button>
@@ -734,31 +836,39 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
             <button
               type="button"
               onClick={() => setTeleprompterOpen((v) => !v)}
-              className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-2xs ${teleprompterOpen ? 'bg-rose-50 border-[#FF385C] text-[#FF385C] ring-2 ring-rose-100' : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'}`}
-              title="Toggle Transparent Teleprompter HUD on center screen (Press T)"
+              className={`ic-fill ${teleprompterOpen ? 'is-on' : ''} px-3 py-1.5 rounded-full ic-body text-[13px] font-medium text-[#f5f5f7] flex items-center gap-1.5 cursor-pointer`}
+              title="Toggle the teleprompter over the call (press T)"
             >
-              <Tv className="w-3.5 h-3.5 text-[#FF385C]" />
+              <Tv className="w-3.5 h-3.5" />
               <span>Teleprompter</span>
-              {teleprompterOpen && <span className="w-1.5 h-1.5 rounded-full bg-[#FF385C] animate-pulse" />}
+            </button>
+            <button
+              type="button"
+              onClick={endSession}
+              className="ic-fill px-3 py-1.5 rounded-full ic-body text-[13px] font-medium text-[#f5f5f7] flex items-center gap-1.5 cursor-pointer"
+              title="End this session and set up a new one"
+            >
+              <Square className="w-3.5 h-3.5" />
+              End session
             </button>
             <button
               type="button"
               onClick={exitAll}
-              className="px-4 py-2 rounded-xl bg-gray-100 hover:bg-rose-50 text-gray-700 hover:text-rose-600 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+              className="ic-fill px-3 py-1.5 rounded-full ic-body text-[13px] font-medium text-[#f5f5f7] flex items-center gap-1.5 cursor-pointer"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
-              Back to Jobs
+              Back to jobs
             </button>
           </div>
         </div>
 
         {error && (
-          <div className="mx-5 mt-3 px-4 py-2 rounded-xl bg-red-50 border border-red-100 text-xs font-medium text-red-700 shrink-0">
+          <div className="mx-5 mt-3 px-4 py-2 rounded-xl bg-[#ff453a]/12 ic-body text-[13px] text-[#ff8b82] shrink-0">
             {error}
           </div>
         )}
         {engineNote && (
-          <div className="mx-5 mt-2 px-4 py-1.5 rounded-xl bg-amber-50 border border-amber-100 text-[11px] font-medium text-amber-800 shrink-0">
+          <div className="mx-5 mt-2 px-4 py-1.5 rounded-xl bg-[#ff9f0a]/12 ic-body text-[12px] text-[#ffc65c] shrink-0">
             {engineNote}
           </div>
         )}
@@ -766,35 +876,35 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
         {/* Split body */}
         <div className="grid grid-cols-1 lg:grid-cols-2 min-h-0 flex-1">
           {/* Left: shared tab + transcript */}
-          <div className="p-4 border-r border-gray-100 flex flex-col min-h-0 bg-white">
-            <div className="relative rounded-2xl overflow-hidden bg-[#2b2144] aspect-video shrink-0">
-              <video ref={videoRef} muted playsInline className="w-full h-full object-contain bg-[#2b2144]" />
+          <div className="p-4 lg:border-r border-white/10 flex flex-col min-h-0">
+            <div className="relative rounded-2xl overflow-hidden bg-black/45 aspect-video shrink-0 shadow-[inset_0_0_0_0.5px_rgba(255,255,255,0.1)]">
+              <video ref={videoRef} muted playsInline className="w-full h-full object-contain" />
               {!sharing && (
                 <button
                   onClick={() => void startSharing()}
-                  className="absolute inset-0 m-auto w-fit h-fit px-6 py-3 rounded-2xl bg-white/95 text-gray-900 text-sm font-extrabold shadow-lg hover:bg-white transition flex items-center gap-2"
+                  className="absolute inset-0 m-auto w-fit h-fit px-6 py-3 rounded-full bg-[#0a84ff] hover:bg-[#3395ff] text-white ic-body text-[14px] font-semibold transition-colors duration-200 flex items-center gap-2 cursor-pointer"
                 >
-                  <MonitorUp className="w-4 h-4 text-[#FF385C]" />
-                  Share Meet tab
+                  <MonitorUp className="w-4 h-4" />
+                  Share the call tab
                 </button>
               )}
               {sharing && (
                 <div className="absolute top-2 left-2 flex gap-2">
                   <button
                     onClick={() => videoRef.current?.requestFullscreen().catch(() => undefined)}
-                    className="px-3 py-1.5 rounded-lg bg-white/90 text-xs font-bold text-gray-800 hover:bg-white transition flex items-center gap-1.5"
+                    className="ic-popover px-3 py-1.5 rounded-full ic-body text-[12px] font-medium text-[#f5f5f7] flex items-center gap-1.5 cursor-pointer"
                   >
                     <Maximize2 className="w-3.5 h-3.5" /> Fullscreen
                   </button>
                   <button
                     onClick={() => { stopSharing(); void startSharing(); }}
-                    className="px-3 py-1.5 rounded-lg bg-white/90 text-xs font-bold text-gray-800 hover:bg-white transition flex items-center gap-1.5"
+                    className="ic-popover px-3 py-1.5 rounded-full ic-body text-[12px] font-medium text-[#f5f5f7] flex items-center gap-1.5 cursor-pointer"
                   >
                     <RefreshCw className="w-3.5 h-3.5" /> Change Tab
                   </button>
                   <button
                     onClick={stopSharing}
-                    className="px-3 py-1.5 rounded-lg bg-emerald-800/90 text-xs font-bold text-white hover:bg-emerald-900 transition flex items-center gap-1.5"
+                    className="ic-popover px-3 py-1.5 rounded-full ic-body text-[12px] font-medium text-[#f5f5f7] flex items-center gap-1.5 cursor-pointer"
                   >
                     <Square className="w-3.5 h-3.5" /> Stop sharing
                   </button>
@@ -803,20 +913,18 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
             </div>
 
             <div className="flex items-center gap-2 mt-3 shrink-0 flex-wrap">
-              <span className="font-extrabold text-gray-900">Transcript</span>
+              <span className="ic-title text-[15px] text-[#f5f5f7]">Transcript</span>
               {sharing && hasAudioInput && (
-                <span className={`inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-0.5 rounded-full border transition-all ${
-                  audioActive 
-                    ? 'bg-emerald-50 text-emerald-700 border-emerald-300 ring-2 ring-emerald-100' 
-                    : 'bg-gray-50 text-gray-600 border-gray-200'
+                <span className={`inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-0.5 rounded-full ${
+                  audioActive ? 'bg-[#30d158]/15 text-[#30d158]' : 'bg-white/10 text-[rgba(235,235,245,0.62)]'
                 }`}>
-                  <span className={`w-2 h-2 rounded-full ${audioActive ? 'bg-emerald-500 animate-pulse' : 'bg-gray-400'}`} />
-                  <span>{audioActive ? 'Tab Audio Active' : 'Tab Audio Connected'}</span>
+                  <span className={`w-2 h-2 rounded-full ${audioActive ? 'bg-[#30d158] animate-pulse' : 'bg-white/35'}`} />
+                  <span>{audioActive ? 'Hearing the tab' : 'Tab audio connected'}</span>
                 </span>
               )}
               {sharing && !hasAudioInput && (
-                <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-300">
-                  <span>⚠️ No Tab Audio Shared</span>
+                <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-[#ff9f0a]/15 text-[#ffc65c]">
+                  <span>No tab audio shared</span>
                 </span>
               )}
               <select
@@ -830,7 +938,7 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
                     void startEngine(streamRef.current, v).then(() => setConnected(true));
                   }
                 }}
-                className="px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs font-bold text-gray-700 bg-white shadow-2xs"
+                className="ic-fill px-2.5 py-1.5 rounded-full ic-body text-[12px] font-medium text-[#f5f5f7] [&>option]:bg-[#161c33] cursor-pointer outline-none"
                 aria-label="Transcription engine"
                 title="Transcription engine"
               >
@@ -849,39 +957,39 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
                     void startEngine(streamRef.current, enginePrefRef.current).then(() => setConnected(true));
                   }
                 }}
-                className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-bold text-gray-700 hover:bg-gray-50 transition flex items-center gap-1.5 cursor-pointer"
+                className="ic-fill px-3 py-1.5 rounded-full ic-body text-[12px] font-medium text-[#f5f5f7] flex items-center gap-1.5 cursor-pointer"
               >
-                {connected ? <MicOff className="w-3.5 h-3.5 text-rose-500" /> : <Mic className="w-3.5 h-3.5 text-emerald-600" />}
+                {connected ? <MicOff className="w-3.5 h-3.5 text-[#ff453a]" /> : <Mic className="w-3.5 h-3.5 text-[#30d158]" />}
                 {connected ? 'Disconnect' : 'Connect'}
               </button>
               <button
                 onClick={() => setLines([])}
-                className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-bold text-gray-700 hover:bg-gray-50 transition flex items-center gap-1.5"
+                className="ic-fill px-3 py-1.5 rounded-full ic-body text-[12px] font-medium text-[#f5f5f7] flex items-center gap-1.5 cursor-pointer"
               >
                 <Trash2 className="w-3.5 h-3.5" /> Clear
               </button>
-              <div className="ml-auto flex items-center gap-2 text-xs font-bold text-gray-700">
-                AutoScroll
+              <div className="ml-auto flex items-center gap-2 ic-body text-[12px] font-medium text-[rgba(235,235,245,0.62)]">
+                Auto-scroll
                 <button
                   role="switch"
                   aria-checked={autoScroll}
                   onClick={() => setAutoScroll(!autoScroll)}
-                  className={`w-9 h-5 rounded-full transition relative ${autoScroll ? 'bg-gray-900' : 'bg-gray-300'}`}
+                  className={`w-9 h-5 rounded-full transition-colors duration-200 relative cursor-pointer ${autoScroll ? 'bg-[#0a84ff]' : 'bg-white/20'}`}
                 >
                   <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${autoScroll ? 'left-[18px]' : 'left-0.5'}`} />
                 </button>
               </div>
             </div>
 
-            <div className="mt-2 flex-1 min-h-[160px] overflow-y-auto border-t border-gray-100 pt-3 space-y-2 pr-1">
+            <div className="mt-2 flex-1 min-h-[160px] overflow-y-auto border-t border-white/10 pt-3 space-y-2 pr-1">
               {lines.length === 0 && (
-                <p className="text-sm text-gray-400 italic py-2">
-                  {connected ? 'Listening to speech from shared tab...' : 'Share your interview tab to begin instant transcription.'}
+                <p className="ic-body text-[14px] text-[rgba(235,235,245,0.42)] py-2">
+                  {connected ? 'Listening to the shared tab...' : 'Share the interview tab to start transcribing.'}
                 </p>
               )}
               {lines.map((l) => (
                 <div key={l.id} className="text-[15px] leading-relaxed py-0.5">
-                  <span className={l.final ? 'text-gray-900 font-medium' : 'text-emerald-700 font-semibold italic'}>
+                  <span className={l.final ? 'ic-body text-[#f5f5f7]' : 'ic-body text-[#30d158] italic'}>
                     {l.text}
                   </span>
                 </div>
@@ -891,18 +999,20 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
           </div>
 
           {/* Right: AI answers */}
-          <div className="flex flex-col min-h-0 bg-white">
+          <div className="flex flex-col min-h-0">
             <div className="flex-1 min-h-[200px] overflow-y-auto p-5 space-y-4">
               {answers.length === 0 && (
-                <div className="h-full min-h-[220px] flex flex-col items-center justify-center text-center gap-2 text-slate-500">
-                  <p className="text-[15px]">No messages yet.</p>
-                  <p className="text-[15px]">Click "AI Answer" to start!</p>
+                <div className="h-full min-h-[220px] flex flex-col items-center justify-center text-center gap-1.5">
+                  <p className="ic-body text-[15px] text-[#f5f5f7]">Nothing asked yet.</p>
+                  <p className="ic-body text-[14px] text-[rgba(235,235,245,0.42)]">
+                    Press Space, or hit AI Answer, and the copilot answers the last question it heard.
+                  </p>
                 </div>
               )}
               {answers.map((a) => (
-                <div key={a.id} className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4">
+                <div key={a.id} className="rounded-2xl bg-white/[0.05] shadow-[inset_0_0_0_0.5px_rgba(255,255,255,0.1)] p-4">
                   <div className="flex items-center justify-between gap-2 mb-1">
-                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#FF385C]">
+                    <span className="ic-caption text-[10px] font-semibold uppercase tracking-[0.08em] text-[#0a84ff]">
                       {a.model} · {a.ts}
                     </span>
                     <div className="flex items-center gap-1">
@@ -911,52 +1021,52 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
                           setActiveAnswerIdx(answers.findIndex((x) => x.id === a.id));
                           setTeleprompterOpen(true);
                         }}
-                        className="p-1.5 rounded-lg text-gray-400 hover:text-[#FF385C] hover:bg-rose-50 transition cursor-pointer"
+                        className="p-1.5 rounded-lg text-[rgba(235,235,245,0.42)] hover:text-[#0a84ff] hover:bg-white/10 transition-colors duration-200 cursor-pointer"
                         title="View in Teleprompter"
                       >
                         <Tv className="w-3.5 h-3.5" />
                       </button>
                       <button
                         onClick={() => void copyAnswer(a)}
-                        className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-200/60 transition"
+                        className="p-1.5 rounded-lg text-[rgba(235,235,245,0.42)] hover:text-[#f5f5f7] hover:bg-white/10 transition-colors duration-200 cursor-pointer"
                         aria-label="Copy answer"
                       >
-                        {copiedId === a.id ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
+                        {copiedId === a.id ? <Check className="w-4 h-4 text-[#30d158]" /> : <Copy className="w-4 h-4" />}
                       </button>
                     </div>
                   </div>
                   {a.question && a.question !== 'Live transcript' && a.question !== 'Screen analysis' && (
-                    <p className="text-xs font-bold text-gray-500 mb-1.5">Q: {a.question}</p>
+                    <p className="ic-caption text-[12px] font-medium text-[rgba(235,235,245,0.62)] mb-1.5">Q: {a.question}</p>
                   )}
                   {a.question === 'Screen analysis' && (
-                    <p className="text-xs font-bold text-gray-500 mb-1.5 flex items-center gap-1">
+                    <p className="ic-caption text-[12px] font-medium text-[rgba(235,235,245,0.62)] mb-1.5 flex items-center gap-1">
                       <ScanEye className="w-3.5 h-3.5" /> On screen:
                     </p>
                   )}
-                  <p className="text-sm text-gray-900 leading-relaxed whitespace-pre-wrap">{a.answer}</p>
+                  <p className="ic-body text-[14.5px] text-[#f5f5f7] leading-relaxed whitespace-pre-wrap">{a.answer}</p>
                 </div>
               ))}
               {thinking && (
-                <div className="flex items-center gap-2 text-sm text-gray-500">
-                  <Loader2 className="w-4 h-4 animate-spin text-[#FF385C]" /> Generating answer from your CV...
+                <div className="flex items-center gap-2 ic-body text-[14px] text-[rgba(235,235,245,0.62)]">
+                  <Loader2 className="w-4 h-4 animate-spin text-[#0a84ff]" /> Writing an answer from your CV and the brief...
                 </div>
               )}
               <div ref={answersEndRef} />
             </div>
 
-            <div className="p-4 border-t border-gray-100 shrink-0 space-y-3">
+            <div className="p-4 border-t border-white/10 shrink-0 space-y-3">
               <div className="flex gap-2">
                 <input
                   value={manual}
                   onChange={(e) => setManual(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') sendManual(); }}
-                  placeholder="Type a manual message..."
-                  className="flex-1 px-4 py-2.5 rounded-xl border border-gray-200 text-sm outline-none focus:border-gray-900 transition"
+                  placeholder="Type a question yourself..."
+                  className="ic-fill flex-1 px-4 py-2.5 rounded-full ic-body text-[14px] text-[#f5f5f7] placeholder:text-white/30 outline-none focus:shadow-[0_0_0_2px_#0a84ff] transition-shadow duration-200"
                 />
                 <button
                   onClick={sendManual}
                   disabled={!manual.trim() || thinking}
-                  className="px-5 py-2.5 rounded-xl border border-gray-200 text-sm font-bold text-gray-500 hover:bg-gray-50 transition disabled:opacity-40"
+                  className="ic-fill px-5 py-2.5 rounded-full ic-body text-[14px] font-medium text-[#f5f5f7] disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
                 >
                   Send
                 </button>
@@ -965,27 +1075,27 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
                 <button
                   onClick={() => void askAI()}
                   disabled={thinking}
-                  className="flex-1 px-4 py-3 rounded-xl bg-gray-500 hover:bg-gray-600 text-white text-sm font-extrabold transition flex items-center justify-center gap-2 disabled:opacity-60"
+                  className="flex-1 px-4 py-3 rounded-full bg-[#0a84ff] hover:bg-[#3395ff] text-white ic-body text-[14px] font-semibold transition-colors duration-200 flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
                 >
                   {thinking ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                  AI Answer (Space)
+                  AI answer (Space)
                 </button>
                 <button
                   type="button"
                   onClick={() => setTeleprompterOpen((v) => !v)}
-                  className={`flex-1 px-3 py-3 rounded-xl border text-sm font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs ${teleprompterOpen ? 'bg-rose-50 border-[#FF385C] text-[#FF385C]' : 'border-gray-200 text-gray-800 hover:bg-gray-50'}`}
+                  className={`ic-fill ${teleprompterOpen ? 'is-on' : ''} flex-1 px-3 py-3 rounded-full ic-body text-[14px] font-medium text-[#f5f5f7] flex items-center justify-center gap-1.5 cursor-pointer`}
                   title="Toggle Transparent Teleprompter HUD (Press T)"
                 >
-                  <Tv className="w-4 h-4 text-[#FF385C]" />
+                  <Tv className="w-4 h-4" />
                   <span>Teleprompter</span>
                 </button>
                 <button
                   onClick={() => void analyzeScreen()}
                   disabled={analyzing || !sharing}
-                  className="flex-1 px-4 py-3 rounded-xl border border-gray-200 text-sm font-bold text-gray-800 hover:bg-gray-50 transition flex items-center justify-center gap-2 disabled:opacity-40"
+                  className="ic-fill flex-1 px-4 py-3 rounded-full ic-body text-[14px] font-medium text-[#f5f5f7] flex items-center justify-center gap-2 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
                 >
                   {analyzing ? <Loader2 className="w-4 h-4 animate-spin" /> : <MonitorUp className="w-4 h-4" />}
-                  Analyze Screen
+                  Read the screen
                 </button>
               </div>
             </div>
@@ -1005,27 +1115,32 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
           return (
             <div className="absolute inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/10 backdrop-blur-[2px] pointer-events-none animate-in fade-in zoom-in-95 duration-150">
               <div
-                className={`pointer-events-auto w-full max-w-3xl max-h-[84vh] flex flex-col rounded-3xl border shadow-[0_25px_60px_rgba(0,0,0,0.22)] ring-1 ring-black/5 transition-all overflow-hidden ${
-                  hudOpacity === 'low'
-                    ? 'bg-white/70 backdrop-blur-md border-white/60'
-                    : hudOpacity === 'high'
-                      ? 'bg-white/95 backdrop-blur-2xl border-white/90 shadow-slate-400/20'
-                      : 'bg-white/85 backdrop-blur-xl border-white/80 shadow-slate-400/30'
-                }`}
+                className="ic-popover pointer-events-auto w-full max-w-3xl max-h-[84vh] flex flex-col rounded-3xl transition-all overflow-hidden"
+                // Inline, not a class: `.ic-popover` is plain CSS outside
+                // Tailwind's layer, so a utility background loses to it and the
+                // three opacity buttons would do nothing.
+                style={{
+                  background:
+                    hudOpacity === 'low'
+                      ? 'rgba(24,30,52,0.6)'
+                      : hudOpacity === 'high'
+                        ? 'rgba(18,23,42,0.96)'
+                        : 'rgba(22,28,49,0.84)',
+                }}
               >
-                <div className="px-5 py-3.5 border-b border-gray-200/60 bg-white/50 backdrop-blur-sm flex items-center justify-between gap-3 shrink-0 flex-wrap">
+                <div className="px-5 py-3.5 border-b border-white/10 flex items-center justify-between gap-3 shrink-0 flex-wrap">
                   <div className="flex items-center gap-2.5">
-                    <div className="px-2.5 py-1 rounded-full text-[11px] font-black uppercase tracking-wider bg-rose-50 text-[#FF385C] border border-rose-200/80 flex items-center gap-1.5 shadow-2xs">
-                      <span className="w-2 h-2 rounded-full bg-[#FF385C] animate-pulse" />
-                      Teleprompter HUD
+                    <div className="px-2.5 py-1 rounded-full ic-caption text-[11px] font-semibold uppercase tracking-[0.08em] bg-[#0a84ff]/15 text-[#0a84ff] flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-[#0a84ff] animate-pulse" />
+                      Teleprompter
                     </div>
                     {answers.length > 1 && (
-                      <div className="flex items-center gap-1 bg-white/80 rounded-xl px-2.5 py-1 border border-gray-200/70 text-xs font-bold text-gray-700 shadow-2xs">
+                      <div className="flex items-center gap-1 ic-fill rounded-full px-2.5 py-1 ic-body text-[12px] font-medium text-[#f5f5f7]">
                         <button
                           type="button"
                           disabled={idx <= 0}
                           onClick={() => setActiveAnswerIdx(Math.max(0, idx - 1))}
-                          className="p-0.5 rounded hover:bg-gray-100 disabled:opacity-30 cursor-pointer"
+                          className="p-0.5 rounded-full hover:bg-white/10 disabled:opacity-30 cursor-pointer"
                           title="Previous answer"
                         >
                           <ChevronLeft className="w-3.5 h-3.5" />
@@ -1035,7 +1150,7 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
                           type="button"
                           disabled={idx >= answers.length - 1}
                           onClick={() => setActiveAnswerIdx(Math.min(answers.length - 1, idx + 1))}
-                          className="p-0.5 rounded hover:bg-gray-100 disabled:opacity-30 cursor-pointer"
+                          className="p-0.5 rounded-full hover:bg-white/10 disabled:opacity-30 cursor-pointer"
                           title="Next answer"
                         >
                           <ChevronRight className="w-3.5 h-3.5" />
@@ -1045,37 +1160,37 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <div className="flex items-center bg-white/80 rounded-xl border border-gray-200/70 overflow-hidden text-xs font-bold shadow-2xs">
+                    <div className="flex items-center ic-fill rounded-full overflow-hidden ic-body text-[12px] font-medium">
                       <button
                         type="button"
                         onClick={() => setPromptFontSize((v) => Math.max(16, v - 3))}
-                        className="px-2.5 py-1 hover:bg-gray-100 text-gray-700 transition cursor-pointer"
+                        className="px-2.5 py-1 hover:bg-white/10 text-[#f5f5f7] transition-colors duration-200 cursor-pointer"
                         title="Smaller text"
                       >
                         A-
                       </button>
-                      <span className="px-1.5 text-[11px] text-gray-500 font-semibold">{promptFontSize}px</span>
+                      <span className="px-1.5 text-[11px] text-[rgba(235,235,245,0.62)] font-medium">{promptFontSize}px</span>
                       <button
                         type="button"
                         onClick={() => setPromptFontSize((v) => Math.min(36, v + 3))}
-                        className="px-2.5 py-1 hover:bg-gray-100 text-gray-700 transition cursor-pointer"
+                        className="px-2.5 py-1 hover:bg-white/10 text-[#f5f5f7] transition-colors duration-200 cursor-pointer"
                         title="Larger text"
                       >
                         A+
                       </button>
                     </div>
 
-                    <div className="flex items-center bg-white/80 rounded-xl border border-gray-200/70 overflow-hidden text-xs font-bold shadow-2xs">
+                    <div className="flex items-center ic-fill rounded-full overflow-hidden ic-body text-[12px] font-medium">
                       {([
                         ['low', '70%', '70% transparency'],
                         ['med', '85%', '85% transparency'],
-                        ['high', '95%', '95% solid white'],
+                        ['high', '95%', 'Almost solid'],
                       ] as const).map(([value, label, hint]) => (
                         <button
                           key={value}
                           type="button"
                           onClick={() => setHudOpacity(value)}
-                          className={`px-2 py-1 transition cursor-pointer ${hudOpacity === value ? 'bg-gray-900 text-white font-extrabold' : 'text-gray-600 hover:bg-gray-100'}`}
+                          className={`px-2 py-1 transition-colors duration-200 cursor-pointer ${hudOpacity === value ? 'bg-[#0a84ff] text-white font-semibold' : 'text-[rgba(235,235,245,0.62)] hover:bg-white/10'}`}
                           title={hint}
                         >
                           {label}
@@ -1086,22 +1201,22 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
                     <button
                       type="button"
                       onClick={() => setTpAutoScroll((v) => !v)}
-                      className={`px-3 py-1.5 rounded-xl border text-xs font-extrabold transition flex items-center gap-1.5 cursor-pointer shadow-2xs ${tpAutoScroll ? 'bg-emerald-600 text-white border-emerald-600 ring-2 ring-emerald-200' : 'bg-white/90 border-gray-200/80 text-gray-800 hover:bg-gray-100'}`}
+                      className={`ic-fill ${tpAutoScroll ? 'is-on' : ''} px-3 py-1.5 rounded-full ic-body text-[12px] font-medium text-[#f5f5f7] flex items-center gap-1.5 cursor-pointer`}
                       title={tpAutoScroll ? 'Pause auto-scroll (Space)' : 'Start auto-scroll (Space)'}
                     >
                       {tpAutoScroll
                         ? <Pause className="w-3.5 h-3.5 fill-current" />
                         : <Play className="w-3.5 h-3.5 fill-current" />}
-                      <span>{tpAutoScroll ? 'Pause' : 'Auto-Scroll'}</span>
+                      <span>{tpAutoScroll ? 'Pause' : 'Auto-scroll'}</span>
                     </button>
 
-                    <div className="flex items-center bg-white/90 rounded-xl border border-gray-200/80 overflow-hidden text-xs font-bold shadow-2xs">
+                    <div className="flex items-center ic-fill rounded-full overflow-hidden ic-body text-[12px] font-medium">
                       {[0.5, 0.7, 1, 1.5, 2].map((speed) => (
                         <button
                           key={speed}
                           type="button"
                           onClick={() => setScrollSpeed(speed)}
-                          className={`px-2 py-1 transition cursor-pointer ${scrollSpeed === speed ? 'bg-gray-900 text-white font-extrabold' : 'text-gray-600 hover:bg-gray-100'}`}
+                          className={`px-2 py-1 transition-colors duration-200 cursor-pointer ${scrollSpeed === speed ? 'bg-[#0a84ff] text-white font-semibold' : 'text-[rgba(235,235,245,0.62)] hover:bg-white/10'}`}
                           title={`Set scroll speed to ${speed}x`}
                         >
                           {speed}x
@@ -1112,7 +1227,7 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
                     <button
                       type="button"
                       onClick={() => { if (promptScrollRef.current) promptScrollRef.current.scrollTop = 0; }}
-                      className="p-1.5 rounded-xl bg-white/90 border border-gray-200/80 text-gray-700 hover:bg-gray-100 transition cursor-pointer shadow-2xs"
+                      className="ic-fill p-1.5 rounded-full text-[#f5f5f7] cursor-pointer"
                       title="Scroll to beginning"
                     >
                       <RotateCcw className="w-3.5 h-3.5" />
@@ -1121,7 +1236,7 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
                     <button
                       type="button"
                       onClick={() => setTeleprompterOpen(false)}
-                      className="p-1.5 rounded-xl bg-white/90 hover:bg-rose-50 text-gray-600 hover:text-rose-600 border border-gray-200/80 transition cursor-pointer shadow-2xs"
+                      className="ic-fill p-1.5 rounded-full text-[#f5f5f7] cursor-pointer"
                       title="Close teleprompter (Esc or T)"
                     >
                       <X className="w-4 h-4" />
@@ -1135,46 +1250,46 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
                   style={{ fontSize: `${promptFontSize}px`, lineHeight: 1.62 }}
                 >
                   {thinking && (
-                    <div className="flex items-center gap-2.5 text-rose-600 font-bold animate-pulse text-base sm:text-lg">
+                    <div className="flex items-center gap-2.5 text-[#0a84ff] font-medium animate-pulse text-base sm:text-lg">
                       <Loader2 className="w-5 h-5 animate-spin" />
-                      Generating interview response from your CV in real-time...
+                      Writing your answer...
                     </div>
                   )}
                   {card ? (
                     <div className="space-y-4">
                       {card.question && card.question !== 'Live transcript' && (
-                        <div className="pb-3 border-b border-gray-300/60 text-gray-600 font-bold text-sm sm:text-base">
-                          <span className="text-[#FF385C] uppercase tracking-wider font-extrabold mr-2">Q:</span>
+                        <div className="pb-3 border-b border-white/12 text-[rgba(235,235,245,0.62)] font-medium text-sm sm:text-base">
+                          <span className="text-[#0a84ff] uppercase tracking-[0.08em] font-semibold mr-2">Q:</span>
                           {card.question}
                         </div>
                       )}
-                      <div className="text-gray-900 font-medium whitespace-pre-wrap leading-relaxed tracking-tight">
+                      <div className="text-[#f5f5f7] font-medium whitespace-pre-wrap leading-relaxed tracking-tight">
                         {card.answer}
                       </div>
                     </div>
                   ) : !thinking && (
-                    <div className="py-14 text-center text-gray-500 space-y-2">
-                      <p className="font-extrabold text-gray-800 text-lg">No response to teleprompt yet</p>
+                    <div className="py-14 text-center text-[rgba(235,235,245,0.62)] space-y-2">
+                      <p className="ic-title text-[#f5f5f7] text-lg">Nothing to read out yet</p>
                       <p className="text-sm">
-                        Click <span className="font-bold text-gray-900">AI Answer (Space)</span> or speak in
-                        your interview tab to stream answers here in real-time.
+                        Press <span className="text-[#f5f5f7] font-semibold">Space</span>, and the answer
+                        appears here at reading size.
                       </p>
                     </div>
                   )}
                 </div>
 
-                <div className="px-5 py-2.5 border-t border-gray-200/60 bg-white/40 backdrop-blur-sm flex items-center justify-between text-[11px] font-medium text-gray-600 shrink-0">
+                <div className="px-5 py-2.5 border-t border-white/10 flex items-center justify-between text-[11px] font-medium text-[rgba(235,235,245,0.62)] shrink-0">
                   <div className="flex items-center gap-4">
-                    <span>💡 Press <strong className="text-gray-900">Space</strong> for AI Answer</span>
-                    <span><strong className="text-gray-900">T</strong> to toggle Teleprompter</span>
-                    <span><strong className="text-gray-900">Esc</strong> to dismiss</span>
+                    <span><strong className="text-[#f5f5f7]">Space</strong> for an answer</span>
+                    <span><strong className="text-[#f5f5f7]">T</strong> toggles this</span>
+                    <span><strong className="text-[#f5f5f7]">Esc</strong> dismisses</span>
                   </div>
-                  <label className="flex items-center gap-1.5 cursor-pointer select-none text-gray-700 font-bold">
+                  <label className="flex items-center gap-1.5 cursor-pointer select-none text-[rgba(235,235,245,0.62)] font-medium">
                     <input
                       type="checkbox"
                       checked={autoOpenTeleprompter}
                       onChange={(e) => setAutoOpenTeleprompter(e.target.checked)}
-                      className="rounded text-[#FF385C] focus:ring-[#FF385C] w-3.5 h-3.5 cursor-pointer"
+                      className="rounded accent-[#0a84ff] w-3.5 h-3.5 cursor-pointer"
                     />
                     <span>Auto-open on new answer</span>
                   </label>

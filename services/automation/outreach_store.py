@@ -188,6 +188,12 @@ LATER_COLUMNS = (
     # recognises a listing it has already read, even after the employer renames
     # the role.
     ("ref", "TEXT DEFAULT ''"),
+    # The day the listing the prospect came from was published, as the board
+    # printed it. Not the day this app found it: a search run today can return
+    # a vacancy advertised last autumn, and the difference decides whether a
+    # spontaneous application is timely or is about a job filled in the spring.
+    # Empty for prospects that did not come from a dated listing.
+    ("posted_at", "TEXT DEFAULT ''"),
 )
 
 
@@ -327,8 +333,9 @@ def upsert_prospect(data: Dict[str, Any], source: str = "manual") -> Tuple[Dict[
             conn.execute(
                 "INSERT INTO prospects (dedupe_key, company, contact_name, role, email,"
                 " email_status, website, city, source, stage, notes, email_kind,"
-                " source_url, phone, street, postcode, ref, created_at, updated_at)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " source_url, phone, street, postcode, ref, posted_at,"
+                " created_at, updated_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     key, company, contact, (data.get("role") or "").strip(), email,
                     (data.get("email_status") or ("guessed" if email else "unknown")),
@@ -340,6 +347,7 @@ def upsert_prospect(data: Dict[str, Any], source: str = "manual") -> Tuple[Dict[
                     (data.get("street") or "").strip(),
                     (data.get("postcode") or "").strip(),
                     (data.get("ref") or "").strip(),
+                    (data.get("posted_at") or "").strip(),
                     now, now,
                 ),
             )
@@ -351,7 +359,7 @@ def upsert_prospect(data: Dict[str, Any], source: str = "manual") -> Tuple[Dict[
             merged = dict(existing)
             for field in ("contact_name", "role", "email", "website", "city", "notes",
                           "email_kind", "source_url", "phone", "street", "postcode",
-                          "ref"):
+                          "ref", "posted_at"):
                 value = (data.get(field) or "").strip()
                 if value:
                     merged[field] = value
@@ -377,7 +385,8 @@ def upsert_prospect(data: Dict[str, Any], source: str = "manual") -> Tuple[Dict[
             conn.execute(
                 "UPDATE prospects SET contact_name=?, role=?, email=?, email_status=?,"
                 " website=?, city=?, notes=?, stage=?, email_kind=?, source_url=?,"
-                " phone=?, street=?, postcode=?, ref=?, updated_at=? WHERE id=?",
+                " phone=?, street=?, postcode=?, ref=?, posted_at=?,"
+                " updated_at=? WHERE id=?",
                 (
                     merged["contact_name"], merged["role"], merged["email"],
                     merged["email_status"], merged["website"], merged["city"],
@@ -386,6 +395,7 @@ def upsert_prospect(data: Dict[str, Any], source: str = "manual") -> Tuple[Dict[
                     merged.get("source_url") or "",
                     merged.get("phone") or "", merged.get("street") or "",
                     merged.get("postcode") or "", merged.get("ref") or "",
+                    merged.get("posted_at") or "",
                     now, merged["id"],
                 ),
             )

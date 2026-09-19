@@ -37,6 +37,7 @@ export interface Prospect {
   phone?: string;
   street?: string;
   postcode?: string;
+  posted_at?: string;
   website: string;
   city: string;
   source: string;
@@ -234,8 +235,18 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
   const [error, setError] = useState('');
   const [draft, setDraft] = useState({ ...EMPTY_DRAFT });
   const [showAdd, setShowAdd] = useState(false);
+  /*
+   * `freshDays` and `offerType` belong to the board search.
+   *
+   * Fresh defaults to 28 rather than to "any", because "any" is what the board
+   * does on its own and what it does on its own is return vacancies from two
+   * autumns ago. A spontaneous application to a job advertised last October is
+   * a letter about a post that was filled in the spring, and the employer can
+   * tell. 28 is the widest window the board applies natively.
+   */
   const [hunt, setHunt] = useState({
     profession: '', city: '', company: '', count: 8, keyword: '', limit: 60,
+    freshDays: 28, offerType: '',
   });
   /*
    * Three engines, because the three jobs are different jobs.
@@ -487,7 +498,8 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
           ? { city: hunt.city, keyword: hunt.keyword, limit: hunt.limit }
           : board
             ? { was: hunt.profession, wo: hunt.city, umkreis: 25,
-                count: hunt.count, skip_agencies: true }
+                count: hunt.count, skip_agencies: true,
+                published_within: hunt.freshDays, offer_type: hunt.offerType }
             : hunt),
       });
       if (!res.ok) {
@@ -914,6 +926,48 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                   />
                 </label>
               ))}
+
+              {/* The board's own two filters, which are not keywords.
+                *
+                * An apprenticeship is a different search area on the board, not
+                * the word "Ausbildung" typed into the search box -- typing it
+                * there searches ordinary jobs for a word and returns ordinary
+                * jobs, which is why a search for an Ausbildung came back full
+                * of full-time posts.
+                *
+                * The freshness list holds only the windows the board actually
+                * applies. It accepts any number without complaining and
+                * silently ignores the ones it does not know, so offering "last
+                * 30 days" would be offering a filter that does nothing while
+                * looking like it works. Anything the board cannot do, the
+                * adapter does itself by reading the printed date. */}
+              {engine === 'agentur' ? (['type', 'fresh'] as const).map((which) => (
+                <label key={which} className="block">
+                  <span className="block pb-1 text-[11.5px] text-[rgba(235,235,245,0.52)]">
+                    {which === 'type' ? 'Kind of offer' : 'Published within'}
+                  </span>
+                  <select
+                    value={which === 'type' ? hunt.offerType : String(hunt.freshDays)}
+                    onChange={(e) => setHunt(which === 'type'
+                      ? { ...hunt, offerType: e.target.value }
+                      : { ...hunt, freshDays: Number(e.target.value) })}
+                    className="w-full px-3 py-2 rounded-lg bg-white/[0.06] border border-white/[0.09] text-[13px] text-[#f5f5f7] outline-none focus:border-white/25 cursor-pointer [&>option]:bg-[#1c1c1e]"
+                  >
+                    {(which === 'type'
+                      ? [['', 'Anything the board has'], ['arbeit', 'Arbeit - a job'],
+                         ['ausbildung', 'Ausbildung - apprenticeship'],
+                         ['praktikum', 'Praktikum or Trainee'],
+                         ['selbstaendigkeit', 'Selbstaendigkeit']]
+                      : [['1', 'Yesterday and today'], ['7', 'The last 7 days'],
+                         ['14', 'The last 14 days'], ['28', 'The last 28 days'],
+                         ['0', 'Any age - including last year']]
+                    ).map(([value, label]) => (
+                      <option key={value} value={value}>{label}</option>
+                    ))}
+                  </select>
+                </label>
+              )) : null}
+
               <div className="flex items-end gap-2">
                 <label className="block w-[92px]">
                   <span className="block pb-1 text-[11.5px] text-[rgba(235,235,245,0.52)]">How many</span>
@@ -1206,7 +1260,35 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                   />
                   <div className="min-w-0">
                     <p className="text-[13.5px] font-semibold text-[#f5f5f7] truncate">{p.company}</p>
-                    <p className="text-[12px] text-[rgba(235,235,245,0.42)] truncate">{p.city || p.website}</p>
+                    <p className="text-[12px] text-[rgba(235,235,245,0.42)] truncate flex items-center gap-1.5">
+                      <span className="truncate">{p.city || p.website}</span>
+                      {/* How old the advertisement was. Shown on the row and
+                        * not only used as a filter, because the search that
+                        * found this company may have been run last month with
+                        * a different window, and a letter about a vacancy from
+                        * the spring reads as a letter nobody checked. Amber
+                        * past four weeks: still worth writing to, but the
+                        * operator should know before clicking send. */}
+                      {p.posted_at ? (() => {
+                        // Floor, not round: a listing put up the day before
+                        // yesterday is two days old all day, and rounding a
+                        // day and a half up to two makes the badge disagree
+                        // with the window that was just searched.
+                        const days = Math.max(0, Math.floor(
+                          (Date.now() - new Date(`${p.posted_at}T00:00:00`).getTime())
+                          / 86400000));
+                        return (
+                          <span
+                            title={`The listing was published on ${p.posted_at}`}
+                            className={`shrink-0 tabular-nums ${
+                              days > 28 ? 'text-amber-200/80' : 'text-[rgba(235,235,245,0.42)]'
+                            }`}
+                          >
+                            {days === 0 ? 'today' : `${days}d old`}
+                          </span>
+                        );
+                      })() : null}
+                    </p>
                   </div>
                   <div className="min-w-0 text-[13px] text-[rgba(235,235,245,0.62)] truncate">
                     {p.contact_name || '--'}

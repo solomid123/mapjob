@@ -176,6 +176,18 @@ class AgenturIn(BaseModel):
     umkreis: int = 25
     count: int = 25
     skip_agencies: bool = True
+    # How fresh a listing has to be, in days. Zero means the board decides,
+    # which in practice means vacancies from two years ago -- so the page
+    # sends a real number and this stays zero only for a caller that asks for
+    # it. See `arbeitsagentur.run`: the board applies its own coarse window and
+    # the adapter checks the printed date itself, because the board ignores a
+    # window it does not recognise without saying so.
+    published_within: int = 0
+    # arbeit, ausbildung, praktikum, selbstaendigkeit, or "" for whatever the
+    # board returns by default. Not a keyword: an apprenticeship search is a
+    # different search area on the board, not the word "Ausbildung" typed into
+    # the same box.
+    offer_type: str = ""
 
 
 class HarvestIn(BaseModel):
@@ -401,7 +413,11 @@ def _run_agentur(spec: AgenturIn) -> None:
     agreeing, and they go to the verifier like every other address.
     """
     store.log_event("Reading the job board for " + (spec.was or "everything")
-                    + (" in " + spec.wo if spec.wo else ""), phase="agentur")
+                    + (" in " + spec.wo if spec.wo else "")
+                    + (" - " + spec.offer_type if spec.offer_type else "")
+                    + (" - published in the last " + str(spec.published_within)
+                       + " days" if spec.published_within else ""),
+                    phase="agentur")
     tally = {"created": 0}
 
     def keep(lead: Dict[str, Any]) -> None:
@@ -420,6 +436,7 @@ def _run_agentur(spec: AgenturIn) -> None:
         result = agentur.run(
             was=spec.was, wo=spec.wo, umkreis=spec.umkreis, count=spec.count,
             skip_agencies=spec.skip_agencies,
+            published_within=spec.published_within, offer_type=spec.offer_type,
             on_event=lambda msg, level="info": store.log_event(
                 msg, phase="agentur", level=level),
             on_lead=keep,
@@ -429,7 +446,9 @@ def _run_agentur(spec: AgenturIn) -> None:
             "Finished: " + str(result["kept"]) + " employers, "
             + str(result["emails"]) + " with an address, "
             + str(result["phones"]) + " with a telephone number, "
-            + str(tally["created"]) + " new",
+            + str(tally["created"]) + " new"
+            + (", " + str(result.get("stale") or 0) + " listings too old"
+               if result.get("stale") else ""),
             phase="agentur",
         )
     except Exception as exc:  # noqa: BLE001 - the console is where this belongs

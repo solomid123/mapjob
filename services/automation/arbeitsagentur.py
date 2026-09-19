@@ -40,6 +40,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from datetime import date
 from typing import Callable, Dict, List, Optional
 
 SEARCH_URL = "https://rest.arbeitsagentur.de/jobboerse/jobsuche-service/pc/v6/jobs"
@@ -57,6 +58,73 @@ TIMEOUT = 40
 PAUSE = 0.15
 
 Event = Callable[..., None]
+
+# What kind of offer the board is being asked for. `angebotsart` is its own
+# parameter, but it is not enough on its own: apprenticeships live in a
+# different search area, and asking for angebotsart=4 inside suchbereich=jobs
+# returns nothing at all rather than an error. Typing "Ausbildung-Kaufmann/-frau
+# Bueromanagement" into the search box therefore did not search apprenticeships
+# -- it searched ordinary jobs for a word, and returned ordinary jobs.
+OFFER_TYPES: Dict[str, Dict[str, object]] = {
+    "arbeit":          {"suchbereich": "jobs",       "angebotsart": 1},
+    "ausbildung":      {"suchbereich": "ausbildung", "angebotsart": 4},
+    "praktikum":       {"suchbereich": "jobs",       "angebotsart": 34},
+    "selbstaendigkeit": {"suchbereich": "jobs",      "angebotsart": 2},
+}
+
+# The only windows the board actually applies. It does not reject the others:
+# `veroeffentlichtseit=30` comes back HTTP 200 with every listing it has,
+# including ones from two years ago, which is exactly how a search asking for
+# the last month quietly turns into a search asking for everything.
+BOARD_WINDOWS = (1, 7, 14, 28)
+
+
+def _board_window(days: int) -> int:
+    """
+    The widest window the board honours that is still no wider than asked for.
+
+    Rounded *up* to an accepted value rather than down, because the caller's
+    own cut-off is applied afterwards anyway: asking the board for 14 and then
+    keeping only the last 10 days loses nothing, while asking it for 7 would
+    throw away the rows between day 7 and day 10 before anyone could see them.
+    Above 28 there is nothing to ask for, so the board is left unfiltered and
+    the date check below does all the work.
+    """
+    if days <= 0:
+        return 0
+    for allowed in BOARD_WINDOWS:
+        if allowed >= days:
+            return allowed
+    return 0
+
+
+def posted_on(item: Dict[str, object], det: Optional[Dict[str, object]] = None) -> str:
+    """
+    The day this listing went up, as an ISO date, or "" when it does not say.
+
+    Read off the search result rather than the detail payload, so a listing
+    that is too old can be dropped before it costs a second request.
+    """
+    for source in (item or {}, det or {}):
+        window = source.get("veroeffentlichungszeitraum") or {}
+        if isinstance(window, dict) and window.get("von"):
+            return str(window["von"])[:10]
+        if source.get("datumErsteVeroeffentlichung"):
+            return str(source["datumErsteVeroeffentlichung"])[:10]
+        if source.get("aktuelleVeroeffentlichungsdatum"):
+            return str(source["aktuelleVeroeffentlichungsdatum"])[:10]
+    return ""
+
+
+def age_in_days(posted: str) -> int:
+    """How old the listing is, or -1 when the board did not print a date."""
+    if not posted:
+        return -1
+    try:
+        day = date.fromisoformat(posted[:10])
+    except ValueError:
+        return -1
+    return max(0, (date.today() - day).days)
 
 EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
 
@@ -103,12 +171,20 @@ def _get(url: str) -> Optional[Dict[str, object]]:
 
 
 def search(was: str, wo: str = "", umkreis: int = 25, page: int = 1,
-           size: int = PAGE_SIZE) -> Dict[str, object]:
+           size: int = PAGE_SIZE, published_within: int = 0,
+           offer_type: str = "") -> Dict[str, object]:
     """One page of listings. Returns {"total", "items"}."""
-    query = urllib.parse.urlencode({
-        "suchbereich": "jobs", "was": was, "wo": wo,
+    kind = OFFER_TYPES.get((offer_type or "").strip().lower(), {})
+    params: Dict[str, object] = {
+        "suchbereich": kind.get("suchbereich", "jobs"), "was": was, "wo": wo,
         "umkreis": umkreis, "page": page, "size": size,
-    })
+    }
+    if kind.get("angebotsart"):
+        params["angebotsart"] = kind["angebotsart"]
+    window = _board_window(int(published_within or 0))
+    if window:
+        params["veroeffentlichtseit"] = window
+    query = urllib.parse.urlencode(params)
     data = _get(SEARCH_URL + "?" + query)
     if not data:
         return {"total": 0, "items": []}
@@ -197,9 +273,13 @@ def to_lead(item: Dict[str, object], det: Dict[str, object],
     email = find_email(description)
     refnr = str(item.get("referenznummer") or det.get("referenznummer") or "")
 
+    posted = posted_on(item, det)
+
     notes = "Ref: " + refnr
     if title:
         notes += " | " + title
+    if posted:
+        notes += " | Published " + posted
     if det.get("istArbeitnehmerUeberlassung"):
         notes += " | Arbeitnehmerueberlassung"
 
@@ -219,6 +299,12 @@ def to_lead(item: Dict[str, object], det: Dict[str, object],
         "postcode": where["postcode"],
         "city": where["city"],
         "ref": refnr,
+        # The day the employer put it up. A spontaneous application to a
+        # vacancy advertised eight months ago is a letter about a job that was
+        # filled in the spring, so this travels with the prospect and gets
+        # shown next to the company rather than being thrown away after the
+        # search that filtered on it.
+        "posted_at": posted,
         "source_url": "https://www.arbeitsagentur.de/jobsuche/jobdetail/" + refnr if refnr else "",
         "notes": notes,
         "source": "arbeitsagentur",
@@ -232,7 +318,8 @@ def to_lead(item: Dict[str, object], det: Dict[str, object],
 
 
 def run(was: str, wo: str = "", umkreis: int = 25, count: int = 25,
-        skip_agencies: bool = True,
+        skip_agencies: bool = True, published_within: int = 0,
+        offer_type: str = "",
         on_event: Optional[Event] = None,
         on_lead: Optional[Callable[[Dict[str, object]], None]] = None,
         should_stop: Optional[Callable[[], bool]] = None) -> Dict[str, int]:
@@ -242,18 +329,41 @@ def run(was: str, wo: str = "", umkreis: int = 25, count: int = 25,
     Deduplicates on the reference number first and the company second: the
     board is full of one employer advertising the same apprenticeship in four
     districts, and four letters to the same firm is worse than one.
+
+    `published_within` is counted here as well as asked of the board, and the
+    two are not redundant. The board rounds the request to one of its four
+    windows and ignores anything else without saying so, so "the last ten days"
+    becomes "everything" on a parameter it does not recognise. The date on each
+    listing is the thing that can be checked, and it is checked before the
+    detail request is spent, so a stale row costs nothing but a comparison.
     """
     talk = on_event or (lambda *a, **k: None)
-    tally = {"seen": 0, "kept": 0, "emails": 0, "phones": 0, "people": 0, "agencies": 0}
+    tally = {"seen": 0, "kept": 0, "emails": 0, "phones": 0, "people": 0,
+             "agencies": 0, "stale": 0}
     seen_refs: set = set()
     seen_companies: set = set()
+    days = max(0, int(published_within or 0))
 
-    first = search(was, wo, umkreis, page=1, size=PAGE_SIZE)
+    def fetch(page_number: int) -> Dict[str, object]:
+        return search(was, wo, umkreis, page=page_number, size=PAGE_SIZE,
+                      published_within=days, offer_type=offer_type)
+
+    first = fetch(1)
     total = int(first["total"])  # type: ignore[arg-type]
     if not total:
         talk("The job board returned nothing for that search", "warn")
         return tally
-    talk(str(total) + " listings on the board; reading up to " + str(count))
+    # The board counted its own window, which is the nearest one it has and not
+    # always the one that was asked for, so the total is reported as the
+    # board's and the cut-off as ours. Saying "18 listings in the last 10 days"
+    # when the board was asked for 14 is a small lie that makes the next number
+    # look wrong.
+    board = _board_window(days)
+    talk(str(total) + " listings on the board"
+         + (" from the last " + str(board) + " days" if board else "")
+         + "; reading up to " + str(count)
+         + (" published within " + str(days) + " day"
+            + ("s" if days != 1 else "") if days else ""))
 
     page = 1
     items: List[Dict[str, object]] = list(first["items"])  # type: ignore[arg-type]
@@ -262,7 +372,7 @@ def run(was: str, wo: str = "", umkreis: int = 25, count: int = 25,
             break
         if not items:
             page += 1
-            more = search(was, wo, umkreis, page=page, size=PAGE_SIZE)
+            more = fetch(page)
             items = list(more["items"])  # type: ignore[arg-type]
             if not items:
                 break
@@ -273,6 +383,14 @@ def run(was: str, wo: str = "", umkreis: int = 25, count: int = 25,
         if not refnr or refnr in seen_refs:
             continue
         seen_refs.add(refnr)
+
+        # Before the detail request, not after: an eight-month-old listing is
+        # not worth a round trip, and the date is already in hand.
+        if days:
+            age = age_in_days(posted_on(item))
+            if age < 0 or age > days:
+                tally["stale"] += 1
+                continue
 
         det = detail(refnr)
         time.sleep(PAUSE)
@@ -305,6 +423,10 @@ def run(was: str, wo: str = "", umkreis: int = 25, count: int = 25,
          + str(tally["phones"]) + " with a telephone number, "
          + str(tally["people"]) + " naming a person"
          + (", " + str(tally["agencies"]) + " staffing agencies skipped"
-            if tally["agencies"] else ""))
+            if tally["agencies"] else "")
+         # Counted separately from the agencies, because this one is the
+         # answer to "why did a search for twenty come back with six".
+         + (", " + str(tally["stale"]) + " too old or undated"
+            if tally["stale"] else ""))
     return tally
 

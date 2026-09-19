@@ -188,8 +188,39 @@ const EMPTY_DRAFT = {
   company: '', contact_name: '', role: '', email: '', city: '', website: '', notes: '',
 };
 
+/**
+ * Which section the page is on, kept in the address bar.
+ *
+ * A reload used to land back on the Dashboard no matter where you were. That
+ * is not a small annoyance in a workspace that is watched for an hour: you
+ * refresh to see whether a run has moved and you lose your place, every time.
+ * The section goes in the URL rather than in storage so the back button, a
+ * duplicated tab and a bookmark all behave the way they look like they should.
+ */
+const readSection = (): Section => {
+  if (typeof window === 'undefined') return 'dashboard';
+  const view = new URLSearchParams(window.location.search).get('view') || '';
+  return (['dashboard', 'prospects', 'pipeline', 'documents'] as const)
+    .includes(view as Section) ? (view as Section) : 'dashboard';
+};
+
+/**
+ * The watermark that hides everything logged before Clear was pressed.
+ *
+ * Also has to survive a reload, and for a sharper reason than convenience:
+ * clearing is the only way to make that console readable, and a Clear that
+ * comes undone the moment you refresh is not a Clear, it is a scroll.
+ */
+const CLEARED_KEY = 'mapjob.outreach.clearedBefore';
+
+const readCleared = (): number => {
+  if (typeof window === 'undefined') return 0;
+  const raw = Number(window.localStorage.getItem(CLEARED_KEY) || 0);
+  return Number.isFinite(raw) ? raw : 0;
+};
+
 export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => {
-  const [section, setSection] = useState<Section>('dashboard');
+  const [section, setSection] = useState<Section>(readSection);
   const [stats, setStats] = useState<Record<string, number>>({});
   const [caps, setCaps] = useState<Record<string, Capability>>({});
   const [prospects, setProspects] = useState<Prospect[]>([]);
@@ -262,8 +293,24 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
    * the server ends its timestamps with `+00:00` and the browser with `Z`.
    */
   const [picked, setPicked] = useState<Set<number>>(new Set());
-  const [clearedBefore, setClearedBefore] = useState(0);
+  const [clearedBefore, setClearedBefore] = useState(readCleared);
   const [rowBusy, setRowBusy] = useState<number | null>(null);
+
+  // Remember where we are, and what was cleared, across a reload.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if ((url.searchParams.get('view') || 'dashboard') === section) return;
+    if (section === 'dashboard') url.searchParams.delete('view');
+    else url.searchParams.set('view', section);
+    // Replace, not push: flicking between four sections should not bury the
+    // page the user arrived from under four entries of back button.
+    window.history.replaceState(window.history.state, '', url.toString());
+  }, [section]);
+
+  useEffect(() => {
+    if (clearedBefore) window.localStorage.setItem(CLEARED_KEY, String(clearedBefore));
+    else window.localStorage.removeItem(CLEARED_KEY);
+  }, [clearedBefore]);
 
   const loadOverview = useCallback(async () => {
     try {
@@ -1418,8 +1465,15 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
               <div className="flex-1" />
               <button
                 type="button"
-                onClick={() => setClearedBefore(Date.now())}
-                disabled={sendLog.length === 0}
+                onClick={() => {
+                  setClearedBefore(Date.now());
+                  // The tally above belongs to the run whose lines are being
+                  // cleared. Leaving "2 / 2 Finished" sitting over an empty
+                  // console is a figure with nothing behind it. A run still
+                  // going keeps its counter -- that one is not history yet.
+                  if (!running) setCampaign(null);
+                }}
+                disabled={sendLog.length === 0 && !finished}
                 title="Empty this console. The record itself is kept."
                 className="text-[12px] text-[rgba(235,235,245,0.45)] hover:text-[#f5f5f7] disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-colors"
               >

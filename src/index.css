@@ -911,6 +911,22 @@ html[data-wallpaper='teal'] {
   image-rendering: auto;
 }
 
+/*
+ * Mapbox's street cartography is drawn to sit quietly *under* an interface.
+ * Here it is the interface -- the whole canvas, with the results floating on
+ * top of it -- and at stock saturation a city read as a grey diagram: pale
+ * parks, grey-white water, roads a shade off the background.
+ *
+ * Saturation cannot touch the labels, which are near-black type on white
+ * halos, so this lifts the parks, the water and the motorways and leaves the
+ * lettering exactly where it was. The small contrast lift is for that
+ * lettering: the tile layer went back to its native pairing and the type came
+ * down with it, and slightly darker ink is what pays for the smaller size.
+ */
+.leaflet-tile-pane {
+  filter: saturate(1.5) contrast(1.07) brightness(1.02);
+}
+
 .leaflet-pane,
 .leaflet-tile-pane,
 .leaflet-marker-pane,

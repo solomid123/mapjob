@@ -946,12 +946,9 @@ export const JobMap: React.FC<JobMapProps> = ({
          * 0.5 — measured, and stable whether the mouse reports 100 or 120 per
          * notch. Two notches per level instead of one.
          *
-         * Fractional zoom is close to free in sharpness: the `@2x` tile arrives
-         * 1024px for the 1024px box below, so a whole level is drawn 1:1 and a
-         * half level is stretched by at most 1.41. That is a hair softer than it
-         * was when the same tile sat in a 512px box and had 2x the pixels to
-         * spare, and it is the price of the doubled labels — Mapbox only serves
-         * 256 and 512 tiles, so there is no 2048px image to supersample from.
+         * Fractional zoom is free in sharpness here: the `@2x` tile arrives
+         * 1024px for the 512px box below, so a whole level is supersampled 2:1
+         * and even a half level still has 1.41x the pixels it needs.
          * `zoomDelta` is left at 1 so the +/- buttons and the keyboard still move
          * a full, definite step.
          */
@@ -966,47 +963,44 @@ export const JobMap: React.FC<JobMapProps> = ({
         style={{ background: '#e8e6e1' }}
       >
         {/*
-          * (1024, -2): every tile drawn at twice the size Mapbox renders it.
+          * (512, -1): the native pairing, where a Mapbox tile is drawn at the
+          * size it was rendered for.
           *
           * A raster layer lines up only while `tileSize * 2^zoomOffset === 256`,
           * which admits (256, 0), (512, -1), (1024, -2)... and each step along
           * that list draws a tile from one zoom level further out at twice the
-          * size. There is nothing in between: Mapbox serves raster tiles at two
-          * fixed pixel sizes and no text-size parameter, so on a raster layer
-          * the type comes in exactly two sizes and this is the larger one.
+          * size. Label size and cartographic detail are therefore the same
+          * knob, turned in opposite directions, in steps of 2 -- there is no
+          * "slightly smaller" on a raster layer, and no text-size parameter
+          * either.
           *
-          * Measured at (512, -1), a town name was 11 CSS pixels and a
-          * neighbourhood 9 -- half the size of the smallest type anywhere else
-          * in this app, and below what a map is readable at. "The map text
-          * looks very small and I can't read location" is the second report of
-          * it, which settles the argument this comment used to make on the
-          * other side: readable place names are the whole point of having a map
-          * under the pins, and Mapbox's default sizing was losing them.
+          * This was at (1024, -2) to answer "I can't read the location", and
+          * the bill came due: doubling the type also meant always drawing the
+          * cartography of two zoom levels out. A city view was rendered with a
+          * region's map -- no street names, no parks worth the word, no shops
+          * or stations, since Mapbox only draws those from about z14 -- so the
+          * page carried enormous labels over an empty country road. "The text
+          * is very big" and "make the map more alive" are one fault, not two.
           *
-          * The bill is one zoom level of cartography, and it falls almost
-          * entirely on points of interest -- Mapbox only draws shops, stations
-          * and schools from about z14, so at this pairing they arrive at the
-          * map's last zoom step instead of its second to last. Minor streets
-          * shift by the same one level. Place names, water, parks and the road
-          * network, which is what anyone reads a job map for, are all there.
-          *
-          * Still `@2x`, so the 1024px image fills its 1024px box: a whole zoom
-          * level is drawn 1:1 with no softening at all, and a half level (see
-          * `zoomSnap`) is stretched by 1.41.
+          * What changed in between is the pane. Those labels were measured in a
+          * 560px column beside the listings, where 11px did read as small; the
+          * map is the whole canvas now, and at this width it is the label size
+          * every map product uses, with several times as many of them. `@2x`
+          * puts a 1024px image in the 512px box, so the small type is drawn
+          * from four physical pixels per logical one -- sharper than the old
+          * arrangement ever was, which is most of what makes small type
+          * legible.
           */}
         <TileLayer
           url={`https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/512/{z}/{x}/{y}@2x?access_token=${MAPBOX_TOKEN}`}
-          tileSize={1024}
-          zoomOffset={-2}
+          tileSize={512}
+          zoomOffset={-1}
           detectRetina={false}
           // Skip intermediate tile requests mid-gesture and keep a ring of
-          // off-screen tiles so panning never exposes grey. One ring, not the
-          // four Leaflet defaults to: a tile now covers sixteen times the area
-          // it does at 256, so a single ring already reaches a screen's width
-          // beyond the edge and every further ring is pure memory.
+          // off-screen tiles either side so panning never exposes grey.
           updateWhenZooming={false}
           updateWhenIdle
-          keepBuffer={1}
+          keepBuffer={2}
           maxZoom={18}
         />
 

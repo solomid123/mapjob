@@ -280,9 +280,16 @@ export const JobCard: React.FC<JobCardProps> = ({
             {job.company} <span className="text-[rgba(235,235,245,0.62)] font-normal">· {job.location}</span>
           </p>
           <div className="flex items-center gap-1 shrink-0">
-            <Star className="w-3.5 h-3.5 fill-[#f5f5f7] text-[#f5f5f7]" />
-            <span className="ic-body text-[13px] font-semibold text-[#f5f5f7]">
-              {(4.82 + ((brandHue(job.company || '') % 16) / 100)).toFixed(2)}
+            {/* The rating is a tile ornament. On a row it took the right-hand
+              * end of the same line the company name was already fighting for,
+              * to say a thing that is true of every job in the feed -- they all
+              * come out 4.8-something. It stays on the big cards; the row keeps
+              * the heart, which is the only control on that line. */}
+            <span className={`flex items-center gap-1 ${row ? 'md:hidden' : ''}`}>
+              <Star className="w-3.5 h-3.5 fill-[#f5f5f7] text-[#f5f5f7]" />
+              <span className="ic-body text-[13px] font-semibold text-[#f5f5f7]">
+                {(4.82 + ((brandHue(job.company || '') % 16) / 100)).toFixed(2)}
+              </span>
             </span>
             {row && (
               <button
@@ -308,19 +315,39 @@ export const JobCard: React.FC<JobCardProps> = ({
           {job.title}
         </h3>
 
-        {/* Line 3: Format & Time */}
+        {/* Line 3: Format & Time.
+          *
+          * A row keeps the freshness and drops the rest. "Full-time, On-site"
+          * is true of very nearly every listing the feed returns, so on a
+          * narrow card it was three words of noise standing in front of the one
+          * word that actually tells two jobs apart. The Top Match chip went the
+          * same way: when most of the list is from the last three days, a badge
+          * on most of the list is decoration. Both are still on the big cards,
+          * and below md a row is a tile again, so they come back there too. */}
         <p className="ic-body text-[13px] text-[rgba(235,235,245,0.42)] truncate flex items-center gap-1.5">
-          {row && job.postedDaysAgo !== undefined && job.postedDaysAgo <= 3 && (
-            <span className="shrink-0 hidden md:inline-flex items-center gap-1 px-1.5 py-[1px] rounded-full bg-white/[0.12] text-[10.5px] font-semibold text-[#f5f5f7]">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#FF385C]" />
-              Top Match
-            </span>
-          )}
-          <span className="truncate">{job.jobType} · {job.remoteType} · {job.postedAt}</span>
+          <span className="truncate">
+            {row ? (
+              <>
+                <span className="md:hidden">{job.jobType} · {job.remoteType} · </span>
+                {job.postedAt}
+              </>
+            ) : (
+              <>
+                {job.jobType} · {job.remoteType} · {job.postedAt}
+              </>
+            )}
+          </span>
         </p>
 
-        {/* Line 4: Salary */}
-        <div className="pt-[3px] flex items-baseline gap-1">
+        {/* Line 4: Salary. "Competitive salary" is what this prints when the
+          * employer published no figure -- a placeholder, not a fact, and on a
+          * row it was a whole line spent saying nothing. A real number stays:
+          * that is worth a line on any card. */}
+        <div
+          className={`pt-[3px] flex items-baseline gap-1 ${
+            row && !job.salaryDisplay ? 'md:hidden' : ''
+          }`}
+        >
           {job.salaryDisplay ? (
             <>
               <span className="text-[15px] font-semibold tracking-[-0.022em] text-[#f5f5f7]">{job.salaryDisplay}</span>

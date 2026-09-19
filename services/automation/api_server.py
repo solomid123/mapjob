@@ -33,6 +33,19 @@ import pydantic
 import uvicorn
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+
+# Read .env before anything else does. Several modules below read os.getenv at
+# import time, and until now the file happened to be loaded by whichever of
+# them imported supabase_db first -- which is not a design, it is a habit that
+# holds until someone reorders an import. A key that is set and not seen is
+# indistinguishable from a key that is missing, and the dashboard would say so.
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
+except Exception:  # noqa: BLE001 - python-dotenv is optional, the app is not
+    pass
+
 from services.automation.ai_dom_agent import AIDOMAgent
 from services.automation.candidate_profile import CANDIDATE_PROFILE
 from services.automation.page_agent_manager import PageAgentManager

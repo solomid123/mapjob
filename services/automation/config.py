@@ -36,6 +36,18 @@ FUELIX_PLANNER_FALLBACK = os.getenv("FUELIX_PLANNER_FALLBACK", "gpt-5.6-terra")
 FUELIX_WRITER = os.getenv("FUELIX_WRITER", "gpt-5.6-terra")
 FUELIX_WRITER_FALLBACK = os.getenv("FUELIX_WRITER_FALLBACK", "gpt-5.6-terra")
 
+# Live interview answers, where a second of silence is a second the candidate
+# spends staring at nothing. Measured on this account, same prompt, streaming:
+#   gpt-5.6-terra     first token 4.85s
+#   gpt-4.1-mini      first token 4.07s
+#   gpt-5.4-mini      first token 2.71s
+#   claude-haiku-4-5  first token 1.45s, full answer in 3.75s
+# The writer stays on the reasoning model when a human asked for the answer and
+# is willing to wait; hands-free uses this one, because it has to keep up with
+# a conversation.
+FUELIX_LIVE = os.getenv("FUELIX_LIVE", "claude-haiku-4-5")
+FUELIX_LIVE_FALLBACK = os.getenv("FUELIX_LIVE_FALLBACK", "gpt-5.4-mini")
+
 # The apply engine's brain: small decisions taken mid-run, while a browser sits
 # waiting on the answer. Speed is the requirement, so these are deliberately
 # not the planner/writer models above. Both were measured at ~1.4s on this

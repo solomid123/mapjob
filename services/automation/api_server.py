@@ -1157,6 +1157,9 @@ class InterviewAnswerRequest(pydantic.BaseModel):
     notes: str = ""
     # Text pulled out of whatever the employer asked to be read beforehand.
     documents: str = ""
+    # Hands-free: nobody pressed anything, the interviewer is mid-pause, and a
+    # fast first word beats a better-reasoned one that lands five seconds late.
+    fast: bool = False
 
 class InterviewAnalyzeRequest(pydantic.BaseModel):
     image: str = ""  # data URL (jpeg/png) screenshot of the shared tab
@@ -1389,14 +1392,18 @@ def interview_answer_stream(req: InterviewAnswerRequest):
     along with the model and sitting in silence in front of a recruiter, so
     the hands-free teleprompter reads from here instead.
     """
-    from services.automation.config import FUELIX_API_KEY, FUELIX_BASE_URL, FUELIX_WRITER, FUELIX_WRITER_FALLBACK
+    from services.automation.config import (
+        FUELIX_API_KEY, FUELIX_BASE_URL, FUELIX_WRITER, FUELIX_WRITER_FALLBACK,
+        FUELIX_LIVE, FUELIX_LIVE_FALLBACK,
+    )
     _question, system, user = _answer_prompt(req)
+    models = [FUELIX_LIVE, FUELIX_LIVE_FALLBACK] if req.fast else [FUELIX_WRITER, FUELIX_WRITER_FALLBACK]
 
     def sse(obj: dict) -> str:
         return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
 
     def generate():
-        for model in [FUELIX_WRITER, FUELIX_WRITER_FALLBACK]:
+        for model in models:
             if not model or not FUELIX_API_KEY:
                 continue
             try:

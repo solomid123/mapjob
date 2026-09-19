@@ -117,6 +117,20 @@ function spoken(text: string): string {
   return text.replace(/\*\*(.+?)\*\*/gs, '$1').replace(/(^|\s)\*(\S[^*]*?)\*(?=\s|$)/g, '$1$2');
 }
 
+/**
+ * How long the room has to stay quiet before hands-free treats a question as
+ * finished. Long enough to survive the gap between two words, short enough
+ * that the answer is arriving while the recruiter is still drawing breath.
+ */
+const HANDS_FREE_SILENCE_MS = 450;
+
+/**
+ * How long the transcript has to stop changing as well. The microphone knows
+ * the room went quiet before the transcriber has finished writing what was
+ * said in it; this is the grace the words get to catch up.
+ */
+const HANDS_FREE_SETTLE_MS = 250;
+
 function heuristicAnswer(question: string): string {
   return (
     `Bonne question${question ? ` — « ${question.slice(0, 90)} »` : ''}. ` +
@@ -194,6 +208,20 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
    * face visible, which is what hands-free mode opens into.
    */
   const [hudSize, setHudSize] = useState<'compact' | 'full'>('full');
+  /**
+   * The answer hands-free is writing, shown on its own small screen over the
+   * shared tab. Separate from the teleprompter on purpose: that one is being
+   * read out loud, and a question answered in the background must not take it
+   * over mid-sentence.
+   */
+  const [autoCardId, setAutoCardId] = useState<number | null>(null);
+  /**
+   * Reading size on that small screen. Its own number, not the
+   * teleprompter's: this one sits over the call at a fraction of the size,
+   * and a setting that suits one is wrong for the other.
+   */
+  const [autoFontSize, setAutoFontSize] = useState(17);
+  const handsFreeScrollRef = useRef<HTMLDivElement | null>(null);
   const promptScrollRef = useRef<HTMLDivElement | null>(null);
 
   /**
@@ -202,8 +230,25 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
    * screen without being asked, and both should be a deliberate choice.
    */
   const [autoAnswer, setAutoAnswer] = useState(false);
-  /** The last transcript line auto mode has already judged. */
-  const lastAutoLineRef = useRef(0);
+  /** When a voice was last heard, in ms. Hands-free fires on the silence after. */
+  const lastVoiceAtRef = useRef(0);
+  /** Whether an answer is already being written, read from inside the poller. */
+  const thinkingRef = useRef(false);
+  /** The live transcript, readable from the poller without re-subscribing. */
+  const liveTextRef = useRef('');
+  /** The previous partial's words, for spotting the prefix that has settled. */
+  const prevPartialRef = useRef<string[]>([]);
+  /** What hands-free last sent, so the same sentence is not answered twice. */
+  const lastAskedRef = useRef('');
+  /** When the transcript last changed, for the settling window above. */
+  const lastTextChangeAtRef = useRef(0);
+  /**
+   * How many words of the turn in progress have already been answered and
+   * taken off screen. The transcriber will resend the whole turn, formatted,
+   * when the speaker stops; without this the question would reappear under
+   * its own answer and be detected all over again.
+   */
+  const consumedWordsRef = useRef(0);
   /**
    * Lines an answer has already been built from: taken off the screen so the
    * next question arrives on a clean pane, kept here so the copilot still
@@ -236,6 +281,7 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
 
   autoScrollRef.current = autoScroll;
   ctxRef.current = ctx;
+  thinkingRef.current = thinking;
 
   const handleLangChange = useCallback((newLang: 'fr' | 'en') => {
     setLang(newLang);
@@ -354,7 +400,7 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
    * takes the bytes themselves. Converting once here beats decoding base64
    * back into bytes fifty times a second.
    */
-  const attachPcmGraph = useCallback((stream: MediaStream, onChunk: (b64: string, pcm: ArrayBuffer) => void) => {
+  const attachPcmGraph = useCallback((stream: MediaStream, onChunk: (b64: () => string, pcm: ArrayBuffer) => void) => {
     const audioTracks = stream.getAudioTracks();
     if (audioTracks.length === 0) {
       setHasAudioInput(false);
@@ -370,7 +416,12 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
       audioCtxRef.current = ctx;
 
       const src = ctx.createMediaStreamSource(audioStream);
-      const proc = ctx.createScriptProcessor(2048, 1, 1);
+      // 1024 samples at 16kHz is a 64ms frame. Every sample sits in this
+      // buffer before anything is sent, so the frame length is a floor under
+      // how late the transcriber can possibly be; AssemblyAI's own client
+      // uses 50ms. Smaller than this and the main thread pays more in
+      // callbacks than the latency is worth.
+      const proc = ctx.createScriptProcessor(1024, 1, 1);
       processorRef.current = proc;
 
       let speechTimer: ReturnType<typeof setTimeout> | null = null;
@@ -386,17 +437,27 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
         }
         const rms = Math.sqrt(sum / input.length);
         if (rms > 0.001) {
+          // When the room last had a voice in it. Hands-free waits on this
+          // rather than on the transcriber's end-of-turn, which arrives a
+          // beat later and only after it has decided how to punctuate.
+          lastVoiceAtRef.current = Date.now();
           setAudioActive(true);
           if (speechTimer) clearTimeout(speechTimer);
           speechTimer = setTimeout(() => setAudioActive(false), 450);
         }
 
-        let bin = '';
-        const bytes = new Uint8Array(pcm.buffer);
-        for (let i = 0; i < bytes.length; i += 0x8000) {
-          bin += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + 0x8000)));
-        }
-        onChunk(btoa(bin), pcm.buffer);
+        // Base64 only if the consumer actually wants it. AssemblyAI takes
+        // the raw frame; encoding it anyway burned main-thread time sixteen
+        // times a second for nothing.
+        const b64 = () => {
+          let bin = '';
+          const bytes = new Uint8Array(pcm.buffer);
+          for (let i = 0; i < bytes.length; i += 0x8000) {
+            bin += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + 0x8000)));
+          }
+          return btoa(bin);
+        };
+        onChunk(b64, pcm.buffer);
       };
 
       src.connect(proc);
@@ -506,7 +567,7 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
     detachPcmRef.current?.();
     detachPcmRef.current = attachPcmGraph(stream, (b64) => {
       const open = relayWsRef.current;
-      if (open && open.readyState === WebSocket.OPEN) open.send(JSON.stringify({ audio_data: b64 }));
+      if (open && open.readyState === WebSocket.OPEN) open.send(JSON.stringify({ audio_data: b64() }));
     });
     connect();
   }, [attachPcmGraph, ensureAudioInput, lang, pushLine, startBrowserSpeech]);
@@ -573,19 +634,39 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
             // v3 marks each word final on its own, a beat after it is said.
             // Using them is what makes the transcript settle word by word;
             // without the array we can only colour the whole turn.
-            const words: { text: string; word_is_final?: boolean }[] =
+            const raw: { text: string; word_is_final?: boolean }[] =
               Array.isArray(msg.words) ? msg.words : [];
             const ended = Boolean(msg.end_of_turn);
+            // Words hands-free already answered are not shown again: only
+            // what has been said since the answer started belongs on screen.
+            const words = raw.slice(consumedWordsRef.current);
+            const spokenSoFar = words.map((w) => w.text).join(' ');
+
             if (words.length) {
-              const cut = words.findIndex((w) => !w.word_is_final);
-              const head = (cut === -1 ? words : words.slice(0, cut)).map((w) => w.text).join(' ');
-              const rest = cut === -1 ? '' : words.slice(cut).map((w) => w.text).join(' ');
+              // Measured against this account: word_is_final stays false for
+              // every word until the turn ends, so the flags alone would keep
+              // a whole sentence green for as long as someone talks. Two
+              // consecutive updates agreeing on a prefix is the real signal --
+              // the transcriber has stopped revising those words -- so that is
+              // what turns them white.
+              const flagged = words.findIndex((w) => !w.word_is_final);
+              const settledByFlag = flagged === -1 ? words.length : flagged;
+              const prev = prevPartialRef.current;
+              let agreed = 0;
+              while (agreed < words.length && agreed < prev.length && words[agreed].text === prev[agreed]) agreed++;
+              const settled = ended ? words.length : Math.max(settledByFlag, agreed);
+              const head = words.slice(0, settled).map((w) => w.text).join(' ');
+              const rest = words.slice(settled).map((w) => w.text).join(' ');
+              prevPartialRef.current = ended ? [] : words.map((w) => w.text);
               // The formatted transcript (punctuation, casing) only exists at
-              // the end of a turn, so it wins once the turn is over.
-              pushTurn(ended ? msg.transcript : head, rest, ended);
-            } else {
-              pushTurn(ended ? msg.transcript : '', ended ? '' : msg.transcript, ended);
+              // the end of a turn, so it wins once the turn is over -- unless
+              // part of it has already been answered and cleared away.
+              const finalText = consumedWordsRef.current ? spokenSoFar : msg.transcript;
+              pushTurn(ended ? finalText : head, ended ? '' : rest, ended);
+            } else if (ended && !consumedWordsRef.current) {
+              pushTurn(msg.transcript, '', true);
             }
+            if (ended) { consumedWordsRef.current = 0; prevPartialRef.current = []; }
           } else if (t === 'partialtranscript' && msg.text) {
             gotTranscript = true;
             setEngine('assemblyai');
@@ -714,8 +795,8 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
     setCtx(null);
     memoryRef.current = [];
     setRemembered(0);
-    lastAutoLineRef.current = 0;
     setAutoAnswer(false);
+    setAutoCardId(null);
   }, [stopSharing, elapsed]);
 
   const exitAll = useCallback(() => {
@@ -752,7 +833,8 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
-  const askAI = useCallback(async (explicitQuestion?: string) => {
+  const askAI = useCallback(async (explicitQuestion?: string, opts?: { handsFree?: boolean }) => {
+    const handsFree = Boolean(opts?.handsFree);
     const q = (explicitQuestion ?? '').trim() || currentQuestion();
     if (!q && lines.length === 0 && !explicitQuestion) {
       setError('No transcript yet — share the Meet tab, then click AI Answer.');
@@ -768,11 +850,13 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
       .map((l) => [l.text, l.tail].filter(Boolean).join(' ').trim())
       .filter(Boolean);
     const tail = [...memoryRef.current, ...live].slice(-14).join('\n');
-    // Only settled lines are consumed: whatever is still being spoken belongs
-    // to the next question, not this one.
-    const consumed = lines.filter((l) => l.final);
+    // A question that was answered is off the screen. Hands-free answers what
+    // it heard before the speaker had finished the turn, so it clears the live
+    // line too -- the transcriber resends that turn formatted a moment later,
+    // and consumedWordsRef keeps the answered half from coming back.
+    const consumed = handsFree ? lines : lines.filter((l) => l.final);
 
-    const id = beginAnswer(q || 'Live transcript');
+    const id = beginAnswer(q || 'Live transcript', handsFree);
     let model = 'fuelix';
     let streamed = false;
     try {
@@ -791,6 +875,9 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
           job_description: ctxRef.current?.jobDescription || '',
           notes: ctxRef.current?.notes || '',
           documents: ctxRef.current ? documentsText(ctxRef.current) : '',
+          // Nobody is waiting on a reasoning model's best work here: the
+          // recruiter has stopped talking and the silence is running.
+          fast: handsFree,
         }),
       });
       if (!r.ok || !r.body) throw new Error(`backend ${r.status}`);
@@ -816,15 +903,15 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
         }
       }
       if (!streamed) throw new Error('empty stream');
-      finishAnswer(id, model);
+      finishAnswer(id, model, handsFree);
     } catch {
       if (streamed) {
         // The answer was cut off rather than never written: keep the words,
         // and say so, instead of throwing away a usable half-answer.
-        finishAnswer(id, `${model} · interrupted`);
+        finishAnswer(id, `${model} · interrupted`, handsFree);
       } else {
         replaceAnswer(id, heuristicAnswer(q), 'offline heuristic');
-        finishAnswer(id, 'offline heuristic');
+        finishAnswer(id, 'offline heuristic', handsFree);
         setEngineNote((n) => n || 'Answer backend offline — showing CV-grounded heuristic. Start api_server.py for Fuelix.');
       }
     } finally {
@@ -847,46 +934,91 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
     return last ? (last.text || last.tail) : '';
   };
 
+  /** The transcript as it currently stands, answered part excluded. */
+  useEffect(() => {
+    const text = lines
+      .map((l) => [l.text, l.tail].filter(Boolean).join(' ').trim())
+      .filter(Boolean)
+      .join(' ');
+    if (text !== liveTextRef.current) {
+      liveTextRef.current = text;
+      lastTextChangeAtRef.current = Date.now();
+    }
+  }, [lines]);
+
+  /**
+   * Switching hands-free off clears its screen. A stale answer left floating
+   * over the interviewer's face is worse than showing nothing at all.
+   */
+  useEffect(() => {
+    if (!autoAnswer) setAutoCardId(null);
+  }, [autoAnswer]);
+
+  /**
+   * Keep the newest words of the hands-free answer in view.
+   *
+   * The screen over the call is a few lines tall by design, so an answer
+   * outgrows it within a sentence or two. Following the text is the whole
+   * point of watching it arrive.
+   */
+  useEffect(() => {
+    const el = handsFreeScrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [autoCardId, answers]);
+
   /**
    * Hands-free mode: answer a question without being asked to.
    *
-   * The timer is restarted by every transcript update, so it only fires once
-   * the room has been quiet for a moment -- an interviewer mid-sentence is
-   * still asking, and answering their first clause would be worse than
-   * waiting. The line is marked as judged inside the timer rather than before
-   * it, so a question interrupted by more speech is still picked up when the
-   * speaker finally stops.
+   * It waits on silence, not on the transcriber. Waiting for end-of-turn cost
+   * a second and a half on its own, and waiting for the formatted final cost
+   * more; the microphone already knows the room went quiet, which is the same
+   * fact several seconds earlier. So: the last words heard look like a
+   * question, and nobody has spoken for HANDS_FREE_SILENCE_MS -- go.
+   *
+   * Polled rather than driven by transcript updates, because the trigger is
+   * the absence of input, and nothing arrives to fire an effect.
    */
   useEffect(() => {
-    if (!autoAnswer || thinking) return;
-    const finals = lines.filter((l) => l.final);
-    const last = finals[finals.length - 1];
-    if (!last || last.id <= lastAutoLineRef.current) return;
-    if (!looksLikeQuestion(last.text)) {
-      lastAutoLineRef.current = last.id;   // heard, judged, not a question
-      return;
-    }
-    const t = setTimeout(() => {
-      lastAutoLineRef.current = last.id;
-      setHudSize('compact');
-      setTeleprompterOpen(true);
-      void askAI(last.text);
-    }, 900);
-    return () => clearTimeout(t);
-  }, [lines, autoAnswer, thinking, askAI]);
+    if (!autoAnswer) return;
+    const id = setInterval(() => {
+      if (thinkingRef.current) return;
+      const text = liveTextRef.current.trim();
+      if (text.length < 12 || text === lastAskedRef.current) return;
+      if (Date.now() - lastVoiceAtRef.current < HANDS_FREE_SILENCE_MS) return;
+      // The transcriber runs a beat behind the microphone, so the room can be
+      // quiet while the last few words of the question are still in flight.
+      // Once speech stops they land almost at once -- end-of-turn was measured
+      // at 0.1s -- so a short settling window costs nothing and stops the
+      // question being answered without its ending.
+      if (Date.now() - lastTextChangeAtRef.current < HANDS_FREE_SETTLE_MS) return;
+      if (!looksLikeQuestion(text)) {
+        // Judged and rejected: do not re-judge it every 120ms.
+        lastAskedRef.current = text;
+        return;
+      }
+      lastAskedRef.current = text;
+      consumedWordsRef.current += text.split(/\s+/).length;
+      void askAI(text, { handsFree: true });
+    }, 120);
+    return () => clearInterval(id);
+  }, [autoAnswer, askAI]);
 
   /**
    * Opens an empty answer card and points the teleprompter at it, before a
    * single word exists. The model takes several seconds to write; watching it
    * arrive beats watching a spinner when someone is waiting for you to speak.
    */
-  const beginAnswer = (question: string): number => {
+  const beginAnswer = (question: string, handsFree = false): number => {
     const id = answerId.current++;
-    setAnswers((prev) => {
-      const next = [...prev, { id, question, answer: '', model: '', ts: nowTs() }];
-      setActiveAnswerIdx(next.length - 1);
-      return next;
-    });
+    setAnswers((prev) => [...prev, { id, question, answer: '', model: '', ts: nowTs() }]);
+    if (handsFree) {
+      // Hands-free has its own small screen over the shared tab and leaves the
+      // teleprompter alone: one of them is being read out loud, and an answer
+      // nobody asked for must never replace it.
+      setAutoCardId(id);
+      return id;
+    }
+    setAnswers((prev) => { setActiveAnswerIdx(prev.length - 1); return prev; });
     if (autoOpenTeleprompter) setTeleprompterOpen(true);
     if (promptScrollRef.current) promptScrollRef.current.scrollTop = 0;
     // Nothing to scroll through yet, and scrolling text that is still growing
@@ -903,7 +1035,7 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
     setAnswers((prev) => prev.map((a) => (a.id === id ? { ...a, answer, model } : a)));
   };
 
-  const finishAnswer = (id: number, model: string) => {
+  const finishAnswer = (id: number, model: string, handsFree = false) => {
     setAnswers((prev) => {
       const card = prev.find((a) => a.id === id);
       if (card && sessionIdRef.current) {
@@ -911,7 +1043,9 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
       }
       return prev.map((a) => (a.id === id ? { ...a, model } : a));
     });
-    setTpAutoScroll(true);
+    // Only the teleprompter scrolls itself, and only for an answer it is
+    // actually showing. Hands-free lives elsewhere and stays out of it.
+    if (!handsFree) setTpAutoScroll(true);
   };
 
   const pushAnswer = (question: string, answer: string, model: string) => {
@@ -1069,6 +1203,10 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
   }
 
   const chrono = clock(elapsed);
+  // The answer hands-free is writing, if it has not been dismissed. Looked up
+  // by id rather than "the last card", so an answer typed by hand afterwards
+  // does not hijack the screen over the call.
+  const autoCard = autoCardId === null ? null : answers.find((a) => a.id === autoCardId) ?? null;
 
   return (
     <div className="flex-1 w-full max-w-[1760px] mx-auto px-4 sm:px-6 lg:px-8 py-3 flex flex-col h-[calc(100vh-80px)] overflow-hidden animate-in fade-in duration-150">
@@ -1217,6 +1355,69 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
                   >
                     <Square className="w-3.5 h-3.5" /> Stop sharing
                   </button>
+                </div>
+              )}
+
+              {/* The hands-free screen, over the call itself.
+                  It lives here rather than in the middle of the app because
+                  this is where the eyes already are during an interview: the
+                  answer has to be readable without looking away from the
+                  person asking. */}
+              {autoCard && (
+                <div
+                  className="absolute inset-x-2 bottom-2 max-h-[68%] flex flex-col rounded-xl overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200"
+                  style={{ background: 'rgba(12,17,34,0.93)', boxShadow: '0 12px 40px rgba(0,0,0,0.55), inset 0 0 0 0.5px rgba(255,255,255,0.14)' }}
+                >
+                  <div className="px-3 py-2 flex items-center gap-2 border-b border-white/10 shrink-0">
+                    <span className="px-2 py-0.5 rounded-full ic-caption text-[10px] font-semibold uppercase tracking-[0.08em] bg-[#0a84ff]/15 text-[#0a84ff] flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#0a84ff] animate-pulse" />
+                      Hands-free
+                    </span>
+                    <span className="ic-caption text-[11px] text-[rgba(235,235,245,0.42)] truncate min-w-0 flex-1">
+                      {autoCard.question}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setAutoFontSize((v) => Math.max(13, v - 2))}
+                      className="ic-fill w-6 h-6 rounded-full text-[#f5f5f7] cursor-pointer shrink-0 ic-caption text-[11px] font-semibold flex items-center justify-center"
+                      title="Smaller"
+                    >
+                      A-
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAutoFontSize((v) => Math.min(30, v + 2))}
+                      className="ic-fill w-6 h-6 rounded-full text-[#f5f5f7] cursor-pointer shrink-0 ic-caption text-[12px] font-semibold flex items-center justify-center"
+                      title="Bigger"
+                    >
+                      A+
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAutoCardId(null)}
+                      className="ic-fill w-6 h-6 rounded-full text-[#f5f5f7] cursor-pointer shrink-0 flex items-center justify-center"
+                      title="Dismiss"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  <div
+                    ref={handsFreeScrollRef}
+                    className="flex-1 overflow-y-auto px-4 py-3 text-[#f5f5f7] font-medium leading-relaxed whitespace-pre-wrap select-text"
+                    style={{ fontSize: `${autoFontSize}px`, lineHeight: 1.5 }}
+                  >
+                    {autoCard.answer
+                      ? spoken(autoCard.answer)
+                      : (
+                        <span className="inline-flex items-center gap-2 text-[rgba(235,235,245,0.62)]">
+                          <Loader2 className="w-4 h-4 animate-spin text-[#0a84ff]" />
+                          Writing the answer…
+                        </span>
+                      )}
+                    {!autoCard.model && autoCard.answer && (
+                      <span className="inline-block w-[0.5ch] ml-0.5 bg-[#0a84ff] animate-pulse align-middle" style={{ height: '1em' }} />
+                    )}
+                  </div>
                 </div>
               )}
             </div>

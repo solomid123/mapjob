@@ -11,10 +11,11 @@ import asyncio
 import json
 import os
 import queue
+import threading
 import shutil
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -70,7 +71,11 @@ def capabilities() -> Dict[str, Any]:
             "ready": _has("GOOGLE_OAUTH_REFRESH_TOKEN"),
             "env": "GOOGLE_OAUTH_REFRESH_TOKEN",
             "label": "Gmail (OAuth2)",
-            "detail": "Sends as you, from your own account.",
+            # A refresh token is not a key you can copy out of a console: it is
+            # what the first consent returns. So this row points at the script
+            # that performs that consent rather than at a field to paste into.
+            "detail": "Sends as you, from your own account. "
+                      "Run scripts/gmail_oauth_setup.py once to grant it.",
         },
         "smtp": {
             "ready": _has("GMAIL_APP_PASSWORD", "SMTP_PASSWORD"),
@@ -159,24 +164,44 @@ def get_documents(limit: int = 100) -> Dict[str, Any]:
     return {"documents": store.list_documents(limit=limit)}
 
 
+# Set when the process is going down, so open streams end instead of holding
+# the shutdown open. A reload that waits forever for a log tail to hang up is
+# a dev server that cannot be restarted.
+_closing = threading.Event()
+
+
+@router.on_event("shutdown")
+async def _release_streams() -> None:
+    _closing.set()
+
+
 @router.get("/stream")
-async def stream() -> StreamingResponse:
+async def stream(request: Request) -> StreamingResponse:
     """
     The pipeline console, as server-sent events.
 
-    A heartbeat every 15s because an idle SSE connection through a proxy is
-    indistinguishable from a dead one, and this stream is idle most of the
-    time -- that is what a pipeline log looks like between runs.
+    A heartbeat every two seconds, because an idle SSE connection through a
+    proxy is indistinguishable from a dead one -- and because the gap between
+    beats is also how long a hung-up browser, or a server on its way down,
+    goes unnoticed. This stream is idle most of the time; that is what a
+    pipeline log looks like between runs.
+
+    Ending a stream is cheap: `retry: 3000` means the browser reconnects by
+    itself, and the page reloads the backlog when it does. Holding one open
+    is what is expensive -- a reload that waits forever for a log tail to
+    hang up is a dev server that cannot be restarted.
     """
     q = store.subscribe()
 
     async def gen():
         try:
             yield "retry: 3000\n\n"
-            while True:
+            while not _closing.is_set():
+                if await request.is_disconnected():
+                    break
                 try:
                     payload = await asyncio.get_event_loop().run_in_executor(
-                        None, q.get, True, 15.0
+                        None, q.get, True, 2.0
                     )
                     yield f"data: {payload}\n\n"
                 except queue.Empty:

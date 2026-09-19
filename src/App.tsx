@@ -1807,14 +1807,22 @@ export function App() {
                       {/* The iCloud footer band, at the only place on this view where
                         * scrolling ends. Pinning it to the window instead would cost every
                         * screen ~130px of map, permanently, to show something iCloud only
-                        * ever shows you below the fold. */}
-                      <FooterInfo
-                        savedCount={savedJobIds.size}
-                        appliedCount={appliedJobIds.size}
-                        jobCount={filteredJobs.length}
-                        locationLabel={searchAsMapMoves ? activeLocationLabel : currentCity.name}
-                        onShowSaved={() => setShowSavedOnly(true)}
-                      />
+                        * ever shows you below the fold.
+                        *
+                        * Three columns need width to be three columns. In the 440px
+                        * reading pane they collapsed to a word a line -- "Where / these /
+                        * come / from" -- so the band waits for a pane wide enough to lay
+                        * it out: the two-up cards, or a phone, where the island is the
+                        * whole screen and the columns stack the way they were drawn to. */}
+                      <div className={listPane === 'grid' ? '' : 'md:hidden'}>
+                        <FooterInfo
+                          savedCount={savedJobIds.size}
+                          appliedCount={appliedJobIds.size}
+                          jobCount={filteredJobs.length}
+                          locationLabel={searchAsMapMoves ? activeLocationLabel : currentCity.name}
+                          onShowSaved={() => setShowSavedOnly(true)}
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>

@@ -15,7 +15,7 @@ import threading
 import time
 from datetime import datetime, timezone
 import shutil
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -24,6 +24,7 @@ from pydantic import BaseModel
 from services.automation import lead_discovery as discovery
 from services.automation import outreach_store as store
 from services.automation import site_harvest as harvester
+from services.automation import email_verify as verifier
 
 router = APIRouter(prefix="/api/outreach", tags=["outreach"])
 
@@ -278,6 +279,104 @@ def post_harvest(body: HarvestIn) -> Dict[str, Any]:
     })
     threading.Thread(target=_run_harvest, args=(body,), daemon=True).start()
     return {"started": True, "label": label}
+
+
+class VerifyIn(BaseModel):
+    ids: List[int] = []
+    limit: int = 100
+    # SMTP is the only stage that proves anything and the only one that can get
+    # this machine refused by a mail server, so it is a choice, not a default
+    # buried in a constant.
+    smtp: bool = True
+
+
+def _run_verify(spec: VerifyIn) -> None:
+    def say(message: str, level: str = "info", pid: Optional[int] = None) -> None:
+        store.log_event(message, phase="verify", level=level, prospect_id=pid)
+
+    try:
+        if spec.ids:
+            rows = [r for r in (store.get_prospect(i) for i in spec.ids) if r]
+        else:
+            page = store.list_prospects(page=1, page_size=max(1, min(spec.limit, 200)))
+            rows = [r for r in page["items"]
+                    if r.get("email") and r.get("email_status") in ("", "unknown", "guessed")]
+        by_address: Dict[str, List[Dict[str, Any]]] = {}
+        for row in rows:
+            if row.get("email"):
+                by_address.setdefault(row["email"].strip().lower(), []).append(row)
+        if not by_address:
+            say("Nothing to check: every address on file already has a verdict.")
+            return
+
+        say("Checking " + str(len(by_address)) + " address"
+            + ("es" if len(by_address) != 1 else ""))
+        counts = {"valid": 0, "risky": 0, "invalid": 0, "unknown": 0}
+
+        def record(result: Dict[str, Any]) -> None:
+            status = str(result["status"])
+            counts[status] = counts.get(status, 0) + 1
+            for row in by_address.get(str(result["email"]), []):
+                fields = {
+                    "email_status": status,
+                    "verify_reason": str(result.get("reason") or ""),
+                    "verify_score": int(result.get("score") or 0),
+                    "verified_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                }
+                # A proved address earns the next stage. A rejected one is
+                # taken out of the pipeline rather than deleted: the company is
+                # still real, and the record of a dead address is what stops it
+                # being found and written to again next week.
+                if status == "valid" and row.get("stage") == "new":
+                    fields["stage"] = "verified"
+                elif status == "invalid":
+                    fields["stage"] = "failed"
+                store.update_prospect(row["id"], fields)
+                say(row["company"] + " - " + status + ": " + str(result.get("reason") or ""),
+                    level="warn" if status in ("invalid", "unknown") else "info",
+                    pid=row["id"])
+
+        verifier.verify_many(
+            list(by_address.keys()), allow_smtp=spec.smtp,
+            on_result=record, should_stop=lambda: bool(_discovery["cancel"]),
+        )
+        say(str(counts.get("valid", 0)) + " proved, " + str(counts.get("risky", 0))
+            + " unprovable, " + str(counts.get("invalid", 0)) + " dead, "
+            + str(counts.get("unknown", 0)) + " refused us")
+        if counts.get("unknown", 0) > counts.get("valid", 0) and counts.get("unknown", 0) > 2:
+            # Worth saying out loud rather than leaving as a pattern in a log:
+            # it means the probing, not the addresses, is the problem.
+            say("Most servers refused this machine. Probing from a home connection "
+                "gets throttled; these are not bad addresses.", level="warn")
+    except Exception as exc:  # noqa: BLE001
+        _discovery["error"] = str(exc)
+        say("Verification failed: " + str(exc), "error")
+    finally:
+        _discovery["running"] = False
+        _discovery["cancel"] = False
+
+
+@router.post("/verify")
+def post_verify(body: VerifyIn) -> Dict[str, Any]:
+    """
+    Prove the addresses before anything is written to them.
+
+    Syntax, then the domain, then the mailbox itself -- and the verdict is
+    stored with the reason, because "risky" is only useful when it says
+    whether it means a catch-all domain or a server having a bad morning.
+    """
+    if _discovery["running"]:
+        raise HTTPException(409, "Already busy with " + str(_discovery["label"]) + ".")
+    _discovery.update({
+        "running": True,
+        "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "label": "address check",
+        "error": "",
+        "engine": "verify",
+        "cancel": False,
+    })
+    threading.Thread(target=_run_verify, args=(body,), daemon=True).start()
+    return {"started": True}
 
 
 @router.post("/discover/cancel")

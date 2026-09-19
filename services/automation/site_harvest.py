@@ -354,7 +354,7 @@ PLATFORM_HOSTS = {
 }
 
 
-def _overpass(query: str, timeout: int = 90) -> Dict[str, object]:
+def _overpass(query: str, timeout: int = 180) -> Dict[str, object]:
     body = urllib.parse.urlencode({"data": query}).encode()
     last: Optional[Exception] = None
     for host in OVERPASS_MIRRORS:
@@ -386,25 +386,33 @@ def domains_from_osm(city: str, keyword: str = "", limit: int = 400,
     say = on_event or (lambda *a, **k: None)
 
     parts = "\n  ".join('nwr(area.a)' + f + '["website"];' for f in OSM_FILTERS)
-    query = (
-        "[out:json][timeout:80];\n"
-        'area["name"="' + city + '"]["boundary"="administrative"]->.a;\n'
-        "(\n  " + parts + "\n);\n"
-        "out tags center 3000;"
-    )
-    say("Asking OpenStreetMap for employers in " + city)
-    data = _overpass(query)
-    elements = data.get("elements") or []
-    if not elements:
-        # The exact-name area found nothing: either the spelling differs from
-        # the one OSM holds, or the city is tagged at another level. Ask again,
-        # loosely.
-        query = query.replace(
-            'area["name"="' + city + '"]["boundary"="administrative"]',
-            'area["name"~"^' + re.escape(city) + '$",i]',
+
+    def ask(area: str) -> List[Dict[str, object]]:
+        query = (
+            "[out:json][timeout:150];\n"
+            + area + "->.a;\n"
+            "(\n  " + parts + "\n);\n"
+            "out tags center 3000;"
         )
         data = _overpass(query)
-        elements = data.get("elements") or []
+        # Overpass answers a timeout with 200 OK, an empty element list and a
+        # sentence. Without reading it, a query that was too big for the server
+        # is indistinguishable from a city with no employers -- which is what
+        # "paris" reported, in lower case, on the first real use of this.
+        remark = str(data.get("remark") or "")
+        if remark and not data.get("elements"):
+            raise RuntimeError("OpenStreetMap could not finish that query: " + remark[:160])
+        return list(data.get("elements") or [])
+
+    say("Asking OpenStreetMap for employers in " + city)
+    # Case-insensitive from the start: a city is typed the way it is spoken,
+    # and OSM holds exactly one capitalisation of it.
+    name = 'area["name"~"^' + re.escape(city) + '$",i]'
+    elements = ask(name + '["boundary"="administrative"]')
+    if not elements:
+        # Some places are not administrative boundaries at all -- a district, a
+        # quarter, a municipality tagged as a place. Ask again without that.
+        elements = ask(name)
 
     needle = keyword.strip().lower()
     seen: Dict[str, Dict[str, str]] = {}

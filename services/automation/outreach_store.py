@@ -91,6 +91,34 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_docs_prospect ON documents(prospect_id);
             """
         )
+        _add_columns(conn)
+
+
+# Columns added after the first version shipped. SQLite has no "ADD COLUMN IF
+# NOT EXISTS", and a migration framework for four columns on a per-machine
+# ledger would be ceremony -- but dropping the table would throw away the
+# user's companies, which is not a migration, it is a loss.
+LATER_COLUMNS = (
+    # Published by the employer, or inferred from a naming pattern. Never the
+    # same thing, and the difference has to survive a restart: a guessed
+    # address that gets mistaken for a published one is how a letter goes to
+    # somebody who never existed.
+    ("email_kind", "TEXT DEFAULT ''"),
+    ("source_url", "TEXT DEFAULT ''"),
+    # What the verifier said, in words, and when. "risky" without its reason is
+    # a shrug, and a verdict without a date is a verdict about a mailbox that
+    # may have been closed since.
+    ("verify_reason", "TEXT DEFAULT ''"),
+    ("verify_score", "INTEGER DEFAULT 0"),
+    ("verified_at", "TEXT DEFAULT ''"),
+)
+
+
+def _add_columns(conn: sqlite3.Connection) -> None:
+    have = {row["name"] for row in conn.execute("PRAGMA table_info(prospects)").fetchall()}
+    for name, spec in LATER_COLUMNS:
+        if name not in have:
+            conn.execute(f"ALTER TABLE prospects ADD COLUMN {name} {spec}")
 
 
 def _dedupe_key(company: str, ident: str) -> str:
@@ -258,7 +286,8 @@ def upsert_prospect(data: Dict[str, Any], source: str = "manual") -> Tuple[Dict[
 
 def update_prospect(prospect_id: int, fields: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     allowed = ("company", "contact_name", "role", "email", "email_status",
-               "website", "city", "stage", "notes")
+               "website", "city", "stage", "notes", "email_kind", "source_url",
+               "verify_reason", "verify_score", "verified_at")
     sets, values = [], []
     for name in allowed:
         if name in fields:

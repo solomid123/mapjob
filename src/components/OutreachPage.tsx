@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity, Building2, FileText, Loader2, Plus,
-  RefreshCw, Search, Send, Trash2, Users, X,
+  RefreshCw, Search, Send, ShieldCheck, Trash2, Users, X,
 } from 'lucide-react';
 
 const BACKEND =
@@ -29,6 +29,9 @@ export interface Prospect {
   role: string;
   email: string;
   email_status: 'unknown' | 'guessed' | 'valid' | 'risky' | 'invalid';
+  verify_reason?: string;
+  verify_score?: number;
+  verified_at?: string;
   website: string;
   city: string;
   source: string;
@@ -342,6 +345,26 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
     }
   };
 
+  /** Prove the addresses on file. Same single-flight lane as a search. */
+  const startVerify = async () => {
+    setError('');
+    setHunting(true);
+    try {
+      const res = await fetch(`${BACKEND}/api/outreach/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ limit: 200, smtp: true }),
+      });
+      if (!res.ok) {
+        const detail = await res.json().catch(() => ({}));
+        throw new Error(detail.detail || 'The check could not be started.');
+      }
+    } catch (err) {
+      setHunting(false);
+      setError(err instanceof Error ? err.message : 'The check could not be started.');
+    }
+  };
+
   /** Call off a run in flight. It stops after the company it is reading. */
   const stopHunt = async () => {
     try {
@@ -561,6 +584,17 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                 className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-white/[0.06] border border-white/[0.09] text-[13.5px] text-[#f5f5f7] placeholder:text-[rgba(235,235,245,0.42)] outline-none focus:border-white/25"
               />
             </div>
+            {/* Proving the addresses is the step between having a list and
+                being allowed to write to it, so it sits with the list. */}
+            <button
+              type="button"
+              onClick={startVerify}
+              disabled={hunting}
+              title="Ask each mailbox server whether the address exists, before anything is sent to it"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-white/[0.08] hover:bg-white/[0.14] disabled:opacity-40 text-[#f5f5f7] text-[13px] font-semibold transition-colors"
+            >
+              <ShieldCheck className="w-4 h-4" /> Check addresses
+            </button>
             <button
               type="button"
               onClick={() => setShowAdd((v) => !v)}
@@ -630,7 +664,16 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                     {p.contact_name || '--'}
                     {p.role ? <span className="text-[rgba(235,235,245,0.42)]"> - {p.role}</span> : null}
                   </div>
-                  <div className={`min-w-0 text-[13px] truncate ${EMAIL_TINT[p.email_status] || ''}`}>
+                  {/* The verdict lives on the address, and its reason lives in
+                    * the tooltip: "risky" on its own is a shrug, and the
+                    * operator has to be able to tell a catch-all domain from a
+                    * mail server that was simply having a bad morning. */}
+                  <div
+                    className={`min-w-0 text-[13px] truncate ${EMAIL_TINT[p.email_status] || ''}`}
+                    title={p.verify_reason
+                      ? `${p.email_status}: ${p.verify_reason}`
+                      : p.email ? 'not checked yet' : ''}
+                  >
                     {p.email || 'no address yet'}
                   </div>
                   <div><StagePill stage={p.stage} /></div>

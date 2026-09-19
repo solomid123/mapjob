@@ -587,6 +587,11 @@ def discover(
             "source_url": "",
             "email_kind": "",
             "notes": f"Found for: {profession}" if profession else "",
+            # What the row is for. These companies were not found through an
+            # advertisement, so there is no vacancy to quote and the trade that
+            # was searched is the honest answer -- the same column the board's
+            # own job titles land in, answering the same question.
+            "job_title": profession or "",
         }
         say(f"Reading {item['company']}")
         try:

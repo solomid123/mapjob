@@ -133,6 +133,11 @@ def find_contact(company: str, website: str = "", city: str = "",
         "verify_reason": "",
         "verify_score": 0,
         "notes": f"Found for: {profession}" if profession else "",
+        # No advertisement here, so no vacancy to quote: this company was found
+        # by looking for a trade, and the trade is what the row is about. It
+        # goes in the same column as the board's job title because the question
+        # the column answers -- "what job is this row for" -- is the same one.
+        "job_title": profession or "",
         "source": "pattern",
     }
 

@@ -119,6 +119,7 @@ def init_db() -> None:
         _add_columns(conn)
         _add_document_columns(conn)
         _backfill_sends(conn)
+        _backfill_job_titles(conn)
 
 
 def _backfill_sends(conn: sqlite3.Connection) -> None:
@@ -135,6 +136,40 @@ def _backfill_sends(conn: sqlite3.Connection) -> None:
         "INSERT INTO sends (prospect_id, to_email, message_id, sent_at)"
         " SELECT prospect_id, '', COALESCE(message_id, ''), sent_at FROM documents"
         " WHERE dry_run=0 AND sent_at IS NOT NULL")
+
+
+def _backfill_job_titles(conn: sqlite3.Connection) -> None:
+    """
+    Recover the vacancy of board prospects filed before it had a column.
+
+    Both engines always knew it -- they wrote it into the free-text notes, the
+    board as `Ref: 12345 | Kaufmann/-frau Bueromanagement | Published ...` and
+    the website sweeps as `Found for: <trade>`. So the alternative to reading
+    it back out is a table where every row found before today says nothing
+    about the job, which would make the new column look broken on the only
+    data the user currently has.
+
+    Nothing is inferred: only a field that was already the title is taken, and
+    the notes' own keywords are excluded, because a wrong title is worse than
+    an empty one -- it is the line that decides whether a company is worth
+    writing to.
+    """
+    rows = conn.execute(
+        "SELECT id, notes FROM prospects WHERE COALESCE(job_title,'') = ''"
+        " AND (notes LIKE 'Ref: %|%' OR notes LIKE 'Found for: %')").fetchall()
+    for row in rows:
+        notes = str(row["notes"] or "")
+        if notes.startswith("Found for: "):
+            title = notes[len("Found for: "):].split("|")[0].strip()
+        else:
+            parts = [p.strip() for p in notes.split("|")]
+            titles = [p for p in parts[1:]
+                      if p and not p.startswith("Published")
+                      and p != "Arbeitnehmerueberlassung"]
+            title = titles[0] if titles else ""
+        if title:
+            conn.execute("UPDATE prospects SET job_title=? WHERE id=?",
+                         (title, row["id"]))
 
 
 def record_send(prospect_id: Optional[int], to_email: str, message_id: str,
@@ -194,6 +229,17 @@ LATER_COLUMNS = (
     # spontaneous application is timely or is about a job filled in the spring.
     # Empty for prospects that did not come from a dated listing.
     ("posted_at", "TEXT DEFAULT ''"),
+    # The vacancy this employer advertised, in the board's own words. Not
+    # `role`, which is the contact person's job title ("Ansprechpartner") --
+    # these are two different people's jobs and putting them in one column
+    # would make both unreadable.
+    #
+    # It earns its place because a search for one thing returns neighbours of
+    # it: ask the board for an office apprenticeship and it will also offer
+    # warehouse and retail. Without the title on the row, the only way to see
+    # that a company has nothing to do with what was asked is to open the
+    # listing, and the cheapest moment to notice is before writing to them.
+    ("job_title", "TEXT DEFAULT ''"),
 )
 
 
@@ -333,9 +379,9 @@ def upsert_prospect(data: Dict[str, Any], source: str = "manual") -> Tuple[Dict[
             conn.execute(
                 "INSERT INTO prospects (dedupe_key, company, contact_name, role, email,"
                 " email_status, website, city, source, stage, notes, email_kind,"
-                " source_url, phone, street, postcode, ref, posted_at,"
+                " source_url, phone, street, postcode, ref, posted_at, job_title,"
                 " created_at, updated_at)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     key, company, contact, (data.get("role") or "").strip(), email,
                     (data.get("email_status") or ("guessed" if email else "unknown")),
@@ -348,6 +394,7 @@ def upsert_prospect(data: Dict[str, Any], source: str = "manual") -> Tuple[Dict[
                     (data.get("postcode") or "").strip(),
                     (data.get("ref") or "").strip(),
                     (data.get("posted_at") or "").strip(),
+                    (data.get("job_title") or "").strip(),
                     now, now,
                 ),
             )
@@ -359,7 +406,7 @@ def upsert_prospect(data: Dict[str, Any], source: str = "manual") -> Tuple[Dict[
             merged = dict(existing)
             for field in ("contact_name", "role", "email", "website", "city", "notes",
                           "email_kind", "source_url", "phone", "street", "postcode",
-                          "ref", "posted_at"):
+                          "ref", "posted_at", "job_title"):
                 value = (data.get(field) or "").strip()
                 if value:
                     merged[field] = value
@@ -385,7 +432,7 @@ def upsert_prospect(data: Dict[str, Any], source: str = "manual") -> Tuple[Dict[
             conn.execute(
                 "UPDATE prospects SET contact_name=?, role=?, email=?, email_status=?,"
                 " website=?, city=?, notes=?, stage=?, email_kind=?, source_url=?,"
-                " phone=?, street=?, postcode=?, ref=?, posted_at=?,"
+                " phone=?, street=?, postcode=?, ref=?, posted_at=?, job_title=?,"
                 " updated_at=? WHERE id=?",
                 (
                     merged["contact_name"], merged["role"], merged["email"],
@@ -396,6 +443,7 @@ def upsert_prospect(data: Dict[str, Any], source: str = "manual") -> Tuple[Dict[
                     merged.get("phone") or "", merged.get("street") or "",
                     merged.get("postcode") or "", merged.get("ref") or "",
                     merged.get("posted_at") or "",
+                    merged.get("job_title") or "",
                     now, merged["id"],
                 ),
             )
@@ -445,11 +493,15 @@ def list_prospects(query: str = "", stage: str = "", page: int = 1,
     where, params = [], []
     if query:
         like = f"%{query.strip().lower()}%"
+        # The vacancy is in here too: with a ledger built from several searches,
+        # "was this lot the office apprenticeships or the warehouse ones" is a
+        # question about the job, and answering it by eye means paging.
         where.append(
             "(lower(company) LIKE ? OR lower(contact_name) LIKE ?"
-            " OR lower(email) LIKE ? OR lower(city) LIKE ?)"
+            " OR lower(email) LIKE ? OR lower(city) LIKE ?"
+            " OR lower(job_title) LIKE ?)"
         )
-        params.extend([like, like, like, like])
+        params.extend([like, like, like, like, like])
     if stage:
         where.append("stage = ?")
         params.append(stage)

@@ -341,6 +341,12 @@ def to_lead(item: Dict[str, object], det: Dict[str, object],
         # shown next to the company rather than being thrown away after the
         # search that filtered on it.
         "posted_at": posted,
+        # The vacancy, as a field of its own rather than a fragment of the
+        # notes. A search returns the neighbours of what was asked for, and the
+        # title is the only thing on the row that says which of the two a
+        # company is -- so it has to be sortable, searchable and on screen, not
+        # buried in a sentence.
+        "job_title": title,
         "source_url": "https://www.arbeitsagentur.de/jobsuche/jobdetail/" + refnr if refnr else "",
         "notes": notes,
         "source": "arbeitsagentur",

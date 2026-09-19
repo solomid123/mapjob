@@ -38,6 +38,9 @@ export interface Prospect {
   street?: string;
   postcode?: string;
   posted_at?: string;
+  // The vacancy, not the contact's job: `role` is what the person does
+  // ("Ansprechpartner"), this is what the employer is advertising.
+  job_title?: string;
   website: string;
   city: string;
   source: string;
@@ -1046,7 +1049,7 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
               <input
                 value={query}
                 onChange={(e) => { setPage(1); setQuery(e.target.value); }}
-                placeholder="Search company, contact, address or city"
+                placeholder="Search company, job, contact, address or city"
                 className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-white/[0.06] border border-white/[0.09] text-[13.5px] text-[#f5f5f7] placeholder:text-[rgba(235,235,245,0.42)] outline-none focus:border-white/25"
               />
             </div>
@@ -1273,7 +1276,10 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
           </div>
 
           <div className="ic-glass rounded-2xl overflow-hidden">
-            <div className="hidden md:grid grid-cols-[28px_1.4fr_1.2fr_1.4fr_0.7fr_104px] gap-3 px-4 py-2.5 border-b border-white/[0.09] text-[11.5px] uppercase tracking-wide text-[rgba(235,235,245,0.52)]">
+            {/* The vacancy gets a column of its own, and the contact keeps a
+              * narrower one: in a ledger built from board searches most rows
+              * name no person, while every row is about a job. */}
+            <div className="hidden md:grid grid-cols-[28px_1.3fr_1.2fr_1fr_1.3fr_0.6fr_104px] gap-3 px-4 py-2.5 border-b border-white/[0.09] text-[11.5px] uppercase tracking-wide text-[rgba(235,235,245,0.52)]">
               <input
                 type="checkbox"
                 checked={allPicked}
@@ -1284,7 +1290,8 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                 title="Select everything on this page"
                 className="accent-[#0a84ff] w-3.5 h-3.5 cursor-pointer self-center"
               />
-              <span>Company</span><span>Contact</span><span>Address</span><span>Stage</span><span />
+              <span>Company</span><span>Position</span><span>Contact</span>
+              <span>Address</span><span>Stage</span><span />
             </div>
             {prospects.length === 0 ? (
               <div className="px-4 py-10 text-center">
@@ -1297,7 +1304,7 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
               prospects.map((p) => (
                 <div
                   key={p.id}
-                  className={`grid grid-cols-1 md:grid-cols-[28px_1.4fr_1.2fr_1.4fr_0.7fr_104px] gap-1 md:gap-3 px-4 py-2.5 border-b border-white/[0.07] last:border-0 transition-colors ${
+                  className={`grid grid-cols-1 md:grid-cols-[28px_1.3fr_1.2fr_1fr_1.3fr_0.6fr_104px] gap-1 md:gap-3 px-4 py-2.5 border-b border-white/[0.07] last:border-0 transition-colors ${
                     picked.has(p.id) ? 'bg-[#0a84ff]/[0.12]' : 'hover:bg-white/[0.05]'
                   }`}
                 >
@@ -1338,6 +1345,18 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                         );
                       })() : null}
                     </p>
+                  </div>
+                  {/* What this row is about. A search for one trade comes back
+                    * with its neighbours, so without the advertised job on the
+                    * row the only way to see that a company is answering a
+                    * different question is to open the listing -- and the
+                    * cheapest moment to notice is before writing to them. The
+                    * full title is in the tooltip, since these run long. */}
+                  <div
+                    className="min-w-0 text-[13px] text-[rgba(235,235,245,0.72)] truncate"
+                    title={p.job_title || ''}
+                  >
+                    {p.job_title || <span className="text-[rgba(235,235,245,0.32)]">--</span>}
                   </div>
                   <div className="min-w-0 text-[13px] text-[rgba(235,235,245,0.62)] truncate">
                     {p.contact_name || '--'}

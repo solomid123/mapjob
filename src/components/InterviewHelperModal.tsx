@@ -3,7 +3,7 @@ import {
   Mic, MicOff, Trash2, Sparkles, MonitorUp, Square,
   Maximize2, RefreshCw, Copy, Check, Loader2, ScanEye,
   ArrowLeft, Clock, Tv, ChevronLeft, ChevronRight, Play, Pause,
-  RotateCcw, X,
+  RotateCcw, X, Wand2, Minimize2,
 } from 'lucide-react';
 import {
   createInterviewSession,
@@ -24,7 +24,18 @@ interface InterviewHelperModalProps {
 
 interface TranscriptLine {
   id: number;
+  /** Words the engine has committed. They will not change again. */
   text: string;
+  /**
+   * Words still being revised, shown in green just after the committed ones.
+   *
+   * A turn is only "final" when the speaker stops, which can be ten seconds of
+   * talking. Holding the whole turn green until then makes the transcript look
+   * like it is guessing, when in fact AssemblyAI locks each word within a word
+   * or two of hearing it -- so the settled prefix lives in `text` and only the
+   * genuinely unsettled tail stays green.
+   */
+  tail: string;
   final: boolean;
   ts: string;
 }
@@ -50,6 +61,60 @@ function clock(total: number): string {
 
 function nowTs(): string {
   return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+/**
+ * Openings that make a sentence a question even when the transcript has no
+ * question mark -- which is most of the time, because people trail off and
+ * because a recogniser punctuates what it hears, not what was meant.
+ */
+const QUESTION_OPENERS = new RegExp(
+  '^(?:'
+  + 'pouvez|pourriez|parlez|dites|racontez|décrivez|expliquez|donnez|présentez|'
+  + 'comment|pourquoi|quel|quelle|quels|quelles|combien|quand|où|qui|'
+  + "qu'est|qu'|est-ce|avez|êtes|aviez|seriez|auriez|voulez|savez|connaissez|"
+  // Not grammatically questions, but they are asked in the same breath and
+  // the candidate is expected to answer them: missing one costs a silence.
+  + "j'aimerais|jaimerais|je voudrais|je souhaiterais|dites-moi|parlez-moi|"
+  + 'how|why|what|which|when|where|who|'
+  + 'can|could|would|will|do|did|does|have|has|are|is|were|tell|describe|explain|'
+  + "walk|give|talk|i'd like|i would like"
+  + ')\\b',
+  'i',
+);
+
+/**
+ * Did the interviewer just ask something?
+ *
+ * Deliberately generous about what counts and strict about length: a missed
+ * question costs a silence in a real interview, while a false positive costs
+ * an answer nobody reads.
+ *
+ * Every clause is tested, not just the first: the question is routinely buried
+ * after a preamble -- "Pour commencer, pouvez-vous vous présenter" only becomes
+ * one at the comma. Short fragments are ignored so a stray "so," or "et" cannot
+ * carry a match.
+ */
+export function looksLikeQuestion(text: string): boolean {
+  const s = text.trim();
+  if (s.length < 12) return false;
+  if (s.includes('?')) return true;
+  return s
+    .split(/[.!;:,]+/)
+    .map((c) => c.trim())
+    .filter((c) => c.length >= 10)
+    .some((c) => QUESTION_OPENERS.test(c));
+}
+
+/**
+ * Strips the markdown emphasis the model sprinkles into answers.
+ *
+ * Nobody says "asterisk asterisk" out loud, and the teleprompter is read
+ * aloud. The characters are removed rather than rendered as bold because
+ * emphasis someone else chose is a distraction at reading size.
+ */
+function spoken(text: string): string {
+  return text.replace(/\*\*(.+?)\*\*/gs, '$1').replace(/(^|\s)\*(\S[^*]*?)\*(?=\s|$)/g, '$1$2');
 }
 
 function heuristicAnswer(question: string): string {
@@ -123,7 +188,30 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
   /** Which answer the HUD is showing; null means "the newest one". */
   const [activeAnswerIdx, setActiveAnswerIdx] = useState<number | null>(null);
   const [autoOpenTeleprompter, setAutoOpenTeleprompter] = useState(true);
+  /**
+   * Reading size. The full panel is for a question you are working through;
+   * compact is a card in the corner, small enough to leave the interviewer's
+   * face visible, which is what hands-free mode opens into.
+   */
+  const [hudSize, setHudSize] = useState<'compact' | 'full'>('full');
   const promptScrollRef = useRef<HTMLDivElement | null>(null);
+
+  /**
+   * Hands-free: the copilot decides on its own that a question was just asked
+   * and starts writing. Off by default -- it spends money and puts text on
+   * screen without being asked, and both should be a deliberate choice.
+   */
+  const [autoAnswer, setAutoAnswer] = useState(false);
+  /** The last transcript line auto mode has already judged. */
+  const lastAutoLineRef = useRef(0);
+  /**
+   * Lines an answer has already been built from: taken off the screen so the
+   * next question arrives on a clean pane, kept here so the copilot still
+   * remembers the conversation. An interview is one thread, and the second
+   * question is usually about the answer to the first.
+   */
+  const memoryRef = useRef<string[]>([]);
+  const [remembered, setRemembered] = useState(0);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -166,22 +254,42 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
     if (!clean) return;
     const ts = nowTs();
     setLines((prev) => {
-      if (!fin) {
-        const last = prev[prev.length - 1];
-        if (last && !last.final) {
-          return [...prev.slice(0, -1), { ...last, text: clean, ts }];
-        }
-        return [...prev, { id: lineId.current++, text: clean, final: false, ts }];
-      }
       const last = prev[prev.length - 1];
+      // An engine that only reports whole utterances puts everything in the
+      // green tail until it commits, which is the honest rendering for it.
+      const line = fin
+        ? { text: clean, tail: '', final: true }
+        : { text: '', tail: clean, final: false };
       if (last && !last.final) {
-        return [...prev.slice(0, -1), { ...last, text: clean, final: true, ts }];
+        return [...prev.slice(0, -1), { ...last, ...line, ts }];
       }
-      return [...prev, { id: lineId.current++, text: clean, final: true, ts }];
+      return [...prev, { id: lineId.current++, ...line, ts }];
     });
 
     if (fin && sessionIdRef.current) {
       void recordTranscriptLine(sessionIdRef.current, clean, true, 'interviewer');
+    }
+  }, []);
+
+  /**
+   * One live turn, split into the part the engine has locked and the part it
+   * is still revising. Called on every message of a turn, several times a
+   * second, so a word goes green and then white within a moment of being said
+   * instead of the whole sentence flipping colour at the end.
+   */
+  const pushTurn = useCallback((committed: string, pending: string, ended: boolean) => {
+    const head = committed.trim();
+    const tail = pending.trim();
+    if (!head && !tail) return;
+    const ts = nowTs();
+    setLines((prev) => {
+      const last = prev[prev.length - 1];
+      const line = { text: head, tail: ended ? '' : tail, final: ended, ts };
+      if (last && !last.final) return [...prev.slice(0, -1), { ...last, ...line }];
+      return [...prev, { id: lineId.current++, ...line }];
+    });
+    if (ended && head && sessionIdRef.current) {
+      void recordTranscriptLine(sessionIdRef.current, head, true, 'interviewer');
     }
   }, []);
 
@@ -462,7 +570,22 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
           if (t === 'turn' && msg.transcript) {
             gotTranscript = true;
             setEngine('assemblyai');
-            pushLine(msg.transcript, Boolean(msg.end_of_turn));
+            // v3 marks each word final on its own, a beat after it is said.
+            // Using them is what makes the transcript settle word by word;
+            // without the array we can only colour the whole turn.
+            const words: { text: string; word_is_final?: boolean }[] =
+              Array.isArray(msg.words) ? msg.words : [];
+            const ended = Boolean(msg.end_of_turn);
+            if (words.length) {
+              const cut = words.findIndex((w) => !w.word_is_final);
+              const head = (cut === -1 ? words : words.slice(0, cut)).map((w) => w.text).join(' ');
+              const rest = cut === -1 ? '' : words.slice(cut).map((w) => w.text).join(' ');
+              // The formatted transcript (punctuation, casing) only exists at
+              // the end of a turn, so it wins once the turn is over.
+              pushTurn(ended ? msg.transcript : head, rest, ended);
+            } else {
+              pushTurn(ended ? msg.transcript : '', ended ? '' : msg.transcript, ended);
+            }
           } else if (t === 'partialtranscript' && msg.text) {
             gotTranscript = true;
             setEngine('assemblyai');
@@ -500,7 +623,7 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
     } catch {
       void startBackendRelay(stream, 'google');
     }
-  }, [pushLine, startBackendRelay, ensureAudioInput, attachPcmGraph]);
+  }, [pushLine, pushTurn, startBackendRelay, ensureAudioInput, attachPcmGraph]);
 
   const startEngine = useCallback(async (stream: MediaStream | null, pref: Engine) => {
     if (!sessionIdRef.current) {
@@ -589,6 +712,10 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
     setAnswers([]);
     setTeleprompterOpen(false);
     setCtx(null);
+    memoryRef.current = [];
+    setRemembered(0);
+    lastAutoLineRef.current = 0;
+    setAutoAnswer(false);
   }, [stopSharing, elapsed]);
 
   const exitAll = useCallback(() => {
@@ -633,14 +760,28 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
     }
     setThinking(true);
     setError('');
-    const tail = lines.slice(-8).map((l) => l.text).join('\n');
+
+    // What the copilot is told: the lines on screen plus the ones earlier
+    // answers already consumed, so a follow-up question still lands in the
+    // conversation it belongs to.
+    const live = lines
+      .map((l) => [l.text, l.tail].filter(Boolean).join(' ').trim())
+      .filter(Boolean);
+    const tail = [...memoryRef.current, ...live].slice(-14).join('\n');
+    // Only settled lines are consumed: whatever is still being spoken belongs
+    // to the next question, not this one.
+    const consumed = lines.filter((l) => l.final);
+
+    const id = beginAnswer(q || 'Live transcript');
+    let model = 'fuelix';
+    let streamed = false;
     try {
-      const r = await fetch(`${BACKEND}/api/interview/answer`, {
+      // The brief goes with every question, not just the first: the backend
+      // holds no session state, so an answer is only as informed as the
+      // request that asked for it.
+      const r = await fetch(`${BACKEND}/api/interview/answer/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        // The brief goes with every question, not just the first: the backend
-        // holds no session state, so an answer is only as informed as the
-        // request that asked for it.
         body: JSON.stringify({
           question: q || tail.slice(-500),
           transcript: tail,
@@ -652,14 +793,50 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
           documents: ctxRef.current ? documentsText(ctxRef.current) : '',
         }),
       });
-      if (!r.ok) throw new Error(`backend ${r.status}`);
-      const data = await r.json();
-      pushAnswer(q || 'Live transcript', data.answer || heuristicAnswer(q), data.model || 'fuelix');
+      if (!r.ok || !r.body) throw new Error(`backend ${r.status}`);
+
+      const reader = r.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        // SSE events are separated by a blank line; a partial one stays in the
+        // buffer until the rest of it arrives.
+        const events = buffer.split('\n\n');
+        buffer = events.pop() ?? '';
+        for (const event of events) {
+          const dataLine = event.split('\n').find((l) => l.startsWith('data: '));
+          if (!dataLine) continue;
+          let msg: { model?: string; delta?: string; done?: boolean };
+          try { msg = JSON.parse(dataLine.slice(6)); } catch { continue; }
+          if (msg.model) model = msg.model;
+          if (msg.delta) { streamed = true; appendAnswer(id, msg.delta); }
+        }
+      }
+      if (!streamed) throw new Error('empty stream');
+      finishAnswer(id, model);
     } catch {
-      pushAnswer(q || 'Live transcript', heuristicAnswer(q), 'offline heuristic');
-      setEngineNote((n) => n || 'Answer backend offline — showing CV-grounded heuristic. Start api_server.py for Fuelix.');
+      if (streamed) {
+        // The answer was cut off rather than never written: keep the words,
+        // and say so, instead of throwing away a usable half-answer.
+        finishAnswer(id, `${model} · interrupted`);
+      } else {
+        replaceAnswer(id, heuristicAnswer(q), 'offline heuristic');
+        finishAnswer(id, 'offline heuristic');
+        setEngineNote((n) => n || 'Answer backend offline — showing CV-grounded heuristic. Start api_server.py for Fuelix.');
+      }
     } finally {
       setThinking(false);
+      // The question has been answered, so its words leave the pane. They are
+      // not lost: they move into the memory that every later answer is given.
+      if (consumed.length) {
+        memoryRef.current = [...memoryRef.current, ...consumed.map((l) => l.text)].slice(-40);
+        setRemembered(memoryRef.current.length);
+        const gone = new Set(consumed.map((l) => l.id));
+        setLines((prev) => prev.filter((l) => !gone.has(l.id)));
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lines, lang]);
@@ -667,7 +844,74 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
   const currentQuestion = (): string => {
     const finals = lines.filter((l) => l.final);
     const last = finals[finals.length - 1] || lines[lines.length - 1];
-    return last ? last.text : '';
+    return last ? (last.text || last.tail) : '';
+  };
+
+  /**
+   * Hands-free mode: answer a question without being asked to.
+   *
+   * The timer is restarted by every transcript update, so it only fires once
+   * the room has been quiet for a moment -- an interviewer mid-sentence is
+   * still asking, and answering their first clause would be worse than
+   * waiting. The line is marked as judged inside the timer rather than before
+   * it, so a question interrupted by more speech is still picked up when the
+   * speaker finally stops.
+   */
+  useEffect(() => {
+    if (!autoAnswer || thinking) return;
+    const finals = lines.filter((l) => l.final);
+    const last = finals[finals.length - 1];
+    if (!last || last.id <= lastAutoLineRef.current) return;
+    if (!looksLikeQuestion(last.text)) {
+      lastAutoLineRef.current = last.id;   // heard, judged, not a question
+      return;
+    }
+    const t = setTimeout(() => {
+      lastAutoLineRef.current = last.id;
+      setHudSize('compact');
+      setTeleprompterOpen(true);
+      void askAI(last.text);
+    }, 900);
+    return () => clearTimeout(t);
+  }, [lines, autoAnswer, thinking, askAI]);
+
+  /**
+   * Opens an empty answer card and points the teleprompter at it, before a
+   * single word exists. The model takes several seconds to write; watching it
+   * arrive beats watching a spinner when someone is waiting for you to speak.
+   */
+  const beginAnswer = (question: string): number => {
+    const id = answerId.current++;
+    setAnswers((prev) => {
+      const next = [...prev, { id, question, answer: '', model: '', ts: nowTs() }];
+      setActiveAnswerIdx(next.length - 1);
+      return next;
+    });
+    if (autoOpenTeleprompter) setTeleprompterOpen(true);
+    if (promptScrollRef.current) promptScrollRef.current.scrollTop = 0;
+    // Nothing to scroll through yet, and scrolling text that is still growing
+    // just chases the cursor. It is re-armed when the answer is complete.
+    setTpAutoScroll(false);
+    return id;
+  };
+
+  const appendAnswer = (id: number, delta: string) => {
+    setAnswers((prev) => prev.map((a) => (a.id === id ? { ...a, answer: a.answer + delta } : a)));
+  };
+
+  const replaceAnswer = (id: number, answer: string, model: string) => {
+    setAnswers((prev) => prev.map((a) => (a.id === id ? { ...a, answer, model } : a)));
+  };
+
+  const finishAnswer = (id: number, model: string) => {
+    setAnswers((prev) => {
+      const card = prev.find((a) => a.id === id);
+      if (card && sessionIdRef.current) {
+        void recordInterviewQA(sessionIdRef.current, card.question, card.answer, model);
+      }
+      return prev.map((a) => (a.id === id ? { ...a, model } : a));
+    });
+    setTpAutoScroll(true);
   };
 
   const pushAnswer = (question: string, answer: string, model: string) => {
@@ -755,6 +999,9 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
       } else if (e.key === 't' || e.key === 'T') {
         e.preventDefault();
         setTeleprompterOpen((v) => !v);
+      } else if (e.key === 'a' || e.key === 'A') {
+        e.preventDefault();
+        setAutoAnswer((v) => !v);
       } else if (e.key === 'Escape' && teleprompterOpen) {
         // Only swallowed while the HUD is up, so Escape still closes the modal.
         e.preventDefault();
@@ -880,6 +1127,21 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
                 EN
               </button>
             </div>
+            {/* Hands-free. It is a switch rather than a mode you enter,
+                because it has to be turned off the instant it misfires. */}
+            <button
+              type="button"
+              onClick={() => setAutoAnswer((v) => !v)}
+              className={`ic-fill ${autoAnswer ? 'is-on' : ''} px-3 py-1.5 rounded-full ic-body text-[13px] font-medium text-[#f5f5f7] flex items-center gap-1.5 cursor-pointer`}
+              title={autoAnswer
+                ? 'Hands-free is on: questions are answered as they are asked'
+                : 'Hands-free: detect each question and answer it without asking (press A)'}
+              aria-pressed={autoAnswer}
+            >
+              <Wand2 className={`w-3.5 h-3.5 ${autoAnswer ? 'text-[#0a84ff]' : ''}`} />
+              <span>Hands-free</span>
+              <span className={`w-1.5 h-1.5 rounded-full ${autoAnswer ? 'bg-[#30d158] animate-pulse' : 'bg-white/25'}`} />
+            </button>
             <button
               type="button"
               onClick={() => setTeleprompterOpen((v) => !v)}
@@ -1013,8 +1275,15 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
                 {connected ? 'Disconnect' : 'Connect'}
               </button>
               <button
-                onClick={() => setLines([])}
+                onClick={() => {
+                  // Clear means clear: the remembered lines go too, otherwise
+                  // the copilot keeps quoting a conversation you just wiped.
+                  setLines([]);
+                  memoryRef.current = [];
+                  setRemembered(0);
+                }}
                 className="ic-fill px-3 py-1.5 rounded-full ic-body text-[12px] font-medium text-[#f5f5f7] flex items-center gap-1.5 cursor-pointer"
+                title="Forget the transcript, on screen and in the copilot's memory"
               >
                 <Trash2 className="w-3.5 h-3.5" /> Clear
               </button>
@@ -1032,16 +1301,34 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
             </div>
 
             <div className="mt-2 flex-1 min-h-[160px] overflow-y-auto border-t border-white/10 pt-3 space-y-2 pr-1">
+              {/* Answered lines leave the pane so the next question arrives on
+                  a clean page. This says where they went -- a transcript that
+                  silently empties itself looks like a bug. */}
+              {remembered > 0 && (
+                <div className="flex items-center gap-2 pb-1">
+                  <span className="h-px flex-1 bg-white/10" />
+                  <span className="ic-caption text-[11px] font-medium text-[rgba(235,235,245,0.42)] whitespace-nowrap">
+                    {remembered} earlier line{remembered > 1 ? 's' : ''} answered · still remembered
+                  </span>
+                  <span className="h-px flex-1 bg-white/10" />
+                </div>
+              )}
               {lines.length === 0 && (
                 <p className="ic-body text-[14px] text-[rgba(235,235,245,0.42)] py-2">
-                  {connected ? 'Listening to the shared tab...' : 'Share the interview tab to start transcribing.'}
+                  {connected
+                    ? (remembered > 0 ? 'Listening for the next question...' : 'Listening to the shared tab...')
+                    : 'Share the interview tab to start transcribing.'}
                 </p>
               )}
               {lines.map((l) => (
                 <div key={l.id} className="text-[15px] leading-relaxed py-0.5">
-                  <span className={l.final ? 'ic-body text-[#f5f5f7]' : 'ic-body text-[#30d158] italic'}>
-                    {l.text}
-                  </span>
+                  {/* Settled words in white, the tail the engine is still
+                      revising in green, on the same line: the sentence builds
+                      up word by word rather than turning over all at once. */}
+                  {l.text && <span className="ic-body text-[#f5f5f7]">{l.text}</span>}
+                  {l.tail && (
+                    <span className="ic-body text-[#30d158] italic">{l.text ? ' ' : ''}{l.tail}</span>
+                  )}
                 </div>
               ))}
               <div ref={transcriptEndRef} />
@@ -1093,7 +1380,7 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
                       <ScanEye className="w-3.5 h-3.5" /> On screen:
                     </p>
                   )}
-                  <p className="ic-body text-[14.5px] text-[#f5f5f7] leading-relaxed whitespace-pre-wrap">{a.answer}</p>
+                  <p className="ic-body text-[14.5px] text-[#f5f5f7] leading-relaxed whitespace-pre-wrap">{spoken(a.answer)}</p>
                 </div>
               ))}
               {thinking && (
@@ -1161,30 +1448,50 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
               ? activeAnswerIdx
               : answers.length - 1;
           const card = idx >= 0 ? answers[idx] : null;
+          const compact = hudSize === 'compact';
+          // Still being written: the card exists but has no model yet.
+          const streaming = Boolean(card && !card.model);
 
           return (
-            <div className="absolute inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/10 backdrop-blur-[2px] pointer-events-none animate-in fade-in zoom-in-95 duration-150">
+            <div
+              className={`absolute inset-0 z-50 flex p-3 sm:p-6 pointer-events-none animate-in fade-in zoom-in-95 duration-150 ${
+                compact
+                  ? 'items-end justify-end'
+                  : 'items-center justify-center bg-black/10 backdrop-blur-[2px]'
+              }`}
+            >
               <div
-                className="ic-popover pointer-events-auto w-full max-w-3xl max-h-[84vh] flex flex-col rounded-3xl transition-all overflow-hidden"
+                className={`ic-popover pointer-events-auto flex flex-col transition-all overflow-hidden ${
+                  compact
+                    ? 'w-full max-w-sm max-h-[46vh] rounded-2xl'
+                    : 'w-full max-w-3xl max-h-[84vh] rounded-3xl'
+                }`}
                 // Inline, not a class: `.ic-popover` is plain CSS outside
                 // Tailwind's layer, so a utility background loses to it and the
                 // three opacity buttons would do nothing.
                 style={{
-                  background:
-                    hudOpacity === 'low'
+                  // Compact ignores the transparency setting. A small card
+                  // lands on top of buttons and text rather than on video, and
+                  // at 60% the answer and whatever is underneath it become one
+                  // illegible layer -- it hides so little that there is nothing
+                  // to gain by being see-through.
+                  background: compact
+                    ? 'rgba(16,21,40,0.95)'
+                    : hudOpacity === 'low'
                       ? 'rgba(24,30,52,0.6)'
                       : hudOpacity === 'high'
                         ? 'rgba(18,23,42,0.96)'
                         : 'rgba(22,28,49,0.84)',
+                  boxShadow: compact ? '0 18px 50px rgba(0,0,0,0.5)' : undefined,
                 }}
               >
-                <div className="px-5 py-3.5 border-b border-white/10 flex items-center justify-between gap-3 shrink-0 flex-wrap">
+                <div className={`border-b border-white/10 flex items-center justify-between gap-3 shrink-0 flex-wrap ${compact ? 'px-3 py-2' : 'px-5 py-3.5'}`}>
                   <div className="flex items-center gap-2.5">
                     <div className="px-2.5 py-1 rounded-full ic-caption text-[11px] font-semibold uppercase tracking-[0.08em] bg-[#0a84ff]/15 text-[#0a84ff] flex items-center gap-1.5">
                       <span className="w-2 h-2 rounded-full bg-[#0a84ff] animate-pulse" />
-                      Teleprompter
+                      {autoAnswer ? 'Hands-free' : 'Teleprompter'}
                     </div>
-                    {answers.length > 1 && (
+                    {answers.length > 1 && !compact && (
                       <div className="flex items-center gap-1 ic-fill rounded-full px-2.5 py-1 ic-body text-[12px] font-medium text-[#f5f5f7]">
                         <button
                           type="button"
@@ -1210,6 +1517,15 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
                   </div>
 
                   <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setHudSize(compact ? 'full' : 'compact')}
+                      className="ic-fill p-1.5 rounded-full text-[#f5f5f7] cursor-pointer"
+                      title={compact ? 'Full size' : 'Shrink into the corner'}
+                    >
+                      {compact ? <Maximize2 className="w-3.5 h-3.5" /> : <Minimize2 className="w-3.5 h-3.5" />}
+                    </button>
+                    {!compact && (<>
                     <div className="flex items-center ic-fill rounded-full overflow-hidden ic-body text-[12px] font-medium">
                       <button
                         type="button"
@@ -1282,6 +1598,7 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
                     >
                       <RotateCcw className="w-3.5 h-3.5" />
                     </button>
+                    </>)}
 
                     <button
                       type="button"
@@ -1296,10 +1613,13 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
 
                 <div
                   ref={promptScrollRef}
-                  className="flex-1 overflow-y-auto p-6 sm:p-8 space-y-4 font-sans select-text"
-                  style={{ fontSize: `${promptFontSize}px`, lineHeight: 1.62 }}
+                  className={`flex-1 overflow-y-auto space-y-4 font-sans select-text ${compact ? 'p-4' : 'p-6 sm:p-8'}`}
+                  // Compact is read in glances over the top of a video call,
+                  // so it caps the size someone picked for the full panel
+                  // rather than shrinking the panel around 36px text.
+                  style={{ fontSize: `${compact ? Math.min(promptFontSize, 19) : promptFontSize}px`, lineHeight: 1.62 }}
                 >
-                  {thinking && (
+                  {thinking && !streaming && (
                     <div className="flex items-center gap-2.5 text-[#0a84ff] font-medium animate-pulse text-base sm:text-lg">
                       <Loader2 className="w-5 h-5 animate-spin" />
                       Writing your answer...
@@ -1314,24 +1634,35 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
                         </div>
                       )}
                       <div className="text-[#f5f5f7] font-medium whitespace-pre-wrap leading-relaxed tracking-tight">
-                        {card.answer}
+                        {spoken(card.answer)}
+                        {/* Where the model is up to. Without it a pause
+                            between tokens reads as a finished answer. */}
+                        {streaming && (
+                          <span className="inline-block w-[0.5ch] -mb-[0.1em] ml-0.5 bg-[#0a84ff] animate-pulse" style={{ height: '1em' }} />
+                        )}
                       </div>
                     </div>
                   ) : !thinking && (
                     <div className="py-14 text-center text-[rgba(235,235,245,0.62)] space-y-2">
                       <p className="ic-title text-[#f5f5f7] text-lg">Nothing to read out yet</p>
                       <p className="text-sm">
-                        Press <span className="text-[#f5f5f7] font-semibold">Space</span>, and the answer
-                        appears here at reading size.
+                        {autoAnswer
+                          ? 'Hands-free is on — the next question is answered here on its own.'
+                          : 'Press Space, and the answer appears here at reading size.'}
                       </p>
                     </div>
                   )}
                 </div>
 
+                {/* The shortcut legend is worth a strip of a full panel and a
+                    quarter of a compact one, which is too much: at that size
+                    every pixel is the answer. */}
+                {!compact && (
                 <div className="px-5 py-2.5 border-t border-white/10 flex items-center justify-between text-[11px] font-medium text-[rgba(235,235,245,0.62)] shrink-0">
                   <div className="flex items-center gap-4">
                     <span><strong className="text-[#f5f5f7]">Space</strong> for an answer</span>
                     <span><strong className="text-[#f5f5f7]">T</strong> toggles this</span>
+                    <span><strong className="text-[#f5f5f7]">A</strong> hands-free</span>
                     <span><strong className="text-[#f5f5f7]">Esc</strong> dismisses</span>
                   </div>
                   <label className="flex items-center gap-1.5 cursor-pointer select-none text-[rgba(235,235,245,0.62)] font-medium">
@@ -1344,6 +1675,7 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
                     <span>Auto-open on new answer</span>
                   </label>
                 </div>
+                )}
               </div>
             </div>
           );

@@ -1322,10 +1322,22 @@ def _interview_brief(req: "InterviewAnswerRequest") -> str:
         return ""
     return "THIS INTERVIEW:\n" + "\n\n".join(parts) + "\n\n"
 
-@app.post("/api/interview/answer")
-def interview_answer(req: InterviewAnswerRequest):
-    """Generate a spoken-style interview answer from live transcript + CV via Fuelix."""
-    from services.automation.config import FUELIX_API_KEY, FUELIX_BASE_URL, FUELIX_WRITER, FUELIX_WRITER_FALLBACK
+HEURISTIC_ANSWER = (
+    "Bonne question. Chez SLB puis Technip Energies, sur un sujet similaire : "
+    "Situation - dimensionnement d'un assemblage sous chargement thermomecanique severe ; "
+    "Tache - livrer une conception validee CAO 3D CATIA/SolidWorks avec justification FEA Abaqus/Ansys ; "
+    "Action - modele parametrique, maillage converge, correlation essais et cotation GPS ISO ; "
+    "Resultat - dossier valide en revue, zero reprise en industrialisation. "
+    "Je peux detailler le maillage ou la DFMEA si vous voulez."
+)
+
+
+def _answer_prompt(req: "InterviewAnswerRequest") -> tuple[str, str, str]:
+    """The question, the system prompt and the user prompt for one answer.
+
+    Shared by the blocking and the streaming endpoint so the two can never
+    drift into answering the same interview differently.
+    """
     question = (req.question or req.transcript or "").strip()[-1500:]
     if not question:
         raise HTTPException(status_code=400, detail="Empty question/transcript")
@@ -1339,6 +1351,14 @@ def interview_answer(req: InterviewAnswerRequest):
         "End with one crisp metric or result. No preamble, answer only."
     )
     user = f"CANDIDATE CV:\n{_candidate_summary()}\n\n{_interview_brief(req)}LIVE INTERVIEW (last words first):\n{req.transcript.strip()[-2000:]}\n\nCURRENT QUESTION:\n{question}"
+    return question, system, user
+
+
+@app.post("/api/interview/answer")
+def interview_answer(req: InterviewAnswerRequest):
+    """Generate a spoken-style interview answer from live transcript + CV via Fuelix."""
+    from services.automation.config import FUELIX_API_KEY, FUELIX_BASE_URL, FUELIX_WRITER, FUELIX_WRITER_FALLBACK
+    _question, system, user = _answer_prompt(req)
     for model in [FUELIX_WRITER, FUELIX_WRITER_FALLBACK]:
         if not model or not FUELIX_API_KEY:
             continue
@@ -1357,14 +1377,74 @@ def interview_answer(req: InterviewAnswerRequest):
         except Exception:
             continue
     # Offline heuristic fallback (STAR, CV-grounded)
-    return {"answer": (
-        "Bonne question. Chez SLB puis Technip Energies, sur un sujet similaire : "
-        "Situation - dimensionnement d'un assemblage sous chargement thermomecanique severe ; "
-        "Tache - livrer une conception validee CAO 3D CATIA/SolidWorks avec justification FEA Abaqus/Ansys ; "
-        "Action - modele parametrique, maillage converge, correlation essais et cotation GPS ISO ; "
-        "Resultat - dossier valide en revue, zero reprise en industrialisation. "
-        "Je peux detailler le maillage ou la DFMEA si vous voulez."
-    ), "model": "heuristic"}
+    return {"answer": HEURISTIC_ANSWER, "model": "heuristic"}
+
+
+@app.post("/api/interview/answer/stream")
+def interview_answer_stream(req: InterviewAnswerRequest):
+    """The same answer, token by token, as Server-Sent Events.
+
+    An interview answer takes several seconds to write in full. Waiting for
+    the last word before showing the first is the difference between reading
+    along with the model and sitting in silence in front of a recruiter, so
+    the hands-free teleprompter reads from here instead.
+    """
+    from services.automation.config import FUELIX_API_KEY, FUELIX_BASE_URL, FUELIX_WRITER, FUELIX_WRITER_FALLBACK
+    _question, system, user = _answer_prompt(req)
+
+    def sse(obj: dict) -> str:
+        return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
+
+    def generate():
+        for model in [FUELIX_WRITER, FUELIX_WRITER_FALLBACK]:
+            if not model or not FUELIX_API_KEY:
+                continue
+            try:
+                with requests.post(
+                    f"{FUELIX_BASE_URL.rstrip('/')}/chat/completions",
+                    headers={"Authorization": f"Bearer {FUELIX_API_KEY}", "Content-Type": "application/json"},
+                    json={"model": model, "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ], "temperature": 0.4, "max_tokens": 450, "stream": True},
+                    stream=True,
+                    timeout=45,
+                ) as r:
+                    if r.status_code != 200:
+                        continue
+                    sent_any = False
+                    for raw in r.iter_lines(decode_unicode=True):
+                        if not raw or not raw.startswith("data:"):
+                            continue
+                        payload = raw[5:].strip()
+                        if payload == "[DONE]":
+                            break
+                        try:
+                            delta = json.loads(payload)["choices"][0].get("delta", {}).get("content")
+                        except Exception:
+                            continue
+                        if delta:
+                            if not sent_any:
+                                # The model is named once, on the first token,
+                                # so the UI can label the card before the end.
+                                yield sse({"model": model})
+                                sent_any = True
+                            yield sse({"delta": delta})
+                    if sent_any:
+                        yield sse({"done": True})
+                        return
+            except Exception:
+                continue
+        # Every model failed or there is no key: the candidate still gets
+        # something to say, exactly as the blocking endpoint would have given.
+        yield sse({"model": "heuristic"})
+        yield sse({"delta": HEURISTIC_ANSWER})
+        yield sse({"done": True})
+
+    return StreamingResponse(generate(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+    })
 
 @app.post("/api/interview/analyze")
 def interview_analyze(req: InterviewAnalyzeRequest):

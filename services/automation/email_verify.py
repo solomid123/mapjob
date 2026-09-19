@@ -46,6 +46,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, Dict, List, Optional, Tuple
 
+from services.automation import email_api as service
 from services.automation.config import load_env
 
 try:
@@ -301,6 +302,16 @@ def verify(address: str, allow_smtp: bool = True) -> Dict[str, object]:
                    reason="the domain accepts mail; the mailbox itself was not checked")
         return out
 
+    # A machine built for asking, when one is configured. It is asked after the
+    # free stages and not before: paying to be told that gmail.com is a consumer
+    # provider, or that a domain has no MX record, is paying for arithmetic.
+    if service.available():
+        answer = service.check(address)
+        if not service.failed(answer):
+            out.update(status=answer["status"], score=answer["score"],
+                       reason=answer["reason"], catch_all=answer["catch_all"])
+            return out
+
     with _lock_for(domain):
         status, reason, catch_all = _probe(hosts[0], domain, address)
         # Politeness, and self-preservation: a mail server seeing a burst of
@@ -348,6 +359,14 @@ def pick_existing(candidates: List[str]) -> Dict[str, object]:
     if not hosts:
         out.update(status="invalid", reason="the domain has nowhere to deliver mail")
         return out
+    # Guessed addresses are exactly where the service earns its fee: from this
+    # connection roughly a third of mail servers refuse to discuss a recipient
+    # at all, and a refusal looks identical whether the person exists or not.
+    if service.available():
+        answer = service.pick(ordered)
+        if not service.failed(answer):
+            return answer
+
     sender = probe_from()
     if not sender:
         out["reason"] = "no sending address is configured to ask from"

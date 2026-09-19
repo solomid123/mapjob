@@ -17,6 +17,14 @@ import { JobPage } from './components/JobPage';
 import { PostJobModal } from './components/PostJobModal';
 import { AutomatedEmailsModal } from './components/AutomatedEmailsModal';
 import { InterviewHelperModal } from './components/InterviewHelperModal';
+import {
+  SearchSetup,
+  readSearchBrief,
+  writeSearchBrief,
+  clearSearchBrief,
+  defaultSearchBrief,
+  type SearchBrief,
+} from './components/SearchSetup';
 import { CITIES } from './data/mockJobs';
 import { resolveLocationFromCoords, getVisibleHubsInBounds } from './services/adzuna';
 import { matchTitle, terms } from './services/relevance';
@@ -218,22 +226,46 @@ export function App() {
     window.history.pushState({ tab: activeTopTab }, '', url.toString());
   }, [activeTopTab]);
 
+  /**
+   * What this search is for, asked on arrival instead of assumed.
+   *
+   * Null means the questions have not been answered on this machine, and the
+   * questionnaire is the page -- the same shape as the interview setup, for
+   * the same reason: a good search is worth fifteen seconds, and the
+   * alternative was opening on a city and a discipline nobody picked.
+   */
+  const [searchBrief, setSearchBrief] = useState<SearchBrief | null>(() => readSearchBrief());
+
   // Filter state
-  const [searchQuery, setSearchQuery] = useState('');
-  const [committedQuery, setCommittedQuery] = useState('');
+  // Every filter below opens on the answers given to the questionnaire, so a
+  // returning visit lands on its own search rather than on the app's defaults.
+  const briefHub = searchBrief && CITIES.some((c) => c.id === searchBrief.where) ? searchBrief.where : null;
+  /**
+   * A saved brief that names a town rather than a hub has to be geocoded before
+   * anything is fetched. Until that happens the hub feed below must stay out of
+   * the way: left to run, it would load Eindhoven and relabel the page under the
+   * restored search.
+   */
+  const pendingDestinationRef = useRef<string | null>(
+    searchBrief && !briefHub && searchBrief.where.trim() ? searchBrief.where : null,
+  );
+  const [searchQuery, setSearchQuery] = useState(searchBrief?.query ?? '');
+  const [committedQuery, setCommittedQuery] = useState(searchBrief?.query ?? '');
   useEffect(() => {
     const timer = setTimeout(() => setCommittedQuery(searchQuery), 350);
     return () => clearTimeout(timer);
   }, [searchQuery]);
-  const [selectedCity, setSelectedCity] = useState('eindhoven');
-  const [activeLocationLabel, setActiveLocationLabel] = useState('Eindhoven & Brainport (NL)');
+  const [selectedCity, setSelectedCity] = useState(briefHub ?? 'eindhoven');
+  const [activeLocationLabel, setActiveLocationLabel] = useState(
+    searchBrief?.whereLabel || 'Eindhoven & Brainport (NL)',
+  );
   const [selectedCategory, setSelectedCategory] = useState('all');
-  const [jobType, setJobType] = useState('');
-  const [remoteType, setRemoteType] = useState('');
+  const [jobType, setJobType] = useState(searchBrief?.jobType ?? '');
+  const [remoteType, setRemoteType] = useState(searchBrief?.remoteType ?? '');
   const [minSalary, setMinSalary] = useState(0);
   const [visaSponsorshipOnly, setVisaSponsorshipOnly] = useState(false);
   const [directAtsOnly, setDirectAtsOnly] = useState(false);
-  const [lastPosted, setLastPosted] = useState('all');
+  const [lastPosted, setLastPosted] = useState(searchBrief?.lastPosted ?? 'all');
   const [showSavedOnly, setShowSavedOnly] = useState(false);
   const [isLoadingJobs, setIsLoadingJobs] = useState(false);
   const [currentPage, setCurrentPage] = useState(2);
@@ -266,6 +298,9 @@ export function App() {
     } catch {
       // ignore
     }
+
+    // Held back while a saved non-hub destination is still being restored.
+    if (pendingDestinationRef.current) return;
 
     let isMounted = true;
     const requestId = ++searchRequestRef.current;
@@ -453,8 +488,21 @@ export function App() {
   };
 
   // Search any European destination (via Enter key, suggested hub click, or Search button)
-  const handleSearchDestination = async (destination: string) => {
+  /**
+   * Run a search against a place.
+   *
+   * `overrides` exists for the setup questionnaire, which chooses the place,
+   * the keywords and the freshness in the same breath: calling this straight
+   * after setSearchQuery would read the state from before the click, and
+   * search the new city for the old words.
+   */
+  const handleSearchDestination = async (
+    destination: string,
+    overrides?: { query?: string; lastPosted?: string },
+  ) => {
     if (!destination.trim()) return;
+    const useQuery = overrides?.query ?? searchQuery;
+    const usePosted = overrides?.lastPosted ?? lastPosted;
     if (mapMoveTimerRef.current) clearTimeout(mapMoveTimerRef.current);
     const requestId = ++searchRequestRef.current;
     fetchedRegionRef.current = null;
@@ -472,6 +520,7 @@ export function App() {
     );
 
     if (match) {
+      whereRef.current = match.id;
       setSelectedCity(match.id);
       setActiveLocationLabel(match.name);
       setMapBounds(null);
@@ -480,8 +529,8 @@ export function App() {
       try {
         const params = {
           cityId: match.id,
-          query: searchQuery,
-          lastPosted,
+          query: useQuery,
+          lastPosted: usePosted,
           page: 1,
         };
         activeParamsRef.current = params;
@@ -519,6 +568,7 @@ export function App() {
           const location = await resolveLocationFromCoords(lat, lng);
           if (requestId !== searchRequestRef.current) return;
           const display = location.displayLabel || `${cleanDest}, ${location.country.toUpperCase()}`;
+          whereRef.current = cleanDest;
           setActiveLocationLabel(display);
           setMapBounds(null);
           setMapCenterTarget({ lat, lng, zoom: 12 });
@@ -529,8 +579,8 @@ export function App() {
             centerLat: lat,
             centerLng: lng,
             defaultWhat: location.defaultWhat,
-            query: searchQuery,
-            lastPosted,
+            query: useQuery,
+            lastPosted: usePosted,
             page: 1,
           };
           activeParamsRef.current = fetchParams;
@@ -554,13 +604,14 @@ export function App() {
     // 3. Fallback: Search direct jobs with destination string
     if (requestId !== searchRequestRef.current) return;
     try {
+      whereRef.current = cleanDest;
       setActiveLocationLabel(cleanDest);
       setMapBounds(null);
       const fallbackParams = {
         where: cleanDest,
         country: 'nl',
-        query: searchQuery,
-        lastPosted,
+        query: useQuery,
+        lastPosted: usePosted,
         page: 1,
       };
       activeParamsRef.current = fallbackParams;
@@ -580,6 +631,107 @@ export function App() {
       if (requestId === searchRequestRef.current) setIsLoadingJobs(false);
     }
   };
+
+  /**
+   * The questionnaire is finished: adopt its answers and run the search.
+   *
+   * Everything is handed to the search explicitly rather than set and awaited,
+   * because setState is not synchronous and the first search would otherwise
+   * go out with the previous answers.
+   */
+  /**
+   * The destination currently in force, as a string the search accepts.
+   * `selectedCity` cannot play this part: a typed town leaves it on the last
+   * hub and only moves the label, so saving it would store "eindhoven" under
+   * the name "Delft".
+   */
+  const whereRef = useRef(searchBrief?.where ?? 'eindhoven');
+
+  const handleStartFromBrief = (brief: SearchBrief) => {
+    writeSearchBrief(brief);
+    setSearchBrief(brief);
+    setSearchQuery(brief.query);
+    setCommittedQuery(brief.query);
+    setLastPosted(brief.lastPosted);
+    setRemoteType(brief.remoteType);
+    setJobType(brief.jobType);
+    setActiveLocationLabel(brief.whereLabel || brief.where);
+    void handleSearchDestination(brief.where, { query: brief.query, lastPosted: brief.lastPosted });
+  };
+
+  /** "Browse everything instead": the defaults, saved, so it is not asked twice. */
+  /**
+   * Backing out of the questionnaire keeps whatever search is already on
+   * screen. Writing defaults here would be a lie on the re-entry path: you
+   * open "New search" over your Paris results, change your mind, and a reload
+   * would quietly move you to Eindhoven. On a genuine first visit the live
+   * state *is* the defaults, so this reads the same as a reset.
+   */
+  const handleSkipBrief = () => {
+    const brief: SearchBrief = {
+      ...defaultSearchBrief(),
+      query: committedQuery,
+      where: whereRef.current,
+      whereLabel: activeLocationLabel,
+      lastPosted,
+      remoteType,
+      jobType,
+    };
+    writeSearchBrief(brief);
+    setSearchBrief(brief);
+  };
+
+  /**
+   * A returning brief that names a town rather than a hub has to be geocoded
+   * again -- the feed effect above only knows how to open a hub.
+   *
+   * Deliberately re-runnable rather than one-shot. The unmount cleanup above
+   * invalidates every in-flight search, and StrictMode unmounts once on mount,
+   * so a search fired from a guarded mount effect is cancelled and never
+   * retried. Re-running on the second pass is what the hub feed effect already
+   * does; this follows it.
+   */
+  useEffect(() => {
+    if (!searchBrief) return;
+    const isHub = CITIES.some((c) => c.id === searchBrief.where);
+    if (isHub || !searchBrief.where.trim()) {
+      pendingDestinationRef.current = null;
+      return;
+    }
+    // The gate comes down when the restore settles, not when it starts, so the
+    // hub feed cannot slip a default Eindhoven load in underneath it.
+    void handleSearchDestination(searchBrief.where, {
+      query: searchBrief.query,
+      lastPosted: searchBrief.lastPosted,
+    }).finally(() => {
+      pendingDestinationRef.current = null;
+    });
+    // Reads the brief this mount inherited; later changes go through the
+    // search bar, not through here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
+   * Keep the saved brief pointed at the search that is actually on screen.
+   * Without this the brief is only a record of the answers, so searching
+   * Delft from the bar and reloading would drop you back in Paris. Never
+   * runs while the questionnaire is up: writing a brief there would dismiss
+   * it mid-question.
+   */
+  useEffect(() => {
+    if (!searchBrief || pendingDestinationRef.current) return;
+    const next: SearchBrief = {
+      query: committedQuery,
+      where: whereRef.current,
+      whereLabel: activeLocationLabel,
+      lastPosted,
+      remoteType,
+      jobType,
+    };
+    if (JSON.stringify(next) === JSON.stringify(searchBrief)) return;
+    writeSearchBrief(next);
+    setSearchBrief(next);
+  }, [searchBrief, committedQuery, activeLocationLabel, lastPosted, remoteType, jobType]);
 
   // Interaction state
   const [hoveredJobId, setHoveredJobId] = useState<string | null>(null);
@@ -1255,6 +1407,21 @@ export function App() {
           onResetFilters={handleResetFilters}
           hasActiveFilters={hasActiveFilters}
         />
+        {/* Back to the four questions. The bar at the top edits one field at a
+          * time, which is right for a nudge; this is for starting over. */}
+        {!selectMode && !bulkQueue?.running && (
+          <button
+            type="button"
+            onClick={() => {
+              clearSearchBrief();
+              setSearchBrief(null);
+            }}
+            className="shrink-0 px-2.5 py-1 rounded-full ic-fill text-[12px] font-semibold tracking-[-0.01em] text-[rgba(235,235,245,0.62)] hover:text-[#f5f5f7] transition-colors duration-200 cursor-pointer"
+            title="Answer the four questions again"
+          >
+            New search
+          </button>
+        )}
         {/* Picking several at once. Beside the count and the filters because
           * it acts on exactly what they describe: this list, as filtered. */}
         {!bulkQueue?.running && (
@@ -1371,6 +1538,7 @@ export function App() {
           selectedCity={selectedCity}
           setSelectedCity={(cityId) => {
             setActiveJobPage(null);
+            whereRef.current = cityId;
             setSelectedCity(cityId);
             setMapBounds(null);
           }}
@@ -1385,7 +1553,8 @@ export function App() {
           onOpenPostJob={() => setIsPostJobOpen(true)}
           activeTopTab={activeTopTab}
           setActiveTopTab={setActiveTopTab}
-          resultsSummary={resultsSummary}
+          resultsSummary={searchBrief ? resultsSummary : null}
+          hideSearch={activeTopTab === 'jobs' && !searchBrief}
         />
         </div>
       )}
@@ -1407,6 +1576,10 @@ export function App() {
           isOpen={true}
           onClose={() => setActiveTopTab('jobs')}
         />
+      ) : !searchBrief ? (
+        /* Nothing is guessed until the questions are answered. Same shape as
+           the interview setup, and for the same reason. */
+        <SearchSetup onStart={handleStartFromBrief} onSkip={handleSkipBrief} />
       ) : (
         <>
 

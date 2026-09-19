@@ -45,6 +45,11 @@ interface NavbarProps {
    *  field on wide windows. Passed in rather than computed here because the
    *  count is the list's business, not the chrome's. */
   resultsSummary?: React.ReactNode;
+  /**
+   * Hide the search island. Set while the setup questionnaire is the page:
+   * two searches on one screen, one of them covered by the other, is a trap.
+   */
+  hideSearch?: boolean;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -64,6 +69,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   activeTopTab,
   setActiveTopTab,
   resultsSummary,
+  hideSearch = false,
 }) => {
   const [activeSegment, setActiveSegment] = useState<'where' | 'title' | 'posted' | null>(null);
   const searchBarRef = useRef<HTMLDivElement>(null);
@@ -246,7 +252,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
       {/* THE SEARCH ISLAND. Its own block on the wallpaper, floating clear of
         * the ribbon, with its own shadow and its own hover lift. */}
-      {activeTopTab === 'jobs' && (
+      {activeTopTab === 'jobs' && !hideSearch && (
         <div className="px-4 sm:px-6 lg:px-8 pt-2.5 select-none">
           {/* This row is measured to the main grid below it, not to itself:
             * max-w-[1696px] is the 1760px content width minus its lg padding,

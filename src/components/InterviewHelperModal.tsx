@@ -138,6 +138,60 @@ const HANDS_FREE_SETTLE_MS = 250;
  */
 const SPOKEN_CHARS_PER_SECOND = 14;
 
+/**
+ * Where a session in progress is kept so that reloading the page does not end
+ * it.
+ *
+ * sessionStorage rather than localStorage, and the difference is the whole
+ * point: this holds a real conversation with a real person, so it lives
+ * exactly as long as the tab it was recorded in and is gone the moment that
+ * tab closes. Nothing here is left on disk for whoever opens the browser next.
+ */
+const SESSION_KEY = 'mapjob.interview.live';
+
+interface SavedSession {
+  v: 1;
+  ctx: InterviewContext;
+  lang: 'fr' | 'en';
+  lines: TranscriptLine[];
+  answers: AnswerCard[];
+  memory: string[];
+  startedAt: number | null;
+  sessionId: string | null;
+}
+
+function readSavedSession(): SavedSession | null {
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const s = JSON.parse(raw) as SavedSession;
+    // A brief is what makes a session: without one there is nothing to resume
+    // into, and the setup should run instead.
+    if (!s || s.v !== 1 || !s.ctx || typeof s.ctx.jobTitle !== 'string') return null;
+    return { ...s, lines: s.lines || [], answers: s.answers || [], memory: s.memory || [] };
+  } catch {
+    // Storage disabled, or a shape written by an older build.
+    return null;
+  }
+}
+
+function writeSavedSession(s: SavedSession) {
+  try {
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify(s));
+  } catch {
+    // Out of quota, most likely a long transcript alongside a large attached
+    // document. Not being able to resume is not worth throwing mid-interview.
+  }
+}
+
+function clearSavedSession() {
+  try {
+    sessionStorage.removeItem(SESSION_KEY);
+  } catch {
+    // Nothing to clear.
+  }
+}
+
 function heuristicAnswer(question: string): string {
   return (
     `Bonne question${question ? ` — « ${question.slice(0, 90)} »` : ''}. ` +
@@ -150,6 +204,20 @@ function heuristicAnswer(question: string): string {
 }
 
 export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOpen, onClose }) => {
+  /**
+   * The session this tab was in before it was reloaded, read once. Everything
+   * below seeds itself from it, so a refresh resumes rather than restarts.
+   */
+  const [restored] = useState(() => {
+    const s = readSavedSession();
+    return s && {
+      ...s,
+      nextLineId: s.lines.reduce((m, l) => Math.max(m, l.id), 0) + 1,
+      nextAnswerId: s.answers.reduce((m, a) => Math.max(m, a.id), 0) + 1,
+    };
+  });
+  /** Shown once after a reload, so an idle microphone has an explanation. */
+  const [resumed, setResumed] = useState(() => Boolean(restored));
   const [sharing, setSharing] = useState(false);
   const [shareLabel, setShareLabel] = useState('');
   const [connected, setConnected] = useState(false);
@@ -159,9 +227,9 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
   const [hasAudioInput, setHasAudioInput] = useState(false);
   const [audioActive, setAudioActive] = useState(false);
   const [engineNote, setEngineNote] = useState('');
-  const [lang, setLang] = useState<'fr' | 'en'>('fr');
-  const [lines, setLines] = useState<TranscriptLine[]>([]);
-  const [answers, setAnswers] = useState<AnswerCard[]>([]);
+  const [lang, setLang] = useState<'fr' | 'en'>(() => restored?.lang ?? 'fr');
+  const [lines, setLines] = useState<TranscriptLine[]>(() => restored?.lines ?? []);
+  const [answers, setAnswers] = useState<AnswerCard[]>(() => restored?.answers ?? []);
   const [manual, setManual] = useState('');
   const [thinking, setThinking] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
@@ -171,7 +239,7 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
    * setup has not been done yet, and the setup is all that renders -- there is
    * no half-configured session, and nothing to transcribe before there is one.
    */
-  const [ctx, setCtx] = useState<InterviewContext | null>(null);
+  const [ctx, setCtx] = useState<InterviewContext | null>(() => restored?.ctx ?? null);
   /**
    * A chronometer, not a countdown. An interview has no fixed length, and a
    * clock draining towards zero is a distraction during one; what is actually
@@ -180,7 +248,9 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
    * cannot make the session look shorter than it was.
    */
   const [elapsed, setElapsed] = useState(0);
-  const startedAtRef = useRef<number | null>(null);
+  // Restored as an absolute timestamp, so the chronometer counts the interview
+  // rather than the time since the reload.
+  const startedAtRef = useRef<number | null>(restored?.startedAt ?? null);
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [error, setError] = useState('');
 
@@ -273,8 +343,8 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
    * remembers the conversation. An interview is one thread, and the second
    * question is usually about the answer to the first.
    */
-  const memoryRef = useRef<string[]>([]);
-  const [remembered, setRemembered] = useState(0);
+  const memoryRef = useRef<string[]>(restored?.memory ?? []);
+  const [remembered, setRemembered] = useState(() => restored?.memory.length ?? 0);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -287,8 +357,10 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
   const relaySessionRef = useRef(0);
   const geminiAttemptsRef = useRef(0);
   const enginePrefRef = useRef<Engine>('google');
-  const lineId = useRef(1);
-  const answerId = useRef(1);
+  // Past whatever was restored: two lines sharing a key would have React
+  // reusing one row for both.
+  const lineId = useRef(restored?.nextLineId ?? 1);
+  const answerId = useRef(restored?.nextAnswerId ?? 1);
   const autoScrollRef = useRef(true);
   /**
    * The answers given so far, readable from inside askAI without making it a
@@ -296,7 +368,9 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
    * over askAI, so a stale copy there would send a stale conversation.
    */
   const answersRef = useRef<AnswerCard[]>([]);
-  const sessionIdRef = useRef<string | null>(null);
+  // Kept across a reload too, so the resumed half of the interview is written
+  // to the same row in history instead of opening a second one.
+  const sessionIdRef = useRef<string | null>(restored?.sessionId ?? null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
   const answersEndRef = useRef<HTMLDivElement | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -822,6 +896,9 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
     setRemembered(0);
     setAutoAnswer(false);
     setAutoCardId(null);
+    // Ending is the one exit that means it: nothing left to resume into.
+    clearSavedSession();
+    setResumed(false);
   }, [stopSharing, elapsed]);
 
   const exitAll = useCallback(() => {
@@ -847,6 +924,40 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
       timerRef.current = null;
     };
   }, [isOpen, ctx]);
+
+  /**
+   * Keep the session recoverable.
+   *
+   * A tab gets reloaded -- by accident, by a crashed extension, by the dev
+   * server -- and before this that simply ended the interview: back to the job
+   * map, brief gone, transcript gone, possibly mid-call. The brief, the
+   * transcript, the answers and the chronometer are written a second after
+   * they last changed; the delay is there because a live transcript changes on
+   * every partial and serialising it ten times a second is work for nothing.
+   *
+   * It also covers a detour to the job map, since that unmounts this whole
+   * component.
+   *
+   * What cannot come back is the screen share: a browser only hands one over
+   * in response to a click, which is a rule worth having. So a resumed session
+   * returns with everything that was said and asks for the tab again.
+   */
+  useEffect(() => {
+    if (!isOpen || !ctx) return;
+    const t = setTimeout(() => {
+      writeSavedSession({
+        v: 1,
+        ctx,
+        lang,
+        lines: lines.slice(-400),
+        answers: answers.slice(-40),
+        memory: memoryRef.current,
+        startedAt: startedAtRef.current,
+        sessionId: sessionIdRef.current,
+      });
+    }, 1000);
+    return () => clearTimeout(t);
+  }, [isOpen, ctx, lang, lines, answers, remembered]);
 
   // Cleanup on unmount / close
   useEffect(() => {
@@ -1386,6 +1497,24 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
         {engineNote && (
           <div className="mx-5 mt-2 px-4 py-1.5 rounded-xl bg-[#ff9f0a]/12 ic-body text-[12px] text-[#ffc65c] shrink-0">
             {engineNote}
+          </div>
+        )}
+        {/* Why the session is here but deaf: the page was reloaded, and a
+            screen share cannot be handed back without a click. */}
+        {resumed && !connected && (
+          <div className="mx-5 mt-2 px-4 py-1.5 rounded-xl bg-[#0a84ff]/12 shrink-0 flex items-center gap-3">
+            <span className="ic-body text-[12px] text-[#7ab8ff] flex-1">
+              Session picked up where it left off — brief, transcript and answers are all still here.
+              Share the tab again to keep listening.
+            </span>
+            <button
+              type="button"
+              onClick={() => setResumed(false)}
+              className="ic-fill w-5 h-5 rounded-full flex items-center justify-center cursor-pointer shrink-0"
+              title="Dismiss"
+            >
+              <X className="w-3 h-3 text-[#7ab8ff]" />
+            </button>
           </div>
         )}
 

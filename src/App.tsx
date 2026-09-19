@@ -194,8 +194,29 @@ export function App() {
     }).catch(() => {});
   }, []);
 
-  // Top Nav Menu tab: 'jobs' | 'emails' | 'interview'
-  const [activeTopTab, setActiveTopTab] = useState<'jobs' | 'emails' | 'interview'>('jobs');
+  /**
+   * Top Nav Menu tab: 'jobs' | 'emails' | 'interview'.
+   *
+   * Kept in the address bar rather than in state alone. A tab that only exists
+   * in memory is a tab you lose to a refresh, and the interview helper is the
+   * worst possible place to be thrown out of -- it happens minutes before, or
+   * during, a call. `?tab=` also makes the helper linkable and survives the
+   * browser's back button.
+   */
+  const [activeTopTab, setActiveTopTab] = useState<'jobs' | 'emails' | 'interview'>(() => {
+    const t = new URLSearchParams(window.location.search).get('tab');
+    return t === 'interview' || t === 'emails' ? t : 'jobs';
+  });
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if ((url.searchParams.get('tab') || 'jobs') === activeTopTab) return;
+    if (activeTopTab === 'jobs') url.searchParams.delete('tab');
+    else url.searchParams.set('tab', activeTopTab);
+    // push, not replace: leaving the interview with the back button should
+    // land on the map, the way leaving any other page does.
+    window.history.pushState({ tab: activeTopTab }, '', url.toString());
+  }, [activeTopTab]);
 
   // Filter state
   const [searchQuery, setSearchQuery] = useState('');
@@ -936,6 +957,8 @@ export function App() {
   useEffect(() => {
     const handlePopState = () => {
       const params = new URLSearchParams(window.location.search);
+      const tab = params.get('tab');
+      setActiveTopTab(tab === 'interview' || tab === 'emails' ? tab : 'jobs');
       const jobId = params.get('job');
       if (!jobId) {
         setActiveJobPage(null);

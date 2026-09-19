@@ -436,6 +436,48 @@ def clear_drafts(prospect_id: int) -> int:
     return int(cur.rowcount or 0)
 
 
+def delete_documents(ids: List[int]) -> Dict[str, Any]:
+    """
+    Remove records, and report which files they were holding.
+
+    The caller deletes the files, not this module -- this one does not touch a
+    disk it does not own. The paths come back so nothing is orphaned in the
+    dossiers folder after its ledger row is gone.
+
+    Deleting the record of a real send does not license a second letter to that
+    employer: the prospect's own stage still reads `sent`, and that is the check
+    a campaign makes before writing. Two locks, and this only opens one.
+    """
+    wanted = [int(x) for x in (ids or [])][:500]
+    if not wanted:
+        return {"removed": 0, "paths": [], "sent_removed": 0}
+    marks = ",".join("?" * len(wanted))
+    with connect() as conn:
+        rows = conn.execute(
+            f"SELECT id, pdf_path, letter_path, cv_path, dry_run, sent_at"
+            f" FROM documents WHERE id IN ({marks})", wanted).fetchall()
+        paths, sent_removed = [], 0
+        for row in rows:
+            for key in ("pdf_path", "letter_path", "cv_path"):
+                value = (row[key] or "").strip()
+                if value:
+                    paths.append(value)
+            if not row["dry_run"] and row["sent_at"]:
+                sent_removed += 1
+        cur = conn.execute(f"DELETE FROM documents WHERE id IN ({marks})", wanted)
+    return {"removed": int(cur.rowcount or 0), "paths": sorted(set(paths)),
+            "sent_removed": sent_removed}
+
+
+def draft_document_ids() -> List[int]:
+    """Every rehearsal still on file. Real sends are not drafts and not here."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT id FROM documents WHERE dry_run=1 AND sent_at IS NULL"
+        ).fetchall()
+    return [int(r["id"]) for r in rows]
+
+
 def list_documents(limit: int = 100) -> List[Dict[str, Any]]:
     with connect() as conn:
         rows = conn.execute(

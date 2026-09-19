@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from services.automation import arbeitsagentur as agentur
 from services.automation import campaign as sender
 from services.automation import contact_pipeline as contacts
+from services.automation import dossier
 from services.automation import gmail_send
 from services.automation import lead_discovery as discovery
 from services.automation import outreach_store as store
@@ -802,6 +803,71 @@ def get_campaign_status() -> Dict[str, Any]:
     return dict(_campaign)
 
 
+class TestSendIn(BaseModel):
+    role: str = ""
+
+
+@router.post("/campaign/test")
+def post_campaign_test(body: TestSendIn) -> Dict[str, Any]:
+    """
+    One real message, addressed to the mailbox it is sent from.
+
+    There is no way to find out whether sending works except by sending, and
+    the alternative to this route is finding out on a stranger: arming the live
+    switch and picking a real employer to be the experiment. If the token is
+    stale, or the attachment is empty, or the letter renders in the wrong
+    language, that company is who discovers it, and there is no unsending.
+
+    So the first real send goes to the user. It is the same code path as every
+    other send -- the same letter writer, the same PDFs, the same Gmail call --
+    with the recipient set to the connected account, and what lands in their
+    inbox is exactly what an employer would have received.
+
+    Repeatable on purpose: the previous test's documents are cleared and the
+    stage reset, because the two guards that stop an employer being written to
+    twice would otherwise stop the second test too. It still counts against the
+    day's allowance, because it is a real message and pretending otherwise
+    would make the cap a lie.
+    """
+    if _campaign["running"]:
+        raise HTTPException(409, "A campaign is already running.")
+    state = _gmail_state(force=True)
+    if not state["ok"]:
+        raise HTTPException(400, "Cannot send: " + str(state["reason"]))
+    address = str(state.get("address") or "").strip()
+    if not address:
+        raise HTTPException(400, "The connected mailbox has no address to send to.")
+
+    row, _ = store.upsert_prospect({
+        "company": "Test - my own mailbox",
+        "contact_name": "",
+        "email": address,
+        "email_status": "valid",
+        "email_kind": "published",
+        "notes": "A rehearsal target. Sends here go to you, not to an employer.",
+    }, source="test")
+    prospect_id = int(row["id"])
+    with store.connect() as conn:
+        conn.execute("DELETE FROM documents WHERE prospect_id=?", (prospect_id,))
+    store.update_prospect(prospect_id, {"stage": "new"})
+
+    def say(message: str, level: str = "info", pid: Optional[int] = None) -> None:
+        store.log_event(message, phase="campaign", level=level, prospect_id=pid)
+
+    say("Sending one real application to " + address + " - this is the test")
+    fresh = store.get_prospect(prospect_id) or dict(row)
+    outcome = sender.send_one(dict(fresh), role=body.role, dry_run=False,
+                              on_event=say, picked=True)
+    if not outcome.get("ok"):
+        raise HTTPException(502, "The test did not send: "
+                            + str(outcome.get("reason") or "unknown reason"))
+    say("The test arrived at " + address + ". Open it and check the two PDFs.")
+    return {"sent": True, "to": address,
+            "document_id": outcome.get("document_id"),
+            "message_id": outcome.get("message_id", ""),
+            "sent_today": sender.sent_today()}
+
+
 @router.get("/documents/{document_id}/pdf")
 def get_document_pdf(document_id: int, part: str = "pack") -> FileResponse:
     """
@@ -923,6 +989,89 @@ def get_events(limit: int = 200) -> Dict[str, Any]:
 @router.get("/documents")
 def get_documents(limit: int = 100) -> Dict[str, Any]:
     return {"documents": store.list_documents(limit=limit)}
+
+
+def _erase_generated_files(paths: List[str]) -> int:
+    """
+    Delete the PDFs this app generated, and nothing else on the disk.
+
+    The fence matters more than it looks. A document row's `cv_path` is not a
+    copy -- it points straight at the candidate's real CV wherever they keep it,
+    because the dossier builder attaches the original. Deleting "the files
+    belonging to this document" without checking where they are would delete the
+    user's actual CV the first time somebody tidied up a draft, and every letter
+    after that would go out with no CV attached.
+
+    So: only paths that resolve inside the dossiers folder are removed. The
+    letter and the merged pack live there and are regenerable. Anything else
+    named by the row is somebody's own file and is left alone.
+    """
+    root = os.path.realpath(str(dossier.OUT_DIR))
+    gone = 0
+    for raw in paths:
+        candidate = (raw or "").strip()
+        if not candidate:
+            continue
+        try:
+            full = os.path.realpath(candidate)
+            if os.path.commonpath([root, full]) != root:
+                continue
+        except (OSError, ValueError):
+            # Different drive, or a path the OS will not resolve. Not ours.
+            continue
+        try:
+            os.remove(full)
+            gone += 1
+        except FileNotFoundError:
+            pass
+        except OSError:
+            # Open in the previewer, or read-only. The row still goes; a file
+            # left behind is untidy, a half-failed delete is confusing.
+            pass
+    return gone
+
+
+class DocumentIds(BaseModel):
+    ids: List[int] = []
+
+
+@router.delete("/documents/{document_id}")
+def remove_document(document_id: int) -> Dict[str, Any]:
+    return remove_documents(DocumentIds(ids=[document_id]))
+
+
+@router.post("/documents/remove")
+def remove_documents(body: DocumentIds) -> Dict[str, Any]:
+    """
+    Throw away applications, and say what was thrown away.
+
+    A draft is a rehearsal and deleting it costs nothing. A real send is not:
+    it is the only copy of what an employer actually received, down to the
+    wording and the PDF, and once it is gone there is no way to answer "what
+    did I write to them?" -- Gmail's Sent folder has the message but this is
+    where the pieces are indexed. So the count of really-sent records goes back
+    in the reply and the interface says it out loud before asking.
+
+    The prospect is untouched, including its `sent` stage, so deleting the
+    record does not quietly re-open that company for a second application.
+    """
+    found = store.delete_documents(list(body.ids or []))
+    files = _erase_generated_files(found.get("paths") or [])
+    if found["removed"]:
+        sent = int(found.get("sent_removed") or 0)
+        store.log_event(
+            "Deleted " + str(found["removed"]) + " application"
+            + ("s" if found["removed"] != 1 else "")
+            + (" (" + str(sent) + " really sent)" if sent else " (drafts)"),
+            phase="documents", level="warn" if sent else "info")
+    return {"removed": found["removed"], "sent_removed": found.get("sent_removed", 0),
+            "files_removed": files}
+
+
+@router.post("/documents/remove-drafts")
+def remove_draft_documents() -> Dict[str, Any]:
+    """Clear the rehearsals in one go. Real sends are not drafts and stay."""
+    return remove_documents(DocumentIds(ids=store.draft_document_ids()))
 
 
 # Set when the process is going down, so open streams end instead of holding

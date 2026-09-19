@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Activity, Building2, FileText, Loader2, Plus,
+  Activity, Building2, FileText, Loader2, MailCheck, Plus,
   RefreshCw, Search, Send, ShieldCheck, Trash2, Users, X,
 } from 'lucide-react';
 
@@ -236,6 +236,12 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
   const [campaign, setCampaign] = useState<CampaignState | null>(null);
   const [openDoc, setOpenDoc] = useState<DocumentRow | null>(null);
   const [docPart, setDocPart] = useState<'pack' | 'letter' | 'cv'>('letter');
+  // Which application is a click away from being thrown out. Held rather than
+  // acted on, because a delete here can destroy the only copy of what an
+  // employer received and a mis-click should not be able to do that.
+  const [docDoomed, setDocDoomed] = useState<number | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [testNote, setTestNote] = useState('');
 
   /**
    * The ticked rows, and the console's high-water mark.
@@ -527,6 +533,64 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
     });
     setPicked(new Set());
     await Promise.all([loadProspects(page, query), loadOverview(), loadSendPreview()]);
+  };
+
+  /**
+   * Throw an application away.
+   *
+   * The confirm step is upstream of this, in the strip that names what is
+   * being lost. By the time this runs the question has been answered, so it
+   * gets on with it and reopens the next document rather than leaving the
+   * reader looking at a blank panel where the one they deleted used to be.
+   */
+  const removeDocs = async (ids: number[]) => {
+    if (!ids.length) return;
+    setDocDoomed(null);
+    try {
+      const res = await fetch(`${BACKEND}/api/outreach/documents/remove`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      });
+      if (!res.ok) throw new Error('The application could not be deleted.');
+      if (openDoc && ids.includes(openDoc.id)) setOpenDoc(null);
+      await loadDocuments();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'The delete failed.');
+    }
+  };
+
+  /**
+   * Prove the sending works, on yourself.
+   *
+   * The only way to learn whether a real send works is to do one, and the
+   * alternative to this button is learning it on a stranger: a real employer
+   * as the first test of a token, an attachment and a letter that might render
+   * in the wrong language. This sends the same thing down the same path to the
+   * mailbox it comes from, so the first person to see a broken application is
+   * the person who can fix it.
+   */
+  const sendTestToSelf = async () => {
+    setError('');
+    setTestNote('');
+    setTesting(true);
+    try {
+      const res = await fetch(`${BACKEND}/api/outreach/campaign/test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: sendRole }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'The test did not send.');
+      setTestNote(`Sent to ${data.to}. Open your inbox - the letter and the CV `
+        + 'are attached exactly as an employer would get them.');
+      await Promise.all([loadDocuments(), loadSendPreview(),
+        loadProspects(page, query)]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'The test did not send.');
+    } finally {
+      setTesting(false);
+    }
   };
 
   const togglePick = (id: number) => {
@@ -920,7 +984,30 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                   </span>
                 </span>
               </label>
+              {/* The rehearsal that is not a rehearsal. It really sends, which
+                * is the point: a dry run proves the letter and proves nothing
+                * about the mailbox, the token or the attachments. Addressed to
+                * the account it leaves from, so the experiment is on the user
+                * and not on a company they wanted to work for. */}
+              <button
+                type="button"
+                onClick={sendTestToSelf}
+                disabled={!sendPreview?.mailbox?.ok || testing || Boolean(campaign?.running)}
+                title={sendPreview?.mailbox?.ok
+                  ? `Really send one application to ${sendPreview?.mailbox?.address}, so you can see what an employer would get`
+                  : 'The mailbox is not connected yet'}
+                className="rounded-xl px-3 py-1.5 text-[12.5px] font-medium bg-white/[0.07] text-[rgba(235,235,245,0.82)] hover:bg-white/[0.12] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors inline-flex items-center gap-1.5"
+              >
+                {testing
+                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  : <MailCheck className="w-3.5 h-3.5" />}
+                {testing ? 'Sending' : 'Test on myself'}
+              </button>
             </div>
+
+            {testNote ? (
+              <p className="ic-row-in text-[12px] text-emerald-200/90">{testNote}</p>
+            ) : null}
 
             {picked.size === 0 ? (
               <p className="text-[11.5px] text-[rgba(235,235,245,0.42)]">
@@ -1317,10 +1404,74 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
      * live run goes out.
      */
     const chosen = openDoc && docs.find((d) => d.id === openDoc.id) ? openDoc : docs[0] || null;
+    const doomed = docs.find((d) => d.id === docDoomed) || null;
+    const doomedWasSent = Boolean(doomed?.sent_at && !doomed?.dry_run);
+    const draftCount = docs.filter((d) => !(d.sent_at && !d.dry_run)).length;
 
     return (
       <div className="flex flex-col lg:flex-row gap-3 h-full min-h-0">
-        <div className="ic-glass rounded-2xl overflow-y-auto custom-scrollbar lg:w-[380px] shrink-0 min-h-0">
+        <div className="ic-glass rounded-2xl lg:w-[380px] shrink-0 min-h-0 flex flex-col overflow-hidden">
+          <div className="shrink-0 flex items-center gap-2 px-4 py-2.5 border-b border-white/[0.09]">
+            <span className="text-[11.5px] uppercase tracking-wide text-[rgba(235,235,245,0.52)]">
+              {docs.length} application{docs.length === 1 ? '' : 's'}
+            </span>
+            <div className="flex-1" />
+            {/* Drafts only. A button that could wipe the record of everything
+              * ever sent, sitting one pixel from a list you scroll, is a
+              * disaster waiting for a tired evening. */}
+            <button
+              type="button"
+              onClick={() => removeDocs(docs.filter((d) => !(d.sent_at && !d.dry_run))
+                .map((d) => d.id))}
+              disabled={draftCount === 0}
+              title="Delete every draft. Applications that really went out are kept."
+              className="rounded-lg px-2.5 py-1 text-[12px] bg-white/[0.05] text-[rgba(235,235,245,0.62)] hover:bg-white/[0.09] disabled:opacity-35 disabled:cursor-not-allowed cursor-pointer transition-colors"
+            >
+              Clear {draftCount} draft{draftCount === 1 ? '' : 's'}
+            </button>
+          </div>
+
+          {/*
+            * The question, asked in one place and in full.
+            *
+            * Deleting a draft costs a regenerable PDF. Deleting a sent one
+            * destroys the only indexed copy of what that employer actually
+            * received -- so the strip says which of the two this is, by name,
+            * before the red button appears.
+            */}
+          {doomed ? (
+            <div className={`ic-row-in shrink-0 px-4 py-3 border-b border-white/[0.09] ${
+              doomedWasSent ? 'bg-rose-500/[0.12]' : 'bg-white/[0.05]'
+            }`}>
+              <p className="text-[12.5px] text-[#f5f5f7]">
+                Delete the application to{' '}
+                <span className="font-semibold">{doomed.company || doomed.subject}</span>?
+              </p>
+              <p className="text-[11.5px] text-[rgba(235,235,245,0.62)] pt-0.5">
+                {doomedWasSent
+                  ? `This one really went out${doomed.sent_at ? ` on ${doomed.sent_at.slice(0, 10)}` : ''}. Deleting it throws away the letter, the PDF and the record of what they received - the company stays marked as written to, so this does not re-open it for a second application.`
+                  : 'A draft. The letter and its PDF go; nothing was ever sent, and it can be written again.'}
+              </p>
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => removeDocs([doomed.id])}
+                  className="rounded-lg px-2.5 py-1 text-[12px] font-semibold bg-rose-500/20 text-rose-100 hover:bg-rose-500/30 cursor-pointer transition-colors"
+                >
+                  Delete it
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDocDoomed(null)}
+                  className="rounded-lg px-2.5 py-1 text-[12px] text-[rgba(235,235,245,0.62)] hover:text-[#f5f5f7] cursor-pointer transition-colors"
+                >
+                  Keep it
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
           {docs.length === 0 ? (
             <div className="px-4 py-12 text-center">
               <FileText className="w-6 h-6 mx-auto mb-2 text-[rgba(235,235,245,0.32)]" />
@@ -1335,13 +1486,20 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
             docs.map((d) => {
               const on = chosen?.id === d.id;
               return (
-                <button
+                // A row inside a row: the entry opens the application, the
+                // trash throws it away. Two jobs cannot be one button, and a
+                // button cannot live inside a button, so the outer element is
+                // a div and the readable part keeps the click.
+                <div
                   key={d.id}
+                  className={`group relative border-b border-white/[0.07] last:border-0 transition-colors ${
+                    on ? 'bg-white/[0.09]' : 'hover:bg-white/[0.04]'
+                  } ${docDoomed === d.id ? 'ring-1 ring-inset ring-rose-400/40' : ''}`}
+                >
+                <button
                   type="button"
                   onClick={() => { setOpenDoc(d); setDocPart('letter'); }}
-                  className={`w-full text-left px-4 py-3 border-b border-white/[0.07] last:border-0 cursor-pointer transition-colors ${
-                    on ? 'bg-white/[0.09]' : 'hover:bg-white/[0.04]'
-                  }`}
+                  className="w-full text-left px-4 py-3 pr-10 cursor-pointer"
                 >
                   <div className="flex items-center gap-2">
                     <span className="text-[13.5px] font-semibold text-[#f5f5f7] truncate">
@@ -1370,9 +1528,19 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                     {d.pdf_path ? ' - CV and letter attached' : ''}
                   </p>
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setDocDoomed(docDoomed === d.id ? null : d.id)}
+                  title="Delete this application"
+                  className="absolute top-2.5 right-2 rounded-lg p-1.5 text-[rgba(235,235,245,0.42)] opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-rose-500/20 hover:text-rose-200 cursor-pointer transition-all"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+                </div>
               );
             })
           )}
+          </div>
         </div>
 
         <div className="ic-glass rounded-2xl flex-1 min-h-0 flex flex-col overflow-hidden">
@@ -1415,6 +1583,15 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                   >
                     Open in a tab
                   </a>
+                  <button
+                    type="button"
+                    onClick={() => setDocDoomed(chosen.id)}
+                    title="Delete this application"
+                    className="rounded-lg px-2.5 py-1 text-[12px] bg-white/[0.05] text-[rgba(235,235,245,0.62)] hover:bg-rose-500/20 hover:text-rose-200 cursor-pointer transition-colors inline-flex items-center gap-1.5"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Delete
+                  </button>
                 </div>
               </div>
 

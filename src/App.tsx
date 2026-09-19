@@ -18,7 +18,7 @@ import { JobCard } from './components/JobCard';
 import { JobMap } from './components/JobMap';
 import { JobPage } from './components/JobPage';
 import { PostJobModal } from './components/PostJobModal';
-import { AutomatedEmailsModal } from './components/AutomatedEmailsModal';
+import { OutreachPage } from './components/OutreachPage';
 import { InterviewHelperModal } from './components/InterviewHelperModal';
 import {
   SearchSetup,
@@ -1589,6 +1589,11 @@ export function App() {
           isOpen={true}
           onClose={() => setActiveTopTab('jobs')}
         />
+      ) : activeTopTab === 'emails' ? (
+        /* Outreach is a page, not a dialog: it is worked in for an hour at a
+           time, it has four sections of its own, and a modal that covers the
+           app to show a ledger is a window pretending to be a sheet. */
+        <OutreachPage onClose={() => setActiveTopTab('jobs')} />
       ) : !searchBrief ? (
         /* Nothing is guessed until the questions are answered. Same shape as
            the interview setup, and for the same reason. */
@@ -1908,12 +1913,6 @@ export function App() {
         onClose={() => setIsPostJobOpen(false)}
         onAddJob={handleAddJob}
         selectedCity={selectedCity}
-      />
-
-      {/* Automated Emails Feature Modal */}
-      <AutomatedEmailsModal
-        isOpen={activeTopTab === 'emails'}
-        onClose={() => setActiveTopTab('jobs')}
       />
 
     </div>

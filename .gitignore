@@ -75,3 +75,9 @@ nul
 # run came to. Both are personal and neither is source.
 services/automation/portal_accounts.json
 services/automation/applications.jsonl
+
+# The outreach ledger: real companies and real contact people, i.e. personal
+# data. It is per-machine state, not source.
+services/automation/outreach.db
+services/automation/outreach.db-wal
+services/automation/outreach.db-shm

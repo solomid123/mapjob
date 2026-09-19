@@ -40,11 +40,16 @@ from services.automation import agent_profile
 from services.automation.outcome_ledger import OUTCOMES, read_outcomes, record_outcome
 from services.automation.config import FUELIX_PAGE_AGENT as PAGE_AGENT_MODEL
 from services.automation.chrome_launcher import launch_chrome
+from services.automation.outreach_api import router as outreach_router
 import undetected_chromedriver as uc
 
 logger = logging.getLogger("api_server")
 
 app = FastAPI(title="MapJob Automation Bridge")
+
+# The prospecting workspace: its own module, mounted here because it needs the
+# same LLM client, mailer and candidate profile the apply engine already holds.
+app.include_router(outreach_router)
 
 app.add_middleware(
     CORSMiddleware,

@@ -205,6 +205,11 @@ const readSection = (): Section => {
     .includes(view as Section) ? (view as Section) : 'dashboard';
 };
 
+// Every engine that narrates into the Find-leads panel. Missing one here is
+// invisible: the panel simply shows an older line from an engine that is on
+// the list, which looks like a stale result rather than a missing case.
+const HUNT_PHASES = ['discovery', 'harvest', 'agentur', 'contacts', 'verify'];
+
 /**
  * The watermark that hides everything logged before Clear was pressed.
  *
@@ -262,6 +267,10 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
    */
   const [engine, setEngine] = useState<'fast' | 'deep' | 'people' | 'agentur'>('fast');
   const [hunting, setHunting] = useState(false);
+  // When the current search began. The status line shows nothing older,
+  // so a finished run never leaves a sentence behind for the next one to
+  // look like it produced.
+  const [huntFrom, setHuntFrom] = useState(0);
   const consoleRef = useRef<HTMLDivElement | null>(null);
 
   /*
@@ -480,6 +489,7 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
     }
     setError('');
     setHunting(true);
+    setHuntFrom(Date.now());
     // A new search means the last run's sending log is history. The Pipeline
     // tab is about what is going out now, so it starts empty rather than with
     // yesterday's forty lines above today's first one.
@@ -516,6 +526,7 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
   const startVerify = async () => {
     setError('');
     setHunting(true);
+    setHuntFrom(Date.now());
     try {
       const res = await fetch(`${BACKEND}/api/outreach/verify`, {
         method: 'POST',
@@ -749,16 +760,32 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
     return () => window.clearInterval(id);
   }, [hunting, query, loadProspects, loadOverview]);
 
-  // What the search is doing right now, in the search panel, so the answer to
-  // "is this thing working" does not require changing tabs.
+  /*
+   * What the search is doing right now, in the search panel, so the answer to
+   * "is this thing working" does not require changing tabs.
+   *
+   * Two things were wrong with it. It only watched two of the four engines, so
+   * a board search showed whatever the last website sweep had said; and it had
+   * no start time, so what it showed was the last such line ever written. The
+   * result was a panel that sat under a finished board search displaying a
+   * contact found by a different engine on a different day, which reads as
+   * "this is the only answer I got" -- the most convincing way to look broken
+   * while working.
+   *
+   * Now: every engine's phase, and nothing from before this search began.
+   */
   const huntLine = useMemo(() => {
     for (let i = events.length - 1; i >= 0; i -= 1) {
-      if (events[i].phase === 'discovery' || events[i].phase === 'harvest') {
-        return events[i].message;
-      }
+      const ev = events[i];
+      if (!HUNT_PHASES.includes(ev.phase)) continue;
+      // The same second of grace the pipeline console uses: the server stores
+      // whole seconds, so an event written at 56.9 carries 56.0 and a start
+      // time taken at 56.5 would hide the line the click just caused.
+      if (Date.parse(ev.created_at) < huntFrom - 1000) break;
+      return ev.message;
     }
     return '';
-  }, [events]);
+  }, [events, huntFrom]);
 
   /**
    * What the Pipeline console shows: sending, and nothing else.

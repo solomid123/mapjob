@@ -169,13 +169,36 @@ def _headers() -> Dict[str, str]:
     }
 
 
+# Why the last request failed, for the caller that has to explain itself.
+# Not raised: a failed detail request should skip one listing rather than end
+# a search, and threading a result type through every call site to say so
+# would be more machinery than this needs. But swallowing the reason entirely
+# is what made a rejected request and an empty result look identical, and a
+# board search that says "returned nothing" when the board actually said 400
+# sends you looking for the wrong problem.
+LAST_ERROR = ""
+
+
 def _get(url: str) -> Optional[Dict[str, object]]:
+    global LAST_ERROR
     try:
         request = urllib.request.Request(url, headers=_headers())
         with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+            LAST_ERROR = ""
             return json.loads(response.read().decode("utf-8", "replace"))
-    except (urllib.error.HTTPError, urllib.error.URLError, ValueError, OSError):
-        return None
+    except urllib.error.HTTPError as error:
+        LAST_ERROR = "the board answered HTTP " + str(error.code)
+        if error.code == 400:
+            LAST_ERROR += " (it rejected the search terms)"
+        elif error.code in (401, 403):
+            LAST_ERROR += " (it refused this client)"
+        elif error.code == 429:
+            LAST_ERROR += " (too many requests - slow down)"
+    except urllib.error.URLError as error:
+        LAST_ERROR = "could not reach the board: " + str(error.reason)[:80]
+    except (ValueError, OSError) as error:
+        LAST_ERROR = "unreadable answer from the board: " + str(error)[:80]
+    return None
 
 
 def search(was: str, wo: str = "", umkreis: int = 25, page: int = 1,
@@ -192,7 +215,12 @@ def search(was: str, wo: str = "", umkreis: int = 25, page: int = 1,
     window = _board_window(int(published_within or 0))
     if window:
         params["veroeffentlichtseit"] = window
-    query = urllib.parse.urlencode(params)
+    # An empty parameter is not the same as an absent one. Sending `wo=` is a
+    # 400 from the gateway, not a nationwide search -- so leaving the City box
+    # blank did not widen the search, it broke the request, and the run
+    # reported that the board had returned nothing. Anything empty is dropped.
+    query = urllib.parse.urlencode(
+        {k: v for k, v in params.items() if str(v).strip() not in ("", "None")})
     data = _get(SEARCH_URL + "?" + query)
     if not data:
         return {"total": 0, "items": []}
@@ -368,7 +396,12 @@ def run(was: str, wo: str = "", umkreis: int = 25, count: int = 25,
     first = fetch(1)
     total = int(first["total"])  # type: ignore[arg-type]
     if not total:
-        talk("The job board returned nothing for that search", "warn")
+        # "Nothing found" and "the request was refused" are different problems
+        # with different fixes, and telling them apart is the difference
+        # between rewording a search and finding out the board said 400.
+        talk("The job board returned nothing for that search"
+             + (" - " + LAST_ERROR if LAST_ERROR else ""),
+             "error" if LAST_ERROR else "warn")
         return tally
     # The board counted its own window, which is the nearest one it has and not
     # always the one that was asked for, so the total is reported as the

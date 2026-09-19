@@ -107,7 +107,10 @@ type Section = 'dashboard' | 'prospects' | 'pipeline' | 'documents';
 const SECTIONS: { id: Section; label: string; icon: React.ElementType; hint: string }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: Activity, hint: 'What is connected and what it has done' },
   { id: 'prospects', label: 'Prospects', icon: Users, hint: 'Every employer and contact on file' },
-  { id: 'pipeline', label: 'Pipeline', icon: RefreshCw, hint: 'What the engine is doing, live' },
+  // Sending, and only sending. The tab used to narrate everything the app did,
+  // which meant the four lines about letters going out were buried under two
+  // hundred about company websites being read.
+  { id: 'pipeline', label: 'Pipeline', icon: Send, hint: 'Applications going out, live' },
   { id: 'documents', label: 'Documents', icon: FileText, hint: 'What was written, and to whom' },
 ];
 
@@ -133,7 +136,7 @@ const EMAIL_TINT: Record<string, string> = {
 const StatCard: React.FC<{ label: string; value: number | string; sub?: string }> = ({
   label, value, sub,
 }) => (
-  <div className="ic-panel rounded-2xl bg-[rgba(16,18,22,0.72)] px-4 py-3.5">
+  <div className="ic-glass rounded-2xl px-4 py-3.5">
     <p className="text-[12px] tracking-[-0.01em] text-[rgba(235,235,245,0.62)]">{label}</p>
     <p className="mt-1 text-[26px] font-semibold tracking-[-0.03em] text-[#f5f5f7] tabular-nums">
       {value}
@@ -234,6 +237,25 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
   const [campaign, setCampaign] = useState<CampaignState | null>(null);
   const [openDoc, setOpenDoc] = useState<DocumentRow | null>(null);
   const [docPart, setDocPart] = useState<'pack' | 'letter' | 'cv'>('letter');
+
+  /**
+   * The ticked rows, and the console's high-water mark.
+   *
+   * `picked` is a Set of prospect ids rather than a flag on each row, because
+   * the table is paged: a selection stored in the rows would be thrown away by
+   * the next page load, and a selection that silently shrinks when you page
+   * away is worse than one that does not exist.
+   *
+   * `clearedBefore` is how the console is emptied: a millisecond watermark,
+   * and the console shows what arrived after it. The events themselves are not
+   * deleted -- the dashboard reads the same log, and the record of what the
+   * pipeline did is not the operator's scratch pad. It is a number rather than
+   * the ISO string the server sends because those two strings do not compare:
+   * the server ends its timestamps with `+00:00` and the browser with `Z`.
+   */
+  const [picked, setPicked] = useState<Set<number>>(new Set());
+  const [clearedBefore, setClearedBefore] = useState(0);
+  const [rowBusy, setRowBusy] = useState<number | null>(null);
 
   const loadOverview = useCallback(async () => {
     try {
@@ -392,6 +414,10 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
     }
     setError('');
     setHunting(true);
+    // A new search means the last run's sending log is history. The Pipeline
+    // tab is about what is going out now, so it starts empty rather than with
+    // yesterday's forty lines above today's first one.
+    setClearedBefore(Date.now());
     const route = engine === 'fast' ? 'harvest'
       : engine === 'people' ? 'contacts'
         : engine === 'agentur' ? 'agentur' : 'discover';
@@ -445,15 +471,22 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
    * `asLive` is passed explicitly rather than read from state at the moment of
    * the click, so the two buttons cannot be confused for one another by a
    * stale render: "Draft them" always drafts, whatever the toggle says.
+   *
+   * `ids` is how one row's send button and the bulk bar reach the same code.
+   * There is exactly one place in this app that decides whether mail leaves,
+   * and it is this call: a second path for "just this one" would be a second
+   * place for the safety rules to be forgotten.
    */
-  const startCampaign = async (asLive: boolean) => {
+  const startCampaign = async (asLive: boolean, ids: number[] = []) => {
     setError('');
     try {
       const res = await fetch(`${BACKEND}/api/outreach/campaign`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          role: sendRole, dry_run: !asLive, limit: sendLimit,
+          role: sendRole, dry_run: !asLive,
+          limit: ids.length ? ids.length : sendLimit,
+          ids,
         }),
       });
       if (!res.ok) {
@@ -462,12 +495,52 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
       }
       setSection('pipeline');
       setCampaign({
-        running: true, dry_run: !asLive, done: 0, total: sendLimit,
+        running: true, dry_run: !asLive, done: 0,
+        total: ids.length || sendLimit,
         sent: 0, drafted: 0, failed: 0, skipped: 0, error: '',
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'The campaign could not be started.');
     }
+  };
+
+  /**
+   * One row's send button, and the bulk bar above the table.
+   *
+   * Both honour the same `live` switch as the panel in the Pipeline tab: with
+   * it off this writes the letter and files it for reading, and with it on the
+   * message goes. A row button that sent for real while the big red switch
+   * said "draft" would make the switch a lie.
+   */
+  const sendRows = async (ids: number[]) => {
+    if (!ids.length) return;
+    setRowBusy(ids.length === 1 ? ids[0] : -1);
+    try {
+      await startCampaign(live && Boolean(sendPreview?.mailbox?.ok), ids);
+      setPicked(new Set());
+    } finally {
+      setRowBusy(null);
+    }
+  };
+
+  const removeRows = async (ids: number[]) => {
+    if (!ids.length) return;
+    await fetch(`${BACKEND}/api/outreach/prospects/remove`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    });
+    setPicked(new Set());
+    await Promise.all([loadProspects(page, query), loadOverview(), loadSendPreview()]);
+  };
+
+  const togglePick = (id: number) => {
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   };
 
   const stopCampaign = async () => {
@@ -488,7 +561,11 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
         const state: CampaignState = await res.json();
         setCampaign(state);
         if (!state.running) {
-          await Promise.all([loadDocuments(), loadOverview(), loadSendPreview()]);
+          // The table too: a run moves every prospect it touched to `dossier`
+          // or `sent`, and a stage column still saying `new` after the letter
+          // went out is the table lying about what happened.
+          await Promise.all([loadDocuments(), loadOverview(), loadSendPreview(),
+            loadProspects(page, query)]);
           if (state.error) setError(state.error);
         }
       } catch {
@@ -496,7 +573,8 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
       }
     }, 1500);
     return () => window.clearInterval(id);
-  }, [campaign?.running, loadDocuments, loadOverview, loadSendPreview]);
+  }, [campaign?.running, loadDocuments, loadOverview, loadSendPreview,
+      loadProspects, page, query]);
 
   /** Call off a run in flight. It stops after the company it is reading. */
   const stopHunt = async () => {
@@ -539,6 +617,25 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
     return '';
   }, [events]);
 
+  /**
+   * What the Pipeline console shows: sending, and nothing else.
+   *
+   * Everything the app does writes to one log -- discovery, harvesting, the
+   * board reader, the verifier -- and showing all of it here buried the four
+   * lines that matter under two hundred that do not. Those other phases each
+   * have their own place already: the search narrates into its own panel, and
+   * the dashboard keeps the full history. This tab answers one question, which
+   * is whether the letters are going out.
+   */
+  const sendLog = useMemo(
+    // The second's grace is not sloppiness: the server stamps its events to
+    // whole seconds, so an event written at 56.9 carries 56.0 and a watermark
+    // taken at 56.5 would hide the line the user just caused.
+    () => events.filter((ev) => ev.phase === 'campaign'
+      && Date.parse(ev.created_at) >= clearedBefore - 1000),
+    [events, clearedBefore],
+  );
+
   const connected = useMemo(
     () => Object.values(caps).filter((c) => c.ready).length,
     [caps],
@@ -557,7 +654,7 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
             <StatCard label="Dossiers" value={stats.dossiers ?? 0} sub="PDFs assembled" />
           </div>
 
-          <div className="ic-panel rounded-2xl bg-[rgba(16,18,22,0.72)] px-4 py-3">
+          <div className="ic-glass rounded-2xl px-4 py-3">
             <div className="flex items-baseline justify-between gap-3 pb-1">
               <h3 className="ic-title text-[15px] text-[#f5f5f7]">Integrations</h3>
               <span className="text-[12px] text-[rgba(235,235,245,0.52)]">
@@ -574,7 +671,7 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
             </p>
           </div>
 
-          <div className="ic-panel rounded-2xl bg-[rgba(16,18,22,0.72)] px-4 py-3">
+          <div className="ic-glass rounded-2xl px-4 py-3">
             <h3 className="ic-title text-[15px] text-[#f5f5f7] pb-1">Latest activity</h3>
             {events.length === 0 ? (
               <p className="py-2 text-[13px] text-[rgba(235,235,245,0.42)]">
@@ -599,6 +696,13 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
     }
 
     if (section === 'prospects') {
+      // Armed means two things are true at once: the operator threw the switch
+      // in the Pipeline tab, and Google actually answered when we asked. Either
+      // one alone drafts. This is why the row buttons can say, before they are
+      // pressed, whether they are about to send anything.
+      const liveArmed = live && Boolean(sendPreview?.mailbox?.ok);
+      const allPicked = prospects.length > 0 && prospects.every((p) => picked.has(p.id));
+
       return (
         <div className="space-y-3">
 
@@ -610,7 +714,7 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
             * and subsidiaries -- and to nothing else, which is the part that
             * takes enforcing.
             */}
-          <div className="ic-panel rounded-2xl bg-[rgba(16,18,22,0.72)] p-3.5">
+          <div className="ic-glass rounded-2xl p-3.5">
             <div className="flex items-center gap-2 pb-2.5">
               <Search className="w-4 h-4 text-[#0a84ff]" />
               <h4 className="text-[13.5px] font-semibold tracking-[-0.01em] text-[#f5f5f7]">
@@ -751,7 +855,7 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
           </div>
 
           {showAdd && (
-            <div className="ic-panel rounded-2xl bg-[rgba(16,18,22,0.72)] p-3.5 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2.5">
+            <div className="ic-glass rounded-2xl p-3.5 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2.5">
               {([
                 ['company', 'Company *'], ['contact_name', 'Contact person'], ['role', 'Their role'],
                 ['email', 'Email address'], ['city', 'City'], ['website', 'Website'],
@@ -785,8 +889,65 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
             </div>
           )}
 
-          <div className="ic-panel rounded-2xl bg-[rgba(16,18,22,0.72)] overflow-hidden">
-            <div className="hidden md:grid grid-cols-[1.4fr_1.2fr_1.4fr_0.7fr_76px] gap-3 px-4 py-2.5 border-b border-white/[0.09] text-[11.5px] uppercase tracking-wide text-[rgba(235,235,245,0.52)]">
+          {/*
+            * The bulk bar.
+            *
+            * It appears only when something is ticked, and it says the number
+            * out loud in both buttons, because "Send" and "Send 34" are
+            * different decisions and only one of them can be made by accident.
+            */}
+          {picked.size > 0 ? (
+            <div className="ic-glass ic-row-in rounded-2xl px-3.5 py-2.5 flex flex-wrap items-center gap-2.5">
+              <span className="text-[13px] text-[#f5f5f7]">
+                <span className="tabular-nums font-semibold">{picked.size}</span> selected
+              </span>
+              <button
+                type="button"
+                onClick={() => setPicked(new Set())}
+                className="text-[12.5px] text-[rgba(235,235,245,0.52)] hover:text-[#f5f5f7] transition-colors cursor-pointer"
+              >
+                Clear
+              </button>
+              <div className="flex-1" />
+              <button
+                type="button"
+                onClick={() => sendRows([...picked])}
+                disabled={rowBusy !== null || Boolean(campaign?.running)}
+                className={`rounded-xl px-3.5 py-1.5 text-[13px] font-semibold inline-flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors ${
+                  liveArmed
+                    ? 'bg-[#0a84ff] text-white hover:bg-[#0a84ff]/90'
+                    : 'bg-white/[0.1] text-[#f5f5f7] hover:bg-white/[0.16]'
+                }`}
+                title={liveArmed
+                  ? `Send ${picked.size} application${picked.size === 1 ? '' : 's'} for real`
+                  : 'Write the letters and file them. Arm the switch in Pipeline to send for real.'}
+              >
+                <Send className="w-3.5 h-3.5" />
+                {liveArmed ? `Send ${picked.size}` : `Draft ${picked.size}`}
+              </button>
+              <button
+                type="button"
+                onClick={() => removeRows([...picked])}
+                className="rounded-xl px-3.5 py-1.5 text-[13px] font-semibold bg-rose-500/15 text-rose-200 hover:bg-rose-500/25 cursor-pointer transition-colors inline-flex items-center gap-2"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Delete {picked.size}
+              </button>
+            </div>
+          ) : null}
+
+          <div className="ic-glass rounded-2xl overflow-hidden">
+            <div className="hidden md:grid grid-cols-[28px_1.4fr_1.2fr_1.4fr_0.7fr_104px] gap-3 px-4 py-2.5 border-b border-white/[0.09] text-[11.5px] uppercase tracking-wide text-[rgba(235,235,245,0.52)]">
+              <input
+                type="checkbox"
+                checked={allPicked}
+                ref={(el) => { if (el) el.indeterminate = picked.size > 0 && !allPicked; }}
+                onChange={() => setPicked(allPicked
+                  ? new Set()
+                  : new Set(prospects.map((p) => p.id)))}
+                title="Select everything on this page"
+                className="accent-[#0a84ff] w-3.5 h-3.5 cursor-pointer self-center"
+              />
               <span>Company</span><span>Contact</span><span>Address</span><span>Stage</span><span />
             </div>
             {prospects.length === 0 ? (
@@ -800,8 +961,16 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
               prospects.map((p) => (
                 <div
                   key={p.id}
-                  className="grid grid-cols-1 md:grid-cols-[1.4fr_1.2fr_1.4fr_0.7fr_76px] gap-1 md:gap-3 px-4 py-2.5 border-b border-white/[0.07] last:border-0 hover:bg-white/[0.04] transition-colors"
+                  className={`grid grid-cols-1 md:grid-cols-[28px_1.4fr_1.2fr_1.4fr_0.7fr_104px] gap-1 md:gap-3 px-4 py-2.5 border-b border-white/[0.07] last:border-0 transition-colors ${
+                    picked.has(p.id) ? 'bg-[#0a84ff]/[0.12]' : 'hover:bg-white/[0.05]'
+                  }`}
                 >
+                  <input
+                    type="checkbox"
+                    checked={picked.has(p.id)}
+                    onChange={() => togglePick(p.id)}
+                    className="accent-[#0a84ff] w-3.5 h-3.5 cursor-pointer self-center justify-self-start"
+                  />
                   <div className="min-w-0">
                     <p className="text-[13.5px] font-semibold text-[#f5f5f7] truncate">{p.company}</p>
                     <p className="text-[12px] text-[rgba(235,235,245,0.42)] truncate">{p.city || p.website}</p>
@@ -870,6 +1039,32 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                   </div>
                   <div><StagePill stage={p.stage} /></div>
                   <div className="justify-self-start md:justify-self-end flex items-center gap-0.5">
+                    {/* Write to this one company. The same run the bulk button
+                      * starts, with a queue of one -- so the rules about
+                      * guessed addresses, second letters and the daily cap are
+                      * the same rules, decided in the same place on the server.
+                      * Disabled when there is nothing to write to, and the
+                      * tooltip says which of the two it would do. */}
+                    <button
+                      type="button"
+                      onClick={() => sendRows([p.id])}
+                      disabled={!p.email || p.stage === 'sent'
+                        || rowBusy !== null || Boolean(campaign?.running)}
+                      title={!p.email
+                        ? 'No address to write to'
+                        : p.stage === 'sent'
+                          ? 'Already written to'
+                          : liveArmed
+                            ? `Send an application to ${p.company} now`
+                            : 'Write the letter and file it (nothing is sent)'}
+                      className={`p-1.5 rounded-lg hover:bg-white/[0.08] disabled:opacity-25 disabled:cursor-not-allowed cursor-pointer transition-colors ${
+                        liveArmed
+                          ? 'text-[#0a84ff] hover:text-[#3b9bff]'
+                          : 'text-[rgba(235,235,245,0.42)] hover:text-[#f5f5f7]'
+                      }`}
+                    >
+                      <Send className="w-4 h-4" />
+                    </button>
                     {/* Look this one company up again. The same reading a search
                       * does, for a row typed in by hand, or found before the
                       * contact stage existed, or whose careers page has moved. */}
@@ -942,7 +1137,7 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
             * default button drafts; sending for real needs the switch thrown
             * first, and the switch says what it costs.
             */}
-          <div className="ic-panel rounded-2xl bg-[rgba(16,18,22,0.72)] p-3.5 shrink-0">
+          <div className="ic-glass rounded-2xl p-3.5 shrink-0">
             <div className="flex items-center gap-2 pb-2.5">
               <Send className="w-4 h-4 text-[#0a84ff]" />
               <h4 className="text-[13.5px] font-semibold tracking-[-0.01em] text-[#f5f5f7]">
@@ -1057,11 +1252,16 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                     {campaign?.skipped ? ` - ${campaign.skipped} skipped` : ''}
                   </span>
                 </div>
-                <div className="h-1.5 rounded-full bg-white/[0.08] overflow-hidden">
+                {/* A real send waits forty seconds between letters, so for
+                  * most of a run this bar does not move. A bar that has not
+                  * moved in forty seconds looks broken -- hence the sheen
+                  * crossing it while the run is alive, and the stillness the
+                  * moment it is not. */}
+                <div className="h-1.5 rounded-full bg-white/[0.08] overflow-hidden relative">
                   <div
-                    className={`h-full rounded-full transition-[width] duration-500 ${
+                    className={`h-full rounded-full transition-[width] duration-500 relative overflow-hidden ${
                       campaign?.dry_run ? 'bg-amber-400/70' : 'bg-[#0a84ff]'
-                    }`}
+                    } ${running ? 'ic-sheen' : ''}`}
                     style={{ width: `${pct}%` }}
                   />
                 </div>
@@ -1069,34 +1269,66 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
             ) : null}
           </div>
 
-        <div
-          ref={consoleRef}
-          className="ic-panel rounded-2xl bg-[rgba(10,11,14,0.86)] p-4 flex-1 min-h-0 overflow-y-auto custom-scrollbar font-mono text-[12.5px] leading-relaxed"
-        >
-          {events.length === 0 ? (
-            <p className="text-[rgba(235,235,245,0.42)]">
-              Waiting for the first run. This console is live: every step writes here as it happens.
-            </p>
-          ) : (
-            events.map((ev) => (
-              <div key={ev.id} className="flex gap-2.5">
-                <span className="text-[rgba(235,235,245,0.32)] tabular-nums shrink-0">
-                  {ev.created_at.slice(11, 19)}
+          {/*
+            * The sending log, and only the sending log.
+            *
+            * There is no phase column any more because there is only one phase
+            * left in here. Searching, harvesting and verifying still write to
+            * the same log on the server -- the dashboard shows it -- but this
+            * tab exists to answer whether the letters are going out, and that
+            * answer was unreadable underneath two hundred lines about company
+            * websites.
+            */}
+          <div className="ic-glass-deep rounded-2xl flex-1 min-h-0 flex flex-col overflow-hidden">
+            <div className="flex items-center gap-2 px-4 pt-3 pb-2 shrink-0">
+              <span className="text-[11.5px] uppercase tracking-wide text-[rgba(235,235,245,0.45)]">
+                Sending log
+              </span>
+              {running ? (
+                <span className="inline-flex items-center gap-1.5 text-[11.5px] text-[#0a84ff]">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#0a84ff] ic-breathe" />
+                  live
                 </span>
-                <span className="text-sky-300/80 shrink-0 w-[84px] truncate">{ev.phase}</span>
-                <span
-                  className={
-                    ev.level === 'error' ? 'text-rose-300'
-                      : ev.level === 'warn' ? 'text-amber-200'
-                      : 'text-[rgba(235,235,245,0.82)]'
-                  }
-                >
-                  {ev.message}
-                </span>
-              </div>
-            ))
-          )}
-        </div>
+              ) : null}
+              <div className="flex-1" />
+              <button
+                type="button"
+                onClick={() => setClearedBefore(Date.now())}
+                disabled={sendLog.length === 0}
+                title="Empty this console. The record itself is kept."
+                className="text-[12px] text-[rgba(235,235,245,0.45)] hover:text-[#f5f5f7] disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-colors"
+              >
+                Clear
+              </button>
+            </div>
+            <div
+              ref={consoleRef}
+              className="px-4 pb-4 flex-1 min-h-0 overflow-y-auto custom-scrollbar font-mono text-[12.5px] leading-relaxed"
+            >
+              {sendLog.length === 0 ? (
+                <p className="text-[rgba(235,235,245,0.42)]">
+                  Nothing going out. Start a run above, or send from a row in Prospects.
+                </p>
+              ) : (
+                sendLog.map((ev) => (
+                  <div key={ev.id} className="flex gap-2.5 ic-row-in">
+                    <span className="text-[rgba(235,235,245,0.32)] tabular-nums shrink-0">
+                      {ev.created_at.slice(11, 19)}
+                    </span>
+                    <span
+                      className={
+                        ev.level === 'error' ? 'text-rose-300'
+                          : ev.level === 'warn' ? 'text-amber-200'
+                          : 'text-[rgba(235,235,245,0.82)]'
+                      }
+                    >
+                      {ev.message}
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
         </div>
       );
     }
@@ -1113,7 +1345,7 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
 
     return (
       <div className="flex flex-col lg:flex-row gap-3 h-full min-h-0">
-        <div className="ic-panel rounded-2xl bg-[rgba(16,18,22,0.72)] overflow-y-auto custom-scrollbar lg:w-[380px] shrink-0 min-h-0">
+        <div className="ic-glass rounded-2xl overflow-y-auto custom-scrollbar lg:w-[380px] shrink-0 min-h-0">
           {docs.length === 0 ? (
             <div className="px-4 py-12 text-center">
               <FileText className="w-6 h-6 mx-auto mb-2 text-[rgba(235,235,245,0.32)]" />
@@ -1168,7 +1400,7 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
           )}
         </div>
 
-        <div className="ic-panel rounded-2xl bg-[rgba(16,18,22,0.72)] flex-1 min-h-0 flex flex-col overflow-hidden">
+        <div className="ic-glass rounded-2xl flex-1 min-h-0 flex flex-col overflow-hidden">
           {!chosen ? (
             <div className="flex-1 flex items-center justify-center text-[13px] text-[rgba(235,235,245,0.42)]">
               Pick an application to read it.
@@ -1242,7 +1474,10 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
 
   return (
     <div className="flex-1 w-full max-w-[1760px] mx-auto px-4 sm:px-6 lg:px-8 py-3 flex flex-col h-[calc(100vh-80px)] overflow-hidden animate-in fade-in duration-150">
-      <div className="ic-tile is-static relative w-full h-full rounded-[22px] overflow-hidden flex">
+      {/* The shell is glass too, and deliberately thinner than the panels
+        * inside it: two sheets of the same darkness stacked make an opaque
+        * wall, and the point of the wallpaper is that it is still there. */}
+      <div className="ic-shell relative w-full h-full rounded-[22px] overflow-hidden flex">
 
         {/*
           * The inner menu.

@@ -99,7 +99,19 @@ def _reason_to_skip(row: Dict[str, Any]) -> str:
     return ""
 
 
-def eligible(limit: int = 500, city: str = "", source: str = "") -> List[Dict[str, Any]]:
+def why_not(row: Dict[str, Any]) -> str:
+    """
+    The public form of the rule above, for a caller that has to explain itself.
+
+    The API needs this when somebody clicks send on one row and the answer is
+    no: "nobody is eligible" is true and useless when you are looking at the
+    company's address on the screen.
+    """
+    return _reason_to_skip(row)
+
+
+def eligible(limit: int = 500, city: str = "", source: str = "",
+             ids: Optional[List[int]] = None) -> List[Dict[str, Any]]:
     """
     The queue, oldest first.
 
@@ -111,9 +123,20 @@ def eligible(limit: int = 500, city: str = "", source: str = "") -> List[Dict[st
     version passed it straight to SQL, so asking for two eligible prospects
     read the two oldest rows, found both ineligible, and reported that there
     was nobody to write to while twelve people waited behind them.
+
+    `ids` narrows the queue to rows the user pointed at -- one row's send
+    button, or a set of ticked boxes. It narrows and never widens: a picked
+    row still has to pass every test below, because the checkbox says "this
+    one" and not "this one anyway".
     """
     where = ["email <> ''", "stage <> 'sent'"]
     params: List[Any] = []
+    if ids:
+        picked = [int(x) for x in ids][:500]
+        if not picked:
+            return []
+        where.append("id IN (" + ",".join("?" * len(picked)) + ")")
+        params.extend(picked)
     if city:
         where.append("lower(city) = ?")
         params.append(city.strip().lower())
@@ -137,9 +160,10 @@ def eligible(limit: int = 500, city: str = "", source: str = "") -> List[Dict[st
     return out
 
 
-def preview(limit: int = 500, city: str = "", source: str = "") -> Dict[str, Any]:
+def preview(limit: int = 500, city: str = "", source: str = "",
+            ids: Optional[List[int]] = None) -> Dict[str, Any]:
     """What a run would do, without doing any of it."""
-    ready = eligible(limit=limit, city=city, source=source)
+    ready = eligible(limit=limit, city=city, source=source, ids=ids)
     return {
         "ready": len(ready),
         "sent_today": sent_today(),
@@ -242,7 +266,7 @@ def send_one(row: Dict[str, Any], role: str = "", dry_run: bool = True,
 
 def run(role: str = "", dry_run: bool = True, limit: int = 25,
         cap: int = DEFAULT_CAP, gap: float = DEFAULT_GAP,
-        city: str = "", source: str = "",
+        city: str = "", source: str = "", ids: Optional[List[int]] = None,
         on_event: Optional[Event] = None,
         should_stop: Optional[Callable[[], bool]] = None) -> Dict[str, int]:
     """
@@ -251,7 +275,7 @@ def run(role: str = "", dry_run: bool = True, limit: int = 25,
     talk = on_event or (lambda *a, **k: None)
     tally = {"considered": 0, "sent": 0, "drafted": 0, "failed": 0, "skipped": 0}
 
-    queue = eligible(limit=limit, city=city, source=source)
+    queue = eligible(limit=limit, city=city, source=source, ids=ids)
     if not queue:
         talk("Nobody to write to: no prospect has a published or proved address "
              "that has not been written to already", "warn")

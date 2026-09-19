@@ -346,6 +346,125 @@ html[data-wallpaper='teal'] {
   box-shadow: var(--shadow-panel);
 }
 
+/* ---- Real glass -----------------------------------------------------------
+ *
+ * The tile above is translucent but flat: alpha over a gradient, no blur,
+ * because a results list puts sixty of them on screen and sixty backdrop
+ * filters stutters the scroll.
+ *
+ * A workspace is the other case. One page, a dozen surfaces, and the wallpaper
+ * behind them is the thing that makes it feel like a window rather than a
+ * dialog -- so here the alpha comes down to where the wallpaper actually shows
+ * through, and the blur is what keeps the text legible on top of it. Without
+ * the blur, transparency this low is just a low-contrast panel.
+ *
+ * Saturation is pushed past 100% for the same reason Apple's materials do it:
+ * blurring averages colour towards grey, and the boost puts back the tint the
+ * average threw away. */
+.ic-glass {
+  background: rgba(10, 14, 28, 0.38);
+  -webkit-backdrop-filter: saturate(170%) blur(22px);
+  backdrop-filter: saturate(170%) blur(22px);
+  box-shadow: var(--shadow-panel), inset 0 0.5px 0 rgba(255, 255, 255, 0.14),
+    inset 0 -0.5px 0 rgba(0, 0, 0, 0.3);
+  transition: background var(--dur-base) var(--ease-apple-out);
+}
+.ic-glass-hover:hover {
+  background: rgba(14, 20, 38, 0.46);
+}
+
+/* The sheet a whole workspace sits on. Thinner than the panels it holds,
+ * because two sheets of the same darkness stacked on each other make an opaque
+ * wall and the wallpaper stops being visible at all. Most of the blur is spent
+ * here, once, so the panels above can be nearly clear and still readable. */
+.ic-shell {
+  background: rgba(8, 11, 22, 0.3);
+  -webkit-backdrop-filter: saturate(160%) blur(34px);
+  backdrop-filter: saturate(160%) blur(34px);
+  box-shadow: var(--shadow-panel), var(--tile-edge);
+}
+
+/* The console. Darker than the panels around it because it is a hole in the
+ * page rather than a surface on it -- but still glass, so the wallpaper moves
+ * behind the log. */
+.ic-glass-deep {
+  background: rgba(6, 9, 18, 0.52);
+  -webkit-backdrop-filter: saturate(150%) blur(26px);
+  backdrop-filter: saturate(150%) blur(26px);
+  box-shadow: var(--shadow-panel), inset 0 0.5px 0 rgba(255, 255, 255, 0.08);
+}
+
+/* ---- The few animations ---------------------------------------------------
+ *
+ * Four, and no more. Motion earns its place by telling you something you would
+ * otherwise have to check: that a row just arrived, that a run is still alive,
+ * that something is now selected. Anything that moves for decoration is noise
+ * on a page you sit in front of for an hour. */
+
+/* A row that has just been written by a live run, rather than one that was
+ * already there when the page loaded. */
+@keyframes ic-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.ic-row-in {
+  animation: ic-row-in 0.28s var(--ease-apple-out) both;
+}
+
+/* The bar during a run. A determinate bar that has not moved for forty seconds
+ * -- which is exactly what the pacing between two sends looks like -- is
+ * indistinguishable from a frozen one, so the fill breathes while it waits. */
+@keyframes ic-breathe {
+  0%,
+  100% {
+    opacity: 0.72;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.ic-breathe {
+  animation: ic-breathe 2.4s ease-in-out infinite;
+}
+
+/* A sheen that crosses the bar once every few seconds: the difference between
+ * "waiting" and "stopped", visible from across the room. */
+@keyframes ic-sheen {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+.ic-sheen::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 33%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.45),
+    transparent
+  );
+  animation: ic-sheen 2.2s var(--ease-apple-out) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ic-row-in,
+  .ic-breathe,
+  .ic-sheen::after {
+    animation: none;
+  }
+}
+
 /* The ribbon: chrome, not an object. It is attached to the window, so it has
  * no shadow to cast and nothing to lift out of -- the only edge it gets is a
  * hairline of light along the bottom, which is the join between the glass and

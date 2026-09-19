@@ -677,6 +677,11 @@ class CampaignIn(BaseModel):
     gap: float = sender.DEFAULT_GAP
     city: str = ""
     source: str = ""
+    # The rows the user pointed at: one send button, or a set of ticked boxes.
+    # Empty means "whoever is eligible", which is what the panel's own button
+    # has always meant. A picked row is still checked against every rule -- the
+    # checkbox chooses the order of the queue, not the safety of it.
+    ids: List[int] = []
 
 
 # Separate from `_discovery`: finding companies and writing to them are
@@ -704,6 +709,7 @@ def _run_campaign(spec: CampaignIn) -> None:
         tally = sender.run(
             role=spec.role, dry_run=spec.dry_run, limit=spec.limit,
             cap=spec.cap, gap=spec.gap, city=spec.city, source=spec.source,
+            ids=list(spec.ids or []),
             on_event=say, should_stop=lambda: bool(_campaign["cancel"]),
         )
         _campaign.update({k: tally.get(k, 0) for k in
@@ -727,6 +733,34 @@ def get_campaign_preview(limit: int = 500, city: str = "",
     return data
 
 
+def _why_nobody(picked: List[int]) -> str:
+    """
+    Why the run has nothing to do, said about the rows the user chose.
+
+    "Nobody is eligible" is a fair answer for the panel's own button, which
+    asks about the whole ledger. It is a useless answer for somebody who just
+    clicked send on one company and can see its address on the screen -- so
+    when rows were picked, each one gets its own sentence.
+    """
+    if not picked:
+        return ("Nobody is eligible. Only prospects with a published or proved "
+                "email address are written to, and every one of those has "
+                "already had a letter.")
+    reasons = []
+    for pid in picked[:8]:
+        row = store.get_prospect(int(pid))
+        if not row:
+            continue
+        why = sender.why_not(row)
+        if not why and sender.already_written_to(int(pid)):
+            why = "already written to"
+        reasons.append(str(row.get("company") or pid) + ": " + (why or "not eligible"))
+    if len(picked) > 8:
+        reasons.append("and " + str(len(picked) - 8) + " more")
+    return ("Nothing to send. " + "; ".join(reasons)) if reasons else (
+        "Those prospects are no longer on file.")
+
+
 @router.post("/campaign")
 def post_campaign(body: CampaignIn) -> Dict[str, Any]:
     if _campaign["running"]:
@@ -735,12 +769,11 @@ def post_campaign(body: CampaignIn) -> Dict[str, Any]:
         state = _gmail_state(force=True)
         if not state["ok"]:
             raise HTTPException(400, "Cannot send: " + str(state["reason"]))
-    ready = sender.eligible(limit=body.limit, city=body.city, source=body.source)
+    picked = list(body.ids or [])
+    ready = sender.eligible(limit=body.limit, city=body.city, source=body.source,
+                            ids=picked)
     if not ready:
-        raise HTTPException(
-            400, "Nobody is eligible. Only prospects with a published or proved "
-                 "email address are written to, and every one of those has "
-                 "already had a letter.")
+        raise HTTPException(400, _why_nobody(picked))
 
     _campaign.update({
         "running": True,
@@ -845,6 +878,41 @@ def remove_prospect(prospect_id: int) -> Dict[str, Any]:
     store.delete_prospect(prospect_id)
     store.log_event("Removed " + row["company"], phase="prospects", level="warn")
     return {"removed": True}
+
+
+class ProspectIds(BaseModel):
+    ids: List[int] = []
+
+
+@router.post("/prospects/remove")
+def remove_prospects(body: ProspectIds) -> Dict[str, Any]:
+    """
+    Drop a ticked set in one request.
+
+    One DELETE per row would work and would also mean thirty round trips and a
+    table that repaints thirty times; worse, a failure halfway leaves the user
+    guessing which half went. A row that was already gone is not an error here
+    -- the user asked for it to be absent, and it is.
+
+    Only the prospect goes. Its documents stay: they are the record of what an
+    employer was actually sent, and that record does not become untrue because
+    the lead was tidied away.
+    """
+    gone, names = 0, []
+    for pid in list(body.ids or [])[:500]:
+        row = store.get_prospect(int(pid))
+        if row is None:
+            continue
+        if store.delete_prospect(int(pid)):
+            gone += 1
+            names.append(str(row.get("company") or ""))
+    if gone:
+        store.log_event(
+            "Removed " + str(gone) + " prospect" + ("s" if gone != 1 else "")
+            + ": " + ", ".join(n for n in names[:6] if n)
+            + (" and more" if len(names) > 6 else ""),
+            phase="prospects", level="warn")
+    return {"removed": gone}
 
 
 @router.get("/events")

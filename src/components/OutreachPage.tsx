@@ -166,6 +166,20 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
   const [error, setError] = useState('');
   const [draft, setDraft] = useState({ ...EMPTY_DRAFT });
   const [showAdd, setShowAdd] = useState(false);
+  const [hunt, setHunt] = useState({
+    profession: '', city: '', company: '', count: 8, keyword: '', limit: 60,
+  });
+  /*
+   * Two engines, because the two jobs are different jobs.
+   *
+   * Sweep reads employers' own websites: a whole city in one go, nothing to
+   * pay, hundreds of published addresses an hour, and no name attached to
+   * most of them. Research spends a model on a handful of companies and comes
+   * back with the person. Breadth first, then depth on what breadth missed --
+   * so Sweep is the default.
+   */
+  const [engine, setEngine] = useState<'fast' | 'deep'>('fast');
+  const [hunting, setHunting] = useState(false);
   const consoleRef = useRef<HTMLDivElement | null>(null);
 
   const loadOverview = useCallback(async () => {
@@ -271,10 +285,103 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
     }
   };
 
+  const enrichProspect = async (id: number) => {
+    setError('');
+    setHunting(true);
+    try {
+      const res = await fetch(`${BACKEND}/api/outreach/prospects/${id}/enrich`, { method: 'POST' });
+      if (!res.ok) {
+        const detail = await res.json().catch(() => ({}));
+        throw new Error(detail.detail || 'That lookup could not be started.');
+      }
+    } catch (err) {
+      setHunting(false);
+      setError(err instanceof Error ? err.message : 'That lookup could not be started.');
+    }
+  };
+
   const removeProspect = async (id: number) => {
     await fetch(`${BACKEND}/api/outreach/prospects/${id}`, { method: 'DELETE' });
     await Promise.all([loadProspects(page, query), loadOverview()]);
   };
+
+  /**
+   * Start a search and then leave it alone.
+   *
+   * The research runs on the server for a minute or two, so the page does not
+   * hold a request open waiting for it -- it starts the run, and the pipeline
+   * console narrates. This poll exists only to know when to reload the table.
+   */
+  const startHunt = async () => {
+    const fast = engine === 'fast';
+    if (fast && !hunt.city.trim()) {
+      setError('Name a city to sweep.');
+      return;
+    }
+    if (!fast && !hunt.profession.trim() && !hunt.company.trim()) {
+      setError('Say what role you are looking for, or name a company.');
+      return;
+    }
+    setError('');
+    setHunting(true);
+    try {
+      const res = await fetch(`${BACKEND}/api/outreach/${fast ? 'harvest' : 'discover'}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(fast
+          ? { city: hunt.city, keyword: hunt.keyword, limit: hunt.limit }
+          : hunt),
+      });
+      if (!res.ok) {
+        const detail = await res.json().catch(() => ({}));
+        throw new Error(detail.detail || 'The search could not be started.');
+      }
+    } catch (err) {
+      setHunting(false);
+      setError(err instanceof Error ? err.message : 'The search could not be started.');
+    }
+  };
+
+  /** Call off a run in flight. It stops after the company it is reading. */
+  const stopHunt = async () => {
+    try {
+      await fetch(`${BACKEND}/api/outreach/discover/cancel`, { method: 'POST' });
+    } catch {
+      /* if the server is gone the run is gone with it */
+    }
+  };
+
+  useEffect(() => {
+    if (!hunting) return undefined;
+    const id = window.setInterval(async () => {
+      try {
+        const res = await fetch(`${BACKEND}/api/outreach/discover/status`);
+        const state = await res.json();
+        // A sweep fills the table for twenty minutes. Reloading it as it goes
+        // is the difference between watching it work and waiting for it.
+        setPage(1);
+        await Promise.all([loadProspects(1, query), loadOverview()]);
+        if (!state.running) {
+          setHunting(false);
+          if (state.error) setError(state.error);
+        }
+      } catch {
+        /* the server is restarting; the next tick will say so */
+      }
+    }, 3000);
+    return () => window.clearInterval(id);
+  }, [hunting, query, loadProspects, loadOverview]);
+
+  // What the search is doing right now, in the search panel, so the answer to
+  // "is this thing working" does not require changing tabs.
+  const huntLine = useMemo(() => {
+    for (let i = events.length - 1; i >= 0; i -= 1) {
+      if (events[i].phase === 'discovery' || events[i].phase === 'harvest') {
+        return events[i].message;
+      }
+    }
+    return '';
+  }, [events]);
 
   const connected = useMemo(
     () => Object.values(caps).filter((c) => c.ready).length,
@@ -338,6 +445,112 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
     if (section === 'prospects') {
       return (
         <div className="space-y-3">
+
+          {/*
+            * Finding leads is the first step of the pipeline, so it sits on top
+            * of the list it fills rather than behind a button somewhere else.
+            * Two fields do the work: the role you want and where you want it.
+            * Naming a company narrows the search to that company's own branches
+            * and subsidiaries -- and to nothing else, which is the part that
+            * takes enforcing.
+            */}
+          <div className="ic-panel rounded-2xl bg-[rgba(16,18,22,0.72)] p-3.5">
+            <div className="flex items-center gap-2 pb-2.5">
+              <Search className="w-4 h-4 text-[#0a84ff]" />
+              <h4 className="text-[13.5px] font-semibold tracking-[-0.01em] text-[#f5f5f7]">
+                Find leads
+              </h4>
+              <span className="hidden lg:inline text-[12px] text-[rgba(235,235,245,0.45)]">
+                {engine === 'fast'
+                  ? 'Every employer in a city, read off their own websites'
+                  : 'A few employers, researched down to the person who reads applications'}
+              </span>
+
+              {/* The choice is breadth or depth, so it is one control, not a
+                  settings page. */}
+              <div className="ml-auto flex rounded-lg bg-white/[0.06] border border-white/[0.09] p-0.5">
+                {([
+                  ['fast', 'Sweep', 'Hundreds of published addresses. Free.'],
+                  ['deep', 'Research', 'Names and titles. Costs a model call per company.'],
+                ] as const).map(([key, label, tip]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    title={tip}
+                    onClick={() => setEngine(key)}
+                    className={`px-2.5 py-1 rounded-[7px] text-[12px] font-medium transition-colors cursor-pointer ${
+                      engine === key
+                        ? 'bg-white/[0.14] text-[#f5f5f7]'
+                        : 'text-[rgba(235,235,245,0.52)] hover:text-[#f5f5f7]'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2.5">
+              {(engine === 'fast' ? ([
+                ['city', 'City to sweep', 'Osnabrueck'],
+                ['keyword', 'Kind of employer (optional)', 'Pflege, Bau, Hotel'],
+              ] as const) : ([
+                ['profession', 'Role you want', 'Kauffrau fuer Bueromanagement'],
+                ['city', 'City', 'Osnabrueck'],
+                ['company', 'Company (optional)', 'Lidl'],
+              ] as const)).map(([field, label, hint]) => (
+                <label key={field} className="block">
+                  <span className="block pb-1 text-[11.5px] text-[rgba(235,235,245,0.52)]">{label}</span>
+                  <input
+                    value={(hunt as unknown as Record<string, string>)[field]}
+                    onChange={(e) => setHunt({ ...hunt, [field]: e.target.value })}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && !hunting) startHunt(); }}
+                    placeholder={hint}
+                    className="w-full px-3 py-2 rounded-lg bg-white/[0.06] border border-white/[0.09] text-[13px] text-[#f5f5f7] placeholder:text-[rgba(235,235,245,0.32)] outline-none focus:border-white/25"
+                  />
+                </label>
+              ))}
+              <div className="flex items-end gap-2">
+                <label className="block w-[92px]">
+                  <span className="block pb-1 text-[11.5px] text-[rgba(235,235,245,0.52)]">How many</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={engine === 'fast' ? 800 : 20}
+                    value={engine === 'fast' ? hunt.limit : hunt.count}
+                    onChange={(e) => setHunt(engine === 'fast'
+                      ? { ...hunt, limit: Number(e.target.value) || 60 }
+                      : { ...hunt, count: Number(e.target.value) || 8 })}
+                    className="w-full px-3 py-2 rounded-lg bg-white/[0.06] border border-white/[0.09] text-[13px] text-[#f5f5f7] outline-none focus:border-white/25"
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={hunting ? stopHunt : startHunt}
+                  className={`flex-1 inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-lg text-[13px] font-semibold transition-colors cursor-pointer ${
+                    hunting
+                      ? 'bg-white/[0.10] hover:bg-white/[0.16] text-[#f5f5f7]'
+                      : 'bg-[#0a84ff] hover:bg-[#3b9bff] text-white'
+                  }`}
+                >
+                  {hunting
+                    ? <><Loader2 className="w-4 h-4 animate-spin" /> Stop</>
+                    : <><Building2 className="w-4 h-4" /> {engine === 'fast' ? 'Sweep city' : 'Find leads'}</>}
+                </button>
+              </div>
+            </div>
+
+            {hunting || huntLine ? (
+              <p className="pt-2.5 text-[12px] text-[rgba(235,235,245,0.52)] flex items-center gap-2">
+                {hunting ? <Activity className="w-3.5 h-3.5 text-[#0a84ff] shrink-0" /> : null}
+                <span className="truncate">
+                  {huntLine || 'Reading company websites'}
+                  {hunting ? ' - rows appear as they are found' : ''}
+                </span>
+              </p>
+            ) : null}
+          </div>
+
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative flex-1 min-w-[220px]">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[rgba(235,235,245,0.42)]" />
@@ -393,7 +606,7 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
           )}
 
           <div className="ic-panel rounded-2xl bg-[rgba(16,18,22,0.72)] overflow-hidden">
-            <div className="hidden md:grid grid-cols-[1.4fr_1.2fr_1.4fr_0.7fr_40px] gap-3 px-4 py-2.5 border-b border-white/[0.09] text-[11.5px] uppercase tracking-wide text-[rgba(235,235,245,0.52)]">
+            <div className="hidden md:grid grid-cols-[1.4fr_1.2fr_1.4fr_0.7fr_76px] gap-3 px-4 py-2.5 border-b border-white/[0.09] text-[11.5px] uppercase tracking-wide text-[rgba(235,235,245,0.52)]">
               <span>Company</span><span>Contact</span><span>Address</span><span>Stage</span><span />
             </div>
             {prospects.length === 0 ? (
@@ -407,7 +620,7 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
               prospects.map((p) => (
                 <div
                   key={p.id}
-                  className="grid grid-cols-1 md:grid-cols-[1.4fr_1.2fr_1.4fr_0.7fr_40px] gap-1 md:gap-3 px-4 py-2.5 border-b border-white/[0.07] last:border-0 hover:bg-white/[0.04] transition-colors"
+                  className="grid grid-cols-1 md:grid-cols-[1.4fr_1.2fr_1.4fr_0.7fr_76px] gap-1 md:gap-3 px-4 py-2.5 border-b border-white/[0.07] last:border-0 hover:bg-white/[0.04] transition-colors"
                 >
                   <div className="min-w-0">
                     <p className="text-[13.5px] font-semibold text-[#f5f5f7] truncate">{p.company}</p>
@@ -421,14 +634,28 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                     {p.email || 'no address yet'}
                   </div>
                   <div><StagePill stage={p.stage} /></div>
-                  <button
-                    type="button"
-                    onClick={() => removeProspect(p.id)}
-                    title="Remove this prospect"
-                    className="justify-self-start md:justify-self-end p-1.5 rounded-lg text-[rgba(235,235,245,0.42)] hover:text-rose-200 hover:bg-white/[0.08] transition-colors"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  <div className="justify-self-start md:justify-self-end flex items-center gap-0.5">
+                    {/* Look this one company up again. The same reading a search
+                      * does, for a row typed in by hand, or found before the
+                      * contact stage existed, or whose careers page has moved. */}
+                    <button
+                      type="button"
+                      onClick={() => enrichProspect(p.id)}
+                      disabled={hunting}
+                      title={p.email ? 'Look up this company again' : 'Find the contact and address'}
+                      className="p-1.5 rounded-lg text-[rgba(235,235,245,0.42)] hover:text-[#0a84ff] hover:bg-white/[0.08] disabled:opacity-30 transition-colors cursor-pointer"
+                    >
+                      <Search className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => removeProspect(p.id)}
+                      title="Remove this prospect"
+                      className="p-1.5 rounded-lg text-[rgba(235,235,245,0.42)] hover:text-rose-200 hover:bg-white/[0.08] transition-colors cursor-pointer"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               ))
             )}

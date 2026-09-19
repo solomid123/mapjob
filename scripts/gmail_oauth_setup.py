@@ -79,14 +79,23 @@ def write_env(key: str, value: str) -> None:
     io.open(ENV_PATH, "w", encoding="utf-8").write("\n".join(out).rstrip("\n") + "\n")
 
 
-def free_port(preferred: int = 8765) -> int:
-    with socket.socket() as s:
+def bind_port(port: int = 8765) -> None:
+    """
+    The port is not negotiable.
+
+    A web-type OAuth client only accepts redirect URIs registered against it,
+    character for character -- this one is registered as http://127.0.0.1:8765/
+    -- so falling back to a free port would just trade a clear error here for
+    Google's "redirect_uri_mismatch" later.
+    """
+    with socket.socket() as probe:
         try:
-            s.bind(("127.0.0.1", preferred))
-            return preferred
-        except OSError:
-            s.bind(("127.0.0.1", 0))
-            return s.getsockname()[1]
+            probe.bind(("127.0.0.1", port))
+        except OSError as exc:
+            raise SystemExit(
+                f"Port {port} is busy, and the OAuth client is registered "
+                "for it. Close whatever is using it and run this again."
+            ) from exc
 
 
 class Catcher(http.server.BaseHTTPRequestHandler):
@@ -140,7 +149,8 @@ def main() -> int:
         print("on the OAuth consent screen if the app is left in Testing.")
         return 1
 
-    port = free_port()
+    port = 8765
+    bind_port(port)
     redirect_uri = f"http://127.0.0.1:{port}/"
     Catcher.state = secrets.token_urlsafe(24)
 

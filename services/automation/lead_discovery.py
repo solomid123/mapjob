@@ -46,6 +46,10 @@ API_ROOT = "https://api.parallel.ai/v1/tasks/runs"
 PROCESSOR = os.getenv("PARALLEL_PROCESSOR", "base")
 # One company, one page: a light processor reads it in about fifteen seconds.
 CONTACT_PROCESSOR = os.getenv("PARALLEL_CONTACT_PROCESSOR", "lite")
+# Finding the people takes more reading than finding the mailbox: the name of
+# whoever runs HR is on the imprint, or the team page, or a press release, and
+# a single-lookup processor gives up after the first of those.
+PEOPLE_PROCESSOR = os.getenv("PARALLEL_PEOPLE_PROCESSOR", "base")
 POLL_SECONDS = 5
 TIMEOUT_SECONDS = int(os.getenv("PARALLEL_TIMEOUT", "420"))
 
@@ -217,6 +221,126 @@ def _list_prompt(profession: str, city: str, company: str, count: int) -> str:
     return "\n".join(lines)
 
 
+def _people_schema() -> Dict:
+    """
+    Stage two, the other way round: the people, not the mailbox.
+
+    Most companies never publish the mailbox of the person who reads
+    applications, and every one of them publishes that person's name --
+    on the imprint, the team page, the press release, the trade register.
+    A name plus the house convention is an address; a missing mailbox is
+    nothing. So this asks for what is actually there.
+    """
+    return {
+        "output_schema": {
+            "type": "json",
+            "json_schema": {
+                "type": "object",
+                "properties": {
+                    "email_domain": {
+                        "type": "string",
+                        "description": "The domain in the company's own staff email "
+                                       "addresses, e.g. example-gmbh.de. Empty if none is seen.",
+                    },
+                    "sample_email": {
+                        "type": "string",
+                        "description": "Any one staff email address published anywhere, "
+                                       "copied exactly, belonging to a named person rather "
+                                       "than to a department. Empty if none is published.",
+                    },
+                    "sample_email_person": {
+                        "type": "string",
+                        "description": "The full name of the person that sample address "
+                                       "belongs to. Empty if unknown.",
+                    },
+                    "people": {
+                        "type": "array",
+                        "description": "The people at this company who would read a "
+                                       "speculative application: head of HR, recruiter, "
+                                       "managing director, technical or engineering "
+                                       "manager, owner.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "first_name": {"type": "string", "description": "Given name only."},
+                                "last_name": {"type": "string", "description": "Family name only, including any particle such as van or von."},
+                                "job_title": {"type": "string", "description": "Their title as published."},
+                                "source_url": {"type": "string", "description": "Page their name was read from."},
+                            },
+                            "required": ["first_name", "last_name", "job_title", "source_url"],
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+                "required": ["email_domain", "sample_email", "sample_email_person", "people"],
+                "additionalProperties": False,
+            },
+        }
+    }
+
+
+def _people_prompt(company: str, website: str, city: str, count: int) -> str:
+    lines = [
+        f"Find the people at {company}"
+        + (f" ({website})" if website else "")
+        + (f", location {city}" if city else "")
+        + " who would read a speculative job application.",
+        f"Name up to {count} of them, best first: the head of HR or the recruiter "
+        "if the company has one, otherwise the managing director, the owner, or the "
+        "technical or engineering manager.",
+        "Read the imprint, the legal notice, the team or about page, the contact "
+        "page and any press release. Give each person's given name and family name "
+        "separately, and the page the name was read from.",
+        "Also report the domain the company's own staff email addresses use, and one "
+        "published address belonging to a named person, copied character for "
+        "character, together with whose it is. A department address such as info@ "
+        "or contact@ is not a person and does not count.",
+        "Do not invent an email address and do not construct one from a name. "
+        "Where something is not published, return an empty string. Do not write a "
+        "sentence explaining that it is missing.",
+    ]
+    return "\n".join(lines)
+
+
+def find_people(company: str, website: str = "", city: str = "",
+                count: int = 3) -> Dict[str, object]:
+    """Who to write to at one company, and how that company spells addresses."""
+    content = _run_task(
+        _people_prompt(company, website, city, count),
+        _people_schema(),
+        PEOPLE_PROCESSOR,
+    )
+    people: List[Dict[str, str]] = []
+    for row in content.get("people") or []:
+        if not isinstance(row, dict):
+            continue
+        first = _field(row.get("first_name"), 2)
+        last = _field(row.get("last_name"), 3)
+        if not last:
+            continue
+        people.append({
+            "first_name": first,
+            "last_name": last,
+            "job_title": _field(row.get("job_title"), 8),
+            "source_url": _clean(row.get("source_url")),
+        })
+
+    sample = _field(content.get("sample_email"), 1).lower()
+    if sample and not EMAIL_RE.match(sample):
+        sample = ""
+    domain = _field(content.get("email_domain"), 1).lower().lstrip("@").strip("/")
+    if sample and "@" in sample:
+        # The address is the evidence; the field naming the domain is a claim
+        # about it. Where they disagree, believe the address.
+        domain = sample.split("@", 1)[1]
+    return {
+        "people": people[:count],
+        "email_domain": domain,
+        "sample_email": sample,
+        "sample_person": _field(content.get("sample_email_person"), 5),
+    }
+
+
 def _contact_prompt(company: str, website: str, city: str, profession: str) -> str:
     lines = [
         f"On the official website of {company}"
@@ -370,23 +494,14 @@ def crawl_for_address(website: str) -> Dict[str, str]:
     return {"email": best, "source_url": "https://" + domain}
 
 
-def discover(
-    profession: str = "",
-    city: str = "",
-    company: str = "",
-    count: int = 8,
-    on_event: Optional[Event] = None,
-    on_lead: Optional[Callable[[Dict[str, str]], None]] = None,
-) -> List[Dict[str, str]]:
+def list_companies(profession: str = "", city: str = "", company: str = "",
+                   count: int = 8, on_event: Optional[Event] = None) -> List[Dict[str, str]]:
     """
-    Find employers for a role in a place, then find out who to write to.
+    Stage one on its own: who is out there, and where.
 
-    Blocking and slow on purpose: stage one takes a couple of minutes and each
-    company is then read separately, a few at a time. The caller runs this on a
-    thread and narrates it through the pipeline console -- a progress line is
-    what makes three minutes tolerable, and a spinner is what makes it feel
-    broken. `on_lead` fires per employer as it is finished, so the table fills
-    in while the search is still going rather than all at once at the end.
+    Split out because two pipelines want it and neither wants the other's
+    second stage. One asks the same API for a mailbox; the other asks for the
+    people and builds the mailbox from a naming pattern.
     """
     profession, city, company = profession.strip(), city.strip(), company.strip()
     count = max(1, min(int(count or 8), 20))
@@ -426,8 +541,37 @@ def discover(
     if not found:
         say("No employers matched that search", "warn")
         return []
-
     say(f"{len(found)} employer{'s' if len(found) != 1 else ''} to read")
+    return found
+
+
+def discover(
+    profession: str = "",
+    city: str = "",
+    company: str = "",
+    count: int = 8,
+    on_event: Optional[Event] = None,
+    on_lead: Optional[Callable[[Dict[str, str]], None]] = None,
+) -> List[Dict[str, str]]:
+    """
+    Find employers for a role in a place, then find out who to write to.
+
+    Blocking and slow on purpose: stage one takes a couple of minutes and each
+    company is then read separately, a few at a time. The caller runs this on a
+    thread and narrates it through the pipeline console -- a progress line is
+    what makes three minutes tolerable, and a spinner is what makes it feel
+    broken. `on_lead` fires per employer as it is finished, so the table fills
+    in while the search is still going rather than all at once at the end.
+    """
+    profession, city, company = profession.strip(), city.strip(), company.strip()
+
+    def say(message: str, level: str = "info") -> None:
+        if on_event:
+            on_event(message, level)
+
+    found = list_companies(profession, city, company, count, on_event=on_event)
+    if not found:
+        return []
 
     leads: List[Dict[str, str]] = []
 

@@ -175,15 +175,18 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
     profession: '', city: '', company: '', count: 8, keyword: '', limit: 60,
   });
   /*
-   * Two engines, because the two jobs are different jobs.
+   * Three engines, because the three jobs are different jobs.
    *
    * Sweep reads employers' own websites: a whole city in one go, nothing to
    * pay, hundreds of published addresses an hour, and no name attached to
    * most of them. Research spends a model on a handful of companies and comes
-   * back with the person. Breadth first, then depth on what breadth missed --
-   * so Sweep is the default.
+   * back with whatever mailbox they printed. People goes after the mailbox
+   * nobody printed: it finds the person who reads applications, works out how
+   * the company spells addresses, and has the company's own mail server
+   * confirm the one that person must have. Slowest, dearest, and the only one
+   * that reaches a named human at a firm with nothing but a web form.
    */
-  const [engine, setEngine] = useState<'fast' | 'deep'>('fast');
+  const [engine, setEngine] = useState<'fast' | 'deep' | 'people'>('fast');
   const [hunting, setHunting] = useState(false);
   const consoleRef = useRef<HTMLDivElement | null>(null);
 
@@ -329,8 +332,9 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
     }
     setError('');
     setHunting(true);
+    const route = engine === 'fast' ? 'harvest' : engine === 'people' ? 'contacts' : 'discover';
     try {
-      const res = await fetch(`${BACKEND}/api/outreach/${fast ? 'harvest' : 'discover'}`, {
+      const res = await fetch(`${BACKEND}/api/outreach/${route}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(fast
@@ -488,7 +492,9 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
               <span className="hidden lg:inline text-[12px] text-[rgba(235,235,245,0.45)]">
                 {engine === 'fast'
                   ? 'Every employer in a city, read off their own websites'
-                  : 'A few employers, researched down to the person who reads applications'}
+                  : engine === 'people'
+                    ? 'The person who reads applications, and their address proved by the company mail server'
+                    : 'A few employers, researched down to whatever mailbox they publish'}
               </span>
 
               {/* The choice is breadth or depth, so it is one control, not a
@@ -496,7 +502,8 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
               <div className="ml-auto flex rounded-lg bg-white/[0.06] border border-white/[0.09] p-0.5">
                 {([
                   ['fast', 'Sweep', 'Hundreds of published addresses. Free.'],
-                  ['deep', 'Research', 'Names and titles. Costs a model call per company.'],
+                  ['deep', 'Research', 'Whatever mailbox the company publishes.'],
+                  ['people', 'People', 'Finds the person, builds their address from the company naming pattern, proves it by SMTP. Slowest and dearest.'],
                 ] as const).map(([key, label, tip]) => (
                   <button
                     key={key}
@@ -560,7 +567,10 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                 >
                   {hunting
                     ? <><Loader2 className="w-4 h-4 animate-spin" /> Stop</>
-                    : <><Building2 className="w-4 h-4" /> {engine === 'fast' ? 'Sweep city' : 'Find leads'}</>}
+                    : <><Building2 className="w-4 h-4" /> {
+                        engine === 'fast' ? 'Sweep city'
+                          : engine === 'people' ? 'Find people' : 'Find leads'
+                      }</>}
                 </button>
               </div>
             </div>
@@ -671,7 +681,7 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                     * operator has to be able to tell a catch-all domain from a
                     * mail server that was simply having a bad morning. */}
                   <div
-                    className={`min-w-0 text-[13px] truncate ${EMAIL_TINT[p.email_status] || ''}`}
+                    className={`min-w-0 text-[13px] flex items-center gap-1.5 ${EMAIL_TINT[p.email_status] || ''}`}
                     title={p.verify_reason
                       ? `${p.email_status}: ${p.verify_reason}`
                       : p.email ? 'not checked yet' : ''}
@@ -680,16 +690,35 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                       * from. When the page it was read off is known, the
                       * address links to it, so checking one is a click rather
                       * than a search. */}
-                    {p.email
-                      ? (p.source_url
-                          ? <a
-                              href={p.source_url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="hover:underline underline-offset-2"
-                            >{p.email}</a>
-                          : p.email)
-                      : 'no address yet'}
+                    <span className="truncate">
+                      {p.email
+                        ? (p.source_url
+                            ? <a
+                                href={p.source_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="hover:underline underline-offset-2"
+                              >{p.email}</a>
+                            : p.email)
+                        : 'no address yet'}
+                    </span>
+                    {/* Where the address came from, never left to be inferred
+                      * from a colour. "Guess" is an address this app built out
+                      * of a person's name that no mail server has confirmed;
+                      * it looks exactly like a real one, which is precisely
+                      * why it has to say so. */}
+                    {p.email_kind === 'inferred' ? (
+                      <span className="shrink-0 px-1 rounded text-[10px] uppercase tracking-wide bg-amber-400/15 text-amber-200/90">
+                        guess
+                      </span>
+                    ) : p.email_kind === 'pattern' ? (
+                      <span
+                        className="shrink-0 px-1 rounded text-[10px] uppercase tracking-wide bg-emerald-400/15 text-emerald-200/90"
+                        title="Built from the company naming pattern and accepted by its mail server"
+                      >
+                        proved
+                      </span>
+                    ) : null}
                   </div>
                   <div><StagePill stage={p.stage} /></div>
                   <div className="justify-self-start md:justify-self-end flex items-center gap-0.5">

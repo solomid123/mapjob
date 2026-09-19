@@ -46,6 +46,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, Dict, List, Optional, Tuple
 
+from services.automation.config import load_env
+
 try:
     import dns.resolver  # type: ignore
 except Exception:  # noqa: BLE001 - without DNS the module still answers, less
@@ -87,14 +89,26 @@ DISPOSABLE = {
     "dispostable.com", "maildrop.cc", "temp-mail.org", "fakeinbox.com",
 }
 
-# The envelope sender used while asking. It has to be an address whose domain
-# resolves -- a server asked by <> hangs up, as the first attempt at this found
-# out -- and it should be the address that will actually write, because that is
-# the truthful answer to "who is asking".
-PROBE_FROM = (os.getenv("OUTREACH_FROM")
-              or os.getenv("GMAIL_ADDRESS")
-              or os.getenv("GOOGLE_LOGIN_EMAIL")
-              or "")
+def probe_from() -> str:
+    """
+    The envelope sender used while asking.
+
+    It has to be an address whose domain resolves -- a server asked by <>
+    hangs up, as the first attempt at this found out -- and it should be the
+    address that will actually write, because that is the truthful answer to
+    "who is asking".
+
+    Read on every call, not once at import. As a module constant it was
+    captured before anything had loaded .env, and whether it held the address
+    or an empty string came down to which module a caller happened to import
+    first. Every proof in a whole pipeline run came back "no sending address
+    is configured" for that reason alone.
+    """
+    load_env()
+    return (os.getenv("OUTREACH_FROM")
+            or os.getenv("GMAIL_ADDRESS")
+            or os.getenv("GOOGLE_LOGIN_EMAIL")
+            or "").strip()
 
 SMTP_TIMEOUT = 10
 DNS_TIMEOUT = 5
@@ -199,12 +213,13 @@ def _probe(host: str, domain: str, address: str) -> Tuple[str, str, Optional[boo
     Returns (status, reason, catch_all). The catch-all question is asked once
     per domain and remembered, because the answer is about the domain.
     """
-    if not PROBE_FROM:
+    sender = probe_from()
+    if not sender:
         return "unknown", "no sending address is configured to ask from", None
     try:
         with smtplib.SMTP(host, 25, timeout=SMTP_TIMEOUT) as server:
-            server.ehlo(PROBE_FROM.split("@", 1)[-1] or "localhost")
-            server.mail(PROBE_FROM)
+            server.ehlo(sender.split("@", 1)[-1] or "localhost")
+            server.mail(sender)
 
             # The real recipient goes first. Asking the invented one first
             # spends the server goodwill on a question about nobody: a mail
@@ -296,6 +311,109 @@ def verify(address: str, allow_smtp: bool = True) -> Dict[str, object]:
     if status == "valid" and out["role"]:
         score = 98  # a role mailbox that exists is the best destination there is
     out.update(status=status, reason=reason, score=score, catch_all=catch_all)
+    return out
+
+
+def pick_existing(candidates: List[str]) -> Dict[str, object]:
+    """
+    Several guesses at one person's address; which one, if any, is real.
+
+    The catch-all question comes first here, and that is the opposite of what
+    verify() does, on purpose. Asking the real recipient first is right when
+    there is a real recipient: it spends the server's goodwill on the question
+    that matters. But these are all guesses. On a domain that accepts
+    everything, the first one would come back accepted and get filed as this
+    person's address -- a fabricated mailbox, delivered to nobody, with a
+    green tick beside it. Better to learn in one question that the domain
+    cannot answer, and say so.
+
+    Candidates are asked in order on one connection and the first acceptance
+    wins, because a person has one address and the rest of the list is noise
+    the server should never be asked about.
+    """
+    ordered = [c for c in (candidates or []) if c and SYNTAX.match(c)]
+    out: Dict[str, object] = {
+        "email": "", "status": "unknown", "score": 0, "reason": "",
+        "tried": 0, "catch_all": None,
+    }
+    if not ordered:
+        out["reason"] = "no candidate address could be built from that name"
+        return out
+
+    domain = ordered[0].split("@", 1)[1]
+    if domain in FREE_PROVIDERS or domain in DISPOSABLE:
+        out.update(reason="a personal mailbox provider, which cannot be guessed at")
+        return out
+    hosts = mx_hosts(domain)
+    if not hosts:
+        out.update(status="invalid", reason="the domain has nowhere to deliver mail")
+        return out
+    sender = probe_from()
+    if not sender:
+        out["reason"] = "no sending address is configured to ask from"
+        return out
+
+    with _lock_for(domain):
+        with _domain_lock:
+            known = _catchall_cache.get(domain)
+        try:
+            with smtplib.SMTP(hosts[0], 25, timeout=SMTP_TIMEOUT) as server:
+                server.ehlo(sender.split("@", 1)[-1] or "localhost")
+                server.mail(sender)
+
+                if known is None:
+                    code, message = server.rcpt(_random_local() + "@" + domain)
+                    raw = (message.decode("utf-8", "replace")
+                           if isinstance(message, bytes) else str(message))
+                    text = IP_RE.sub("this machine", raw)[:120].replace("\n", " ")
+                    if code in (250, 251):
+                        known = True
+                    elif 400 <= code < 500 or REFUSED_US.search(text):
+                        # The server is not answering questions from here, so
+                        # nothing it says about the guesses would mean anything.
+                        out.update(reason="the mail server refuses this machine, "
+                                          "so a guessed address cannot be checked")
+                        return out
+                    else:
+                        known = False
+                    with _domain_lock:
+                        _catchall_cache[domain] = known
+                out["catch_all"] = known
+                if known:
+                    out.update(status="risky", score=35,
+                               reason="the domain accepts every address, so no guess "
+                                      "can be told from another")
+                    out["email"] = ordered[0]
+                    return out
+
+                for address in ordered:
+                    out["tried"] = int(out["tried"]) + 1
+                    code, message = server.rcpt(address)
+                    raw = (message.decode("utf-8", "replace")
+                           if isinstance(message, bytes) else str(message))
+                    text = IP_RE.sub("this machine", raw)[:120].replace("\n", " ")
+                    if code in (250, 251):
+                        out.update(email=address, status="valid", score=90,
+                                   reason="the mail server accepts this recipient "
+                                          "and rejects invented ones")
+                        return out
+                    if 400 <= code < 500 or re.search(r"\b[45]\.7\.\d+\b", text):
+                        # Tarpitted partway down the list. Everything after
+                        # this point would be refused whatever its truth.
+                        out.update(reason="the mail server stopped answering after "
+                                          + str(out["tried"]) + " questions")
+                        return out
+                    time.sleep(0.4)  # pacing, so the server does not decide this is an attack
+        except (smtplib.SMTPServerDisconnected, smtplib.SMTPConnectError, OSError) as exc:
+            out["reason"] = ("the mail server did not finish the conversation ("
+                             + type(exc).__name__ + ")")
+            return out
+        except Exception as exc:  # noqa: BLE001
+            out["reason"] = "could not ask: " + type(exc).__name__
+            return out
+
+    out.update(status="invalid", score=0,
+               reason="the mail server rejected every spelling of that name")
     return out
 
 

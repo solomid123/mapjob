@@ -21,6 +21,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from services.automation import contact_pipeline as contacts
 from services.automation import lead_discovery as discovery
 from services.automation import outreach_store as store
 from services.automation import site_harvest as harvester
@@ -210,6 +211,85 @@ def post_discover(body: DiscoverIn) -> Dict[str, Any]:
         "cancel": False,
     })
     threading.Thread(target=_run_discovery, args=(body,), daemon=True).start()
+    return {"started": True, "label": _discovery["label"]}
+
+
+def _run_contacts(spec: DiscoverIn) -> None:
+    """
+    The pattern engine: companies, the people in them, the address proved.
+
+    Every lead is filed with how its address was arrived at, because the whole
+    pipeline turns on that distinction. `published` was printed by the
+    employer. `pattern` was constructed from a person's name and then accepted
+    by the employer's own mail server. `inferred` was constructed and not
+    accepted -- a hypothesis with a name attached, which nothing downstream
+    may send to.
+    """
+    label = spec.company or spec.profession
+    store.log_event("Finding people at companies hiring " + label
+                    + (" in " + spec.city if spec.city else ""), phase="contacts")
+    tally = {"created": 0}
+
+    def keep(lead: Dict[str, Any]) -> None:
+        row, was_new = store.upsert_prospect(lead, source="pattern")
+        tally["created"] += 1 if was_new else 0
+        store.update_prospect(row["id"], {
+            "email_kind": lead.get("email_kind", ""),
+            "verify_reason": lead.get("verify_reason", ""),
+            "verify_score": int(lead.get("verify_score") or 0),
+            "email_status": lead.get("email_status", "unknown"),
+            # A proved address is the only one that may skip ahead; a guess
+            # waits at `new` where the operator can see it has not been checked.
+            "stage": "verified" if lead.get("email_status") == "valid" else "new",
+        })
+        who = lead.get("contact_name") or ""
+        store.log_event(
+            ("Added " if was_new else "Updated ") + str(lead.get("company"))
+            + (" - " + who if who else "")
+            + (" - " + str(lead.get("email")) if lead.get("email") else " - no address"),
+            phase="contacts", prospect_id=row["id"],
+        )
+
+    try:
+        result = contacts.run(
+            profession=spec.profession, city=spec.city, company=spec.company,
+            count=spec.count,
+            on_event=lambda msg, level="info": store.log_event(
+                msg, phase="contacts", level=level),
+            on_lead=keep,
+            should_stop=lambda: bool(_discovery["cancel"]),
+        )
+        store.log_event(
+            "Finished: " + str(result["proved"]) + " addresses proved, "
+            + str(result["guessed"]) + " unproved, " + str(tally["created"]) + " new",
+            phase="contacts",
+        )
+    except Exception as exc:  # noqa: BLE001 - the console is where this belongs
+        _discovery["error"] = str(exc)
+        store.log_event("Search failed: " + str(exc), phase="contacts", level="error")
+    finally:
+        _discovery["running"] = False
+        _discovery["cancel"] = False
+
+
+@router.post("/contacts")
+def post_contacts(body: DiscoverIn) -> Dict[str, Any]:
+    if not discovery.is_configured():
+        raise HTTPException(400, "Set PARALLEL_API_KEY in .env to search for people.")
+    if not (body.profession.strip() or body.company.strip()):
+        raise HTTPException(400, "Give a role to search for, or a company to search within.")
+    if _discovery["running"]:
+        raise HTTPException(409, "Already searching for " + str(_discovery["label"]) + ".")
+
+    _discovery.update({
+        "running": True,
+        "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "label": body.company or body.profession,
+        "error": "",
+        "engine": "people",
+        "cancel": False,
+    })
+    threading.Thread(target=_run_contacts, args=(body,), daemon=True).start()
     return {"started": True, "label": _discovery["label"]}
 
 

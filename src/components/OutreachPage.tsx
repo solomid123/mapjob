@@ -231,7 +231,6 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
    * hundred letters because somebody clicked the wrong thing.
    */
   const [sendRole, setSendRole] = useState('');
-  const [sendLimit, setSendLimit] = useState(25);
   const [live, setLive] = useState(false);
   const [sendPreview, setSendPreview] = useState<SendPreview | null>(null);
   const [campaign, setCampaign] = useState<CampaignState | null>(null);
@@ -472,21 +471,18 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
    * the click, so the two buttons cannot be confused for one another by a
    * stale render: "Draft them" always drafts, whatever the toggle says.
    *
-   * `ids` is how one row's send button and the bulk bar reach the same code.
-   * There is exactly one place in this app that decides whether mail leaves,
-   * and it is this call: a second path for "just this one" would be a second
-   * place for the safety rules to be forgotten.
+   * `ids` is who. There is no run without one: the app does not decide who to
+   * write to any more, the table does, which is why the send controls live
+   * over the table and this page only reports.
    */
-  const startCampaign = async (asLive: boolean, ids: number[] = []) => {
+  const startCampaign = async (asLive: boolean, ids: number[]) => {
     setError('');
     try {
       const res = await fetch(`${BACKEND}/api/outreach/campaign`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          role: sendRole, dry_run: !asLive,
-          limit: ids.length ? ids.length : sendLimit,
-          ids,
+          role: sendRole, dry_run: !asLive, limit: ids.length, ids,
         }),
       });
       if (!res.ok) {
@@ -495,8 +491,7 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
       }
       setSection('pipeline');
       setCampaign({
-        running: true, dry_run: !asLive, done: 0,
-        total: ids.length || sendLimit,
+        running: true, dry_run: !asLive, done: 0, total: ids.length,
         sent: 0, drafted: 0, failed: 0, skipped: 0, error: '',
       });
     } catch (err) {
@@ -890,51 +885,90 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
           )}
 
           {/*
-            * The bulk bar.
+            * The send bar.
             *
-            * It appears only when something is ticked, and it says the number
-            * out loud in both buttons, because "Send" and "Send 34" are
-            * different decisions and only one of them can be made by accident.
+            * This is where an application starts, because this is where the
+            * employers are: you read the row, you tick it, you send to it. The
+            * two things the letter needs that a row cannot tell you -- what
+            * you are asking for, and whether this is real -- live here, in
+            * sight of the table, rather than on the page that reports results.
             */}
-          {picked.size > 0 ? (
-            <div className="ic-glass ic-row-in rounded-2xl px-3.5 py-2.5 flex flex-wrap items-center gap-2.5">
-              <span className="text-[13px] text-[#f5f5f7]">
-                <span className="tabular-nums font-semibold">{picked.size}</span> selected
-              </span>
-              <button
-                type="button"
-                onClick={() => setPicked(new Set())}
-                className="text-[12.5px] text-[rgba(235,235,245,0.52)] hover:text-[#f5f5f7] transition-colors cursor-pointer"
-              >
-                Clear
-              </button>
-              <div className="flex-1" />
-              <button
-                type="button"
-                onClick={() => sendRows([...picked])}
-                disabled={rowBusy !== null || Boolean(campaign?.running)}
-                className={`rounded-xl px-3.5 py-1.5 text-[13px] font-semibold inline-flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors ${
-                  liveArmed
-                    ? 'bg-[#0a84ff] text-white hover:bg-[#0a84ff]/90'
-                    : 'bg-white/[0.1] text-[#f5f5f7] hover:bg-white/[0.16]'
-                }`}
-                title={liveArmed
-                  ? `Send ${picked.size} application${picked.size === 1 ? '' : 's'} for real`
-                  : 'Write the letters and file them. Arm the switch in Pipeline to send for real.'}
-              >
-                <Send className="w-3.5 h-3.5" />
-                {liveArmed ? `Send ${picked.size}` : `Draft ${picked.size}`}
-              </button>
-              <button
-                type="button"
-                onClick={() => removeRows([...picked])}
-                className="rounded-xl px-3.5 py-1.5 text-[13px] font-semibold bg-rose-500/15 text-rose-200 hover:bg-rose-500/25 cursor-pointer transition-colors inline-flex items-center gap-2"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                Delete {picked.size}
-              </button>
+          <div className="ic-glass rounded-2xl px-3.5 py-3 space-y-2.5">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <Send className="w-4 h-4 text-[#0a84ff] shrink-0" />
+              <input
+                value={sendRole}
+                onChange={(e) => setSendRole(e.target.value)}
+                placeholder="What you are asking for - Ausbildung Kaufmann fuer Bueromanagement"
+                className="flex-1 min-w-[240px] rounded-xl bg-white/[0.06] px-3 py-1.5 text-[13px] text-[#f5f5f7] placeholder:text-[rgba(235,235,245,0.3)] outline-none focus:bg-white/[0.09]"
+              />
+              {/* The one switch that decides whether mail leaves. It names the
+                * mailbox because "send for real" is meaningless until you know
+                * which account carries the consequences. */}
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={live}
+                  onChange={(e) => setLive(e.target.checked)}
+                  disabled={!sendPreview?.mailbox?.ok}
+                  className="accent-[#0a84ff] w-3.5 h-3.5 cursor-pointer disabled:cursor-not-allowed"
+                />
+                <span className="text-[12.5px] text-[rgba(235,235,245,0.62)]">
+                  Really send, from{' '}
+                  <span className="text-[#f5f5f7]">
+                    {sendPreview?.mailbox?.address || 'the connected mailbox'}
+                  </span>
+                </span>
+              </label>
             </div>
-          ) : null}
+
+            {picked.size === 0 ? (
+              <p className="text-[11.5px] text-[rgba(235,235,245,0.42)]">
+                Tick the employers you want to write to. Off the switch, the letters are
+                written and filed without being sent - one every 40 seconds when it is on,
+                up to {sendPreview?.cap ?? 40} a day. {sendPreview?.sent_today ?? 0} sent in
+                the last 24 hours.
+              </p>
+            ) : (
+              <div className="ic-row-in flex flex-wrap items-center gap-2.5">
+                <span className="text-[13px] text-[#f5f5f7]">
+                  <span className="tabular-nums font-semibold">{picked.size}</span> selected
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPicked(new Set())}
+                  className="text-[12.5px] text-[rgba(235,235,245,0.52)] hover:text-[#f5f5f7] transition-colors cursor-pointer"
+                >
+                  Clear
+                </button>
+                <div className="flex-1" />
+                <button
+                  type="button"
+                  onClick={() => sendRows([...picked])}
+                  disabled={rowBusy !== null || Boolean(campaign?.running)}
+                  className={`rounded-xl px-3.5 py-1.5 text-[13px] font-semibold inline-flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors ${
+                    liveArmed
+                      ? 'bg-[#0a84ff] text-white hover:bg-[#0a84ff]/90'
+                      : 'bg-white/[0.1] text-[#f5f5f7] hover:bg-white/[0.16]'
+                  }`}
+                  title={liveArmed
+                    ? `Send ${picked.size} application${picked.size === 1 ? '' : 's'} for real`
+                    : 'Write the letters and file them. Nothing is sent.'}
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  {liveArmed ? `Send ${picked.size}` : `Draft ${picked.size}`}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => removeRows([...picked])}
+                  className="rounded-xl px-3.5 py-1.5 text-[13px] font-semibold bg-rose-500/15 text-rose-200 hover:bg-rose-500/25 cursor-pointer transition-colors inline-flex items-center gap-2"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Delete {picked.size}
+                </button>
+              </div>
+            )}
+          </div>
 
           <div className="ic-glass rounded-2xl overflow-hidden">
             <div className="hidden md:grid grid-cols-[28px_1.4fr_1.2fr_1.4fr_0.7fr_104px] gap-3 px-4 py-2.5 border-b border-white/[0.09] text-[11.5px] uppercase tracking-wide text-[rgba(235,235,245,0.52)]">
@@ -1049,14 +1083,17 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                       type="button"
                       onClick={() => sendRows([p.id])}
                       disabled={!p.email || p.stage === 'sent'
+                        || p.email_status === 'invalid'
                         || rowBusy !== null || Boolean(campaign?.running)}
                       title={!p.email
                         ? 'No address to write to'
-                        : p.stage === 'sent'
-                          ? 'Already written to'
-                          : liveArmed
-                            ? `Send an application to ${p.company} now`
-                            : 'Write the letter and file it (nothing is sent)'}
+                        : p.email_status === 'invalid'
+                          ? 'The mail server said there is no such mailbox'
+                          : p.stage === 'sent'
+                            ? 'Already written to'
+                            : liveArmed
+                              ? `Send an application to ${p.company} now`
+                              : 'Write the letter and file it (nothing is sent)'}
                       className={`p-1.5 rounded-lg hover:bg-white/[0.08] disabled:opacity-25 disabled:cursor-not-allowed cursor-pointer transition-colors ${
                         liveArmed
                           ? 'text-[#0a84ff] hover:text-[#3b9bff]'
@@ -1117,146 +1154,68 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
       );
     }
 
+    /*
+     * Pipeline: a progress display, and nothing you can press.
+     *
+     * It used to carry the send panel -- the role, the count, the arm switch,
+     * the two buttons -- which made the page that reports on a run also the
+     * page that starts one. Choosing who to write to belongs where the people
+     * are, in Prospects. This page answers "how is it going", and the only
+     * control on it is Stop, which is a thing you want in one obvious place
+     * when a run is already moving.
+     */
     if (section === 'pipeline') {
-      const ready = sendPreview?.ready ?? 0;
-      const mailbox = sendPreview?.mailbox;
       const running = Boolean(campaign?.running);
       const done = campaign?.done ?? 0;
       const total = campaign?.total ?? 0;
       const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+      const finished = !running && total > 0;
 
       return (
         <div className="flex flex-col gap-3 h-full min-h-0">
 
-          {/*
-            * The send panel.
-            *
-            * Everything that can cause an irreversible act is on this one card
-            * and says what it will do in plain numbers: how many people, from
-            * which mailbox, and how many of today's allowance are left. The
-            * default button drafts; sending for real needs the switch thrown
-            * first, and the switch says what it costs.
-            */}
-          <div className="ic-glass rounded-2xl p-3.5 shrink-0">
-            <div className="flex items-center gap-2 pb-2.5">
-              <Send className="w-4 h-4 text-[#0a84ff]" />
-              <h4 className="text-[13.5px] font-semibold tracking-[-0.01em] text-[#f5f5f7]">
-                Send applications
-              </h4>
-              <span className="hidden lg:inline text-[12px] text-[rgba(235,235,245,0.45)]">
-                A tailored letter and your CV to every prospect with a published address
-              </span>
-            </div>
-
-            <div className="flex flex-wrap items-end gap-2.5">
-              <label className="flex-1 min-w-[240px]">
-                <span className="block pb-1 text-[11.5px] text-[rgba(235,235,245,0.52)]">
-                  What you are asking for
-                </span>
-                <input
-                  value={sendRole}
-                  onChange={(e) => setSendRole(e.target.value)}
-                  placeholder="Ausbildung Kaufmann fuer Bueromanagement"
-                  className="w-full rounded-xl bg-white/[0.06] px-3 py-2 text-[13.5px] text-[#f5f5f7] placeholder:text-[rgba(235,235,245,0.3)] outline-none focus:bg-white/[0.09]"
-                />
-              </label>
-              <label className="w-[110px]">
-                <span className="block pb-1 text-[11.5px] text-[rgba(235,235,245,0.52)]">
-                  How many
-                </span>
-                <input
-                  type="number"
-                  min={1}
-                  max={200}
-                  value={sendLimit}
-                  onChange={(e) => setSendLimit(Math.max(1, Number(e.target.value) || 1))}
-                  className="w-full rounded-xl bg-white/[0.06] px-3 py-2 text-[13.5px] text-[#f5f5f7] outline-none focus:bg-white/[0.09] tabular-nums"
-                />
-              </label>
-
-              {running ? (
-                <button
-                  type="button"
-                  onClick={stopCampaign}
-                  className="rounded-xl px-4 py-2 text-[13.5px] font-semibold bg-rose-500/20 text-rose-200 hover:bg-rose-500/30 cursor-pointer transition-colors"
-                >
-                  Stop
-                </button>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => startCampaign(false)}
-                    disabled={ready === 0}
-                    className="rounded-xl px-4 py-2 text-[13.5px] font-semibold bg-white/[0.1] text-[#f5f5f7] hover:bg-white/[0.16] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
-                  >
-                    Draft them
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => startCampaign(true)}
-                    disabled={ready === 0 || !live || !mailbox?.ok}
-                    className="rounded-xl px-4 py-2 text-[13.5px] font-semibold bg-[#0a84ff] text-white hover:bg-[#0a84ff]/90 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-colors inline-flex items-center gap-2"
-                  >
-                    <Send className="w-3.5 h-3.5" />
-                    Send for real
-                  </button>
-                </>
-              )}
-            </div>
-
-            <label className="mt-2.5 flex items-center gap-2 cursor-pointer w-fit">
-              <input
-                type="checkbox"
-                checked={live}
-                onChange={(e) => setLive(e.target.checked)}
-                className="accent-[#0a84ff] w-3.5 h-3.5 cursor-pointer"
-              />
-              <span className="text-[12.5px] text-[rgba(235,235,245,0.62)]">
-                Yes, really send these from{' '}
-                <span className="text-[#f5f5f7]">{mailbox?.address || 'the connected mailbox'}</span>
-                {' '}- one every 40 seconds, up to {sendPreview?.cap ?? 40} a day
-              </span>
-            </label>
-
-            <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px]">
-              <span className="text-[rgba(235,235,245,0.62)]">
-                <span className="text-[#f5f5f7] tabular-nums">{ready}</span> ready to write to
-              </span>
-              <span className="text-[rgba(235,235,245,0.62)]">
-                <span className="text-[#f5f5f7] tabular-nums">{sendPreview?.sent_today ?? 0}</span> sent
-                in the last 24 hours
-              </span>
-              <span className={mailbox?.ok ? 'text-emerald-200' : 'text-rose-200'}>
-                {mailbox?.ok
-                  ? `Gmail ready (${mailbox.how})`
-                  : `Gmail not ready: ${mailbox?.reason || 'unknown'}`}
-              </span>
-            </div>
-
-            <p className="mt-2 text-[11.5px] leading-relaxed text-[rgba(235,235,245,0.42)]">
-              Only prospects whose address the employer published, or the verifier proved,
-              are written to. A guessed address is never sent to and nobody is written to twice.
-            </p>
-
-            {running || total > 0 ? (
-              <div className="mt-3">
-                <div className="flex items-baseline justify-between pb-1.5">
-                  <span className="text-[12.5px] text-[#f5f5f7]">
-                    {campaign?.dry_run ? 'Drafting' : 'Sending'} {done} of {total}
-                  </span>
-                  <span className="text-[12px] text-[rgba(235,235,245,0.52)] tabular-nums">
-                    {campaign?.sent ? `${campaign.sent} sent` : ''}
-                    {campaign?.drafted ? `${campaign.drafted} drafted` : ''}
-                    {campaign?.failed ? ` - ${campaign.failed} failed` : ''}
-                    {campaign?.skipped ? ` - ${campaign.skipped} skipped` : ''}
-                  </span>
+          <div className="ic-glass rounded-2xl p-4 shrink-0">
+            {total === 0 && !running ? (
+              <div className="flex items-center gap-3">
+                <Send className="w-4 h-4 text-[rgba(235,235,245,0.35)] shrink-0" />
+                <div>
+                  <p className="text-[13.5px] text-[#f5f5f7]">Nothing running</p>
+                  <p className="text-[12px] text-[rgba(235,235,245,0.45)]">
+                    Pick the employers in Prospects and send from there. The progress shows up here.
+                  </p>
                 </div>
-                {/* A real send waits forty seconds between letters, so for
-                  * most of a run this bar does not move. A bar that has not
-                  * moved in forty seconds looks broken -- hence the sheen
-                  * crossing it while the run is alive, and the stillness the
-                  * moment it is not. */}
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center gap-3 pb-2.5">
+                  <span className="text-[19px] font-semibold tabular-nums text-[#f5f5f7]">
+                    {done}
+                    <span className="text-[rgba(235,235,245,0.4)] font-normal"> / {total}</span>
+                  </span>
+                  <span className="text-[13px] text-[rgba(235,235,245,0.62)]">
+                    {running
+                      ? (campaign?.dry_run ? 'writing letters' : 'sending applications')
+                      : (campaign?.dry_run ? 'letters written' : 'applications sent')}
+                  </span>
+                  <div className="flex-1" />
+                  {running ? (
+                    <button
+                      type="button"
+                      onClick={stopCampaign}
+                      className="rounded-xl px-4 py-1.5 text-[13px] font-semibold bg-rose-500/20 text-rose-200 hover:bg-rose-500/30 cursor-pointer transition-colors"
+                    >
+                      Stop
+                    </button>
+                  ) : (
+                    <span className="text-[12.5px] text-emerald-200">Finished</span>
+                  )}
+                </div>
+
+                {/* A real send waits forty seconds between letters, so for most
+                  * of a run this bar does not move. A bar that has not moved in
+                  * forty seconds looks broken -- hence the sheen crossing it
+                  * while the run is alive, and the stillness the moment it
+                  * is not. */}
                 <div className="h-1.5 rounded-full bg-white/[0.08] overflow-hidden relative">
                   <div
                     className={`h-full rounded-full transition-[width] duration-500 relative overflow-hidden ${
@@ -1265,8 +1224,24 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                     style={{ width: `${pct}%` }}
                   />
                 </div>
-              </div>
-            ) : null}
+
+                <div className="pt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] tabular-nums">
+                  {campaign?.sent ? <span className="text-emerald-200">{campaign.sent} sent</span> : null}
+                  {campaign?.drafted ? <span className="text-amber-200">{campaign.drafted} drafted</span> : null}
+                  {campaign?.failed ? <span className="text-rose-200">{campaign.failed} failed</span> : null}
+                  {campaign?.skipped ? <span className="text-[rgba(235,235,245,0.52)]">{campaign.skipped} skipped</span> : null}
+                  {finished ? (
+                    <button
+                      type="button"
+                      onClick={() => setSection('documents')}
+                      className="text-[#0a84ff] hover:underline underline-offset-2 cursor-pointer"
+                    >
+                      Read what went out
+                    </button>
+                  ) : null}
+                </div>
+              </>
+            )}
           </div>
 
           {/*

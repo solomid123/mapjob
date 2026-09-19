@@ -751,7 +751,7 @@ def _why_nobody(picked: List[int]) -> str:
         row = store.get_prospect(int(pid))
         if not row:
             continue
-        why = sender.why_not(row)
+        why = sender.why_not(row, picked=True)
         if not why and sender.already_written_to(int(pid)):
             why = "already written to"
         reasons.append(str(row.get("company") or pid) + ": " + (why or "not eligible"))

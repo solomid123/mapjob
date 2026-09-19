@@ -210,6 +210,19 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
     detachPcmRef.current = null;
     try { relayWsRef.current?.close(); } catch { /* noop */ }
     relayWsRef.current = null;
+    // The AssemblyAI socket used to be left open here, so switching engines
+    // kept a paid stream running with nobody reading it. Terminate asks for
+    // the closing summary and lets the session end cleanly at their end.
+    try {
+      const ws = wsRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'Terminate' }));
+        ws.close(1000, 'client stopped');
+      } else {
+        ws?.close();
+      }
+    } catch { /* noop */ }
+    wsRef.current = null;
     stopAudioGraph();
   }, [stopAudioGraph]);
 
@@ -225,7 +238,15 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
     }
   }, []);
 
-  const attachPcmGraph = useCallback((stream: MediaStream, onChunk: (b64: string) => void) => {
+  /**
+   * Tap the shared tab's audio and hand out 16 kHz mono PCM.
+   *
+   * Both shapes go to the callback because the two transports want different
+   * things: our own relay speaks JSON, so it takes the base64; AssemblyAI v3
+   * takes the bytes themselves. Converting once here beats decoding base64
+   * back into bytes fifty times a second.
+   */
+  const attachPcmGraph = useCallback((stream: MediaStream, onChunk: (b64: string, pcm: ArrayBuffer) => void) => {
     const audioTracks = stream.getAudioTracks();
     if (audioTracks.length === 0) {
       setHasAudioInput(false);
@@ -267,7 +288,7 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
         for (let i = 0; i < bytes.length; i += 0x8000) {
           bin += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + 0x8000)));
         }
-        onChunk(btoa(bin));
+        onChunk(btoa(bin), pcm.buffer);
       };
 
       src.connect(proc);
@@ -401,9 +422,25 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
 
     try {
       await ensureAudioInput(stream);
+      // encoding has to be stated: v3 defaults to pcm_s16le but says so only
+      // in the docs, and a mismatch is silent -- a connected socket that
+      // transcribes nothing. format_turns gives punctuated, cased turns.
+      //
+      // universal-3-6-pro is asked for by name because the socket otherwise
+      // opens on 3-5-pro, and the newer model is both better and multilingual,
+      // which a French interview needs. No language parameter: v3 ignores one,
+      // the model detects the language itself. "balanced" is the latency/
+      // accuracy trade AssemblyAI ships as the default for live speech.
       const ws = new WebSocket(
-        `wss://streaming.assemblyai.com/v3/ws?sample_rate=16000&format_turns=true&token=${encodeURIComponent(token)}`
+        'wss://streaming.assemblyai.com/v3/ws'
+        + '?sample_rate=16000'
+        + '&encoding=pcm_s16le'
+        + '&format_turns=true'
+        + '&speech_model=universal-3-6-pro'
+        + '&mode=balanced'
+        + `&token=${encodeURIComponent(token)}`
       );
+      ws.binaryType = 'arraybuffer';
       wsRef.current = ws;
       let gotTranscript = false;
 
@@ -441,14 +478,24 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
           }
         } catch { /* non-JSON keepalive */ }
       };
-      ws.onclose = () => {
-        if (!gotTranscript) void startBackendRelay(stream, 'google');
+      ws.onclose = (ev) => {
+        // 1000 is our own Terminate. Anything else without a single transcript
+        // means the socket never worked, and the interview is happening now:
+        // fall back rather than leave the transcript empty. The close reason
+        // is surfaced because "4003 insufficient funds" is not a bug to debug.
+        if (!gotTranscript && ev.code !== 1000) {
+          if (ev.reason) setEngineNote(`AssemblyAI closed the session (${ev.code}): ${ev.reason}. Using Google Speech.`);
+          void startBackendRelay(stream, 'google');
+        }
       };
 
+      // v3 takes raw PCM frames on the socket. The old client wrapped each
+      // chunk as {"audio_data": "<base64>"}, which is the v2 shape: v3 reads
+      // that JSON as audio, hears noise, and transcribes nothing.
       detachPcmRef.current?.();
-      detachPcmRef.current = attachPcmGraph(stream, (b64) => {
+      detachPcmRef.current = attachPcmGraph(stream, (_b64, pcm) => {
         const open = wsRef.current;
-        if (open && open.readyState === WebSocket.OPEN) open.send(JSON.stringify({ audio_data: b64 }));
+        if (open && open.readyState === WebSocket.OPEN) open.send(pcm);
       });
     } catch {
       void startBackendRelay(stream, 'google');
@@ -942,10 +989,13 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
                 aria-label="Transcription engine"
                 title="Transcription engine"
               >
-                <option value="google">⚡ Google Speech (Fast Tab Audio - Recommended)</option>
-                <option value="gemini">✨ Gemini Live (gemini-3.5-transcribe-live)</option>
-                <option value="assemblyai">🟣 AssemblyAI Real-Time (Tab Audio)</option>
-                <option value="browser">🎙️ Chrome Native WebSpeech (Microphone Only)</option>
+                {/* Named for what they do to the transcript, not for the
+                    vendor's product line: the choice is made seconds before a
+                    call, and a model number is no help then. */}
+                <option value="google">Google Speech — fastest</option>
+                <option value="assemblyai">AssemblyAI — most accurate</option>
+                <option value="gemini">Gemini Live — experimental</option>
+                <option value="browser">Chrome — microphone only</option>
               </select>
               <button
                 onClick={() => {

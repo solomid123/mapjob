@@ -1183,20 +1183,36 @@ def _candidate_summary() -> str:
 
 @app.get("/api/assembly/token")
 def assembly_token():
-    """Mint a short-lived AssemblyAI realtime token so the browser never sees the API key."""
+    """Mint a short-lived AssemblyAI streaming token so the browser never sees the API key.
+
+    This is the v3 streaming token, from streaming.assemblyai.com, which is
+    what `wss://streaming.assemblyai.com/v3/ws` accepts. It used to ask the v2
+    realtime endpoint for one, and the browser then presented that token to a
+    v3 socket, which refused it -- so picking AssemblyAI in the engine menu
+    always fell through to Google Speech without ever saying why.
+
+    The upstream error body is passed through rather than swallowed: "status
+    401" tells you to check the key, "status 402" tells you the account has no
+    streaming credit, and those are different problems.
+    """
     from services.automation.config import ASSEMBLYAI_API_KEY
     if not ASSEMBLYAI_API_KEY:
         return {"configured": False, "token": None, "error": "ASSEMBLYAI_API_KEY not configured in .env"}
     try:
-        r = requests.post(
-            "https://api.assemblyai.com/v2/realtime/token",
-            headers={"Authorization": ASSEMBLYAI_API_KEY, "Content-Type": "application/json"},
-            json={"expires_in_seconds": 600},
+        r = requests.get(
+            "https://streaming.assemblyai.com/v3/token",
+            headers={"Authorization": ASSEMBLYAI_API_KEY},
+            params={"expires_in_seconds": 600},
             timeout=10,
         )
         if r.status_code == 200:
             return {"configured": True, "token": r.json().get("token")}
-        return {"configured": False, "token": None, "error": f"AssemblyAI status {r.status_code}"}
+        detail = (r.text or "").strip()[:200]
+        return {
+            "configured": False,
+            "token": None,
+            "error": f"AssemblyAI status {r.status_code}{': ' + detail if detail else ''}",
+        }
     except Exception as e:
         return {"configured": False, "token": None, "error": str(e)}
 

@@ -79,6 +79,27 @@ JUNK_WORDS = (
 )
 JUNK_SUFFIX = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".css", ".js")
 
+# Addresses printed on a page to show what an address looks like. They read as
+# perfectly good leads -- name@capgemini.com is on the company's own domain and
+# scored 35 until this existed -- and a letter to one is a letter to nobody.
+# Matched whole, not as a substring: "info" contains no placeholder, but
+# "prenom.nom" is one.
+PLACEHOLDER_LOCALS = {
+    "name", "nom", "prenom", "vorname", "nachname", "firstname", "lastname",
+    "yourname", "your.name", "you", "user", "username", "email", "e-mail",
+    "mailadresse", "adresse", "address", "beispiel", "exemple", "example",
+    "sample", "test", "foo", "bar", "abc", "xxx", "muster", "mustermann",
+    "max.mustermann", "erika.mustermann", "john.doe", "jane.doe", "jean.dupont",
+    "prenom.nom", "vorname.nachname", "firstname.lastname", "first.last",
+    "nom.prenom", "ihrname", "votrenom",
+}
+# Domains that only ever appear in an illustration or a tracking snippet.
+PLACEHOLDER_DOMAINS = {
+    "example.com", "example.org", "example.net", "exemple.fr", "beispiel.de",
+    "domain.com", "yourdomain.com", "yourcompany.com", "email.com", "mail.com",
+    "test.com", "sentry.io", "wixpress.com", "localhost",
+}
+
 Event = Callable[..., None]
 
 
@@ -89,7 +110,35 @@ TITLE_NOISE = re.compile(
     r"welcome( to)?)\s*[-|:–•]?\s*", re.IGNORECASE)
 
 
-def _company_from_title(title: str) -> str:
+def _name_from_domain(domain: str) -> str:
+    """orpy-ingenierie.fr -> Orpy Ingenierie. Never wrong, occasionally ugly."""
+    label = (domain or "").split(".")[0]
+    words = [w for w in re.split(r"[-_]+", label) if w]
+    return " ".join(w if w.isupper() else w.capitalize() for w in words)[:70]
+
+
+def _title_is_the_name(head: str, domain: str) -> bool:
+    """
+    Does this title segment name the company, or describe what it sells?
+
+    A title is written for search engines, so a third of them open with the
+    trade rather than the firm: "Bureau d'etudes mecaniques et calculs" is the
+    whole of what orpy-ingenierie.fr puts in its <title>, and filed under that
+    name the row is unrecognisable. The domain is the one place the company's
+    own name is guaranteed to be, so a title that does not echo it has to earn
+    its place by being short enough to be a name rather than a sentence.
+    """
+    label = re.sub(r"[^a-z0-9]", "", (domain or "").split(".")[0].lower())
+    flat = re.sub(r"[^a-z0-9]", "", head.lower())
+    if label and flat and (label in flat or flat in label):
+        return True
+    if label and any(len(w) > 3 and w in label
+                     for w in re.split(r"[^a-z0-9]+", head.lower())):
+        return True
+    return len(head.split()) <= 3
+
+
+def _company_from_title(title: str, domain: str = "") -> str:
     """
     A usable company name out of a page title.
 
@@ -103,7 +152,10 @@ def _company_from_title(title: str) -> str:
     # A first segment of two characters is a separator accident, not a name.
     if len(head) < 3:
         head = text
-    return head[:70].strip()
+    head = head[:70].strip()
+    if domain and head and not _title_is_the_name(head, domain):
+        return _name_from_domain(domain)
+    return head or _name_from_domain(domain)
 
 
 def _fetch(url: str, timeout: int = PAGE_TIMEOUT) -> str:
@@ -185,6 +237,11 @@ def _score(email: str, domain: str) -> int:
     host = email.split("@", 1)[1].lower()
     if any(word in local for word in JUNK_WORDS):
         return -1
+    if local in PLACEHOLDER_LOCALS:
+        return -1
+    bare = host[4:] if host.startswith("www.") else host
+    if bare in PLACEHOLDER_DOMAINS or bare.endswith(".example"):
+        return -1
     score = 0
     if any(word == local or local.startswith(word) or local.endswith(word) for word in HIRING_WORDS):
         score += 100
@@ -254,22 +311,30 @@ def read_site(domain: str, polite_seconds: float = 0.25) -> Dict[str, object]:
     match = TITLE_RE.search(home or "")
     if match:
         title = _company_from_title(
-            re.sub(r"\s+", " ", re.sub("<[^>]+>", "", match.group(1))).strip())
+            re.sub(r"\s+", " ", re.sub("<[^>]+>", "", match.group(1))).strip(), domain)
 
-    # Links the homepage actually offers, in the order this module prefers
-    # them, then the guesses. Capped, because seven pages is a visit and
-    # seventy is a crawl.
+    # Every link the homepage actually offers first, and only then the guesses.
+    #
+    # The other way round -- guess /karriere, guess /jobs, guess /bewerbung,
+    # then look at the links -- is what this did, and on a French site it spent
+    # the whole ten-attempt budget on German 404s and never opened the
+    # /contact page the homepage had been linking all along. A link is
+    # evidence that the page exists; a guess is a hope that it does, and
+    # evidence goes first.
     hrefs = {urllib.parse.urljoin(base, h) for h in LINK_RE.findall(home or "")}
     same_site = [h for h in hrefs if _same_org(h, domain)]
     wanted: List[str] = []
+    guesses: List[str] = []
     for path in CANDIDATE_PATHS:
         token = path.strip("/")
-        for href in same_site:
-            if token in href.lower() and href not in wanted:
+        # Shortest first: /contact is the contact page, /contact/team/anne is a
+        # page on it, and the budget is small enough to care.
+        matches = sorted((h for h in same_site if token in h.lower()), key=len)
+        for href in matches[:2]:
+            if href not in wanted:
                 wanted.append(href)
-        guess = base + path
-        if guess not in wanted:
-            wanted.append(guess)
+        guesses.append(base + path)
+    wanted.extend(guess for guess in guesses if guess not in wanted)
     # Careers often live on their own subdomain and are linked from nowhere the
     # homepage parser can see, so the likely ones are tried directly.
     for sub in ("jobs", "karriere", "carriere", "recrutement", "careers", "emploi"):
@@ -351,7 +416,25 @@ PLATFORM_HOSTS = {
     "jimdo.com", "jimdofree.com", "wordpress.com", "blogspot.com",
     "tripadvisor.com", "tripadvisor.de", "tripadvisor.fr", "yelp.com",
     "booking.com", "airbnb.com", "amazon.de", "amazon.fr", "ebay.de",
+    # Business directories. The research stage hands one of these back when it
+    # cannot find a company's own site, and crawling it harvests the
+    # directory's own switchboard address as if it were the employer's.
+    "kompass.com", "fr.kompass.com", "de.kompass.com", "societe.com",
+    "pagesjaunes.fr", "verif.com", "infogreffe.fr", "europages.fr",
+    "europages.co.uk", "wlw.de", "firmenwissen.de", "northdata.de",
+    "dnb.com", "bloomberg.com", "crunchbase.com", "glassdoor.com",
+    "indeed.com", "indeed.fr", "stepstone.de", "welcometothejungle.com",
 }
+
+
+def is_platform(url_or_host: str) -> bool:
+    """A page about a company, rather than the company's own site."""
+    host = registrable(url_or_host)
+    if not host:
+        return True
+    return host in PLATFORM_HOSTS or any(
+        host.endswith("." + known) for known in PLATFORM_HOSTS
+    )
 
 
 def _overpass(query: str, timeout: int = 180) -> Dict[str, object]:
@@ -499,6 +582,11 @@ def harvest(targets: Iterable[Dict[str, str]],
             "website": "https://" + target["domain"],
             "city": target.get("city", ""),
             "email": best,
+            # Where it was read. An address without a page behind it is a claim;
+            # with one, anybody can check it in a second, including next month
+            # when the mailbox has been closed.
+            "source_url": "https://" + target["domain"],
+            "email_kind": "published",
             "_score": score,
             "_others": [e for e in (result.get("emails") or []) if e != best][:4],
         }

@@ -32,6 +32,8 @@ export interface Prospect {
   verify_reason?: string;
   verify_score?: number;
   verified_at?: string;
+  source_url?: string;
+  email_kind?: string;
   website: string;
   city: string;
   source: string;
@@ -674,7 +676,20 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                       ? `${p.email_status}: ${p.verify_reason}`
                       : p.email ? 'not checked yet' : ''}
                   >
-                    {p.email || 'no address yet'}
+                    {/* An address is a claim until you can see where it came
+                      * from. When the page it was read off is known, the
+                      * address links to it, so checking one is a click rather
+                      * than a search. */}
+                    {p.email
+                      ? (p.source_url
+                          ? <a
+                              href={p.source_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="hover:underline underline-offset-2"
+                            >{p.email}</a>
+                          : p.email)
+                      : 'no address yet'}
                   </div>
                   <div><StagePill stage={p.stage} /></div>
                   <div className="justify-self-start md:justify-self-end flex items-center gap-0.5">

@@ -32,6 +32,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, Dict, List, Optional
 
+from services.automation import site_harvest
 from services.automation.config import load_env
 
 load_env()
@@ -94,8 +95,14 @@ def _field(value: object, max_words: int) -> str:
     return text
 
 
-def _list_schema() -> Dict:
-    """Stage one asks a wide, shallow question: who, and where."""
+def _list_schema(count: int = 8) -> Dict:
+    """
+    Stage one asks a wide, shallow question: who, and where.
+
+    The count lives in the array's description rather than in `minItems`,
+    which Parallel rejects outright ("Unsupported keyword"). A description is
+    weaker than a constraint, which is why the prompt repeats it.
+    """
     return {
         "output_schema": {
             "type": "json",
@@ -104,7 +111,8 @@ def _list_schema() -> Dict:
                 "properties": {
                     "employers": {
                         "type": "array",
-                        "description": "One entry per employer.",
+                        "description": f"Exactly {count} entries, one per employer, "
+                                       "all different companies.",
                         "items": {
                             "type": "object",
                             "properties": {
@@ -167,18 +175,45 @@ def _list_prompt(profession: str, city: str, company: str, count: int) -> str:
         )
     else:
         lines.append(
-            f"List up to {count} real employers"
+            f"List {count} different small or medium companies"
             + (f" in or near {city}" if city else "")
             + f" that employ people in the role: {profession}."
         )
+        # "Up to N" is how this asked at first, and the honest reading of "up to
+        # eight" is one. A research model that has found a good first answer
+        # stops there unless the count is a requirement, so it is stated as one,
+        # twice, and the schema says it a third time.
         lines.append(
-            "Employers with their own careers pages only. Exclude job boards, "
-            "aggregators, staffing agencies and recruitment consultancies, unless the "
-            "role itself is a role at such a firm."
+            f"Return exactly {count} entries, each a different company. Keep looking "
+            f"until there are {count}; a shorter list is a wrong answer."
+        )
+        # Size, not fame. Asked plainly for employers hiring mechanical
+        # engineers near Paris, the research returns Safran, Thales, Airbus,
+        # Renault, Alstom and Naval Group: a correct answer to the question and
+        # a useless one to this app, because not one of those six publishes an
+        # address a person can write to. All six route applicants into an ATS
+        # form, and two of them block this crawler outright. The companies that
+        # read an unsolicited letter are the design offices and subcontractors
+        # nobody lists, so those are what is asked for, by headcount.
+        lines.append(
+            "Size matters more than fame here. Every company must be an independent "
+            "small or medium business, roughly 10 to 500 employees: a design office, "
+            "a subcontractor, a machine builder, a specialist manufacturer, a family "
+            "engineering firm. Do not list large listed groups, subsidiaries of one, "
+            "or any company with more than a thousand employees."
+        )
+        lines.append(
+            "These companies will receive an unsolicited application by email, so "
+            "prefer ones that print an email address on their website rather than "
+            "ones offering only a web form."
+        )
+        lines.append(
+            "Exclude job boards, aggregators, staffing agencies and recruitment "
+            "consultancies, unless the role itself is a role at such a firm."
         )
     if profession and company:
         lines.append(f"Prefer locations that hire for the role: {profession}.")
-    lines.append("For each one give its name, its careers page URL, and its city.")
+    lines.append("For each one give its name, its own website, and its city.")
     return "\n".join(lines)
 
 
@@ -293,13 +328,46 @@ def enrich(company: str, website: str = "", city: str = "", profession: str = ""
     email = _field(content.get("email"), 1).lower()
     if email and not EMAIL_RE.match(email):
         email = ""
+    source = _clean(content.get("careers_url")) or website
     return {
         "contact_name": _field(content.get("contact_name"), 5),
         "role": _field(content.get("contact_role"), 8),
         "email": email,
         "phone": _field(content.get("phone"), 6),
-        "website": _clean(content.get("careers_url")) or website,
+        "website": source,
+        "source_url": source if email else "",
     }
+
+
+def crawl_for_address(website: str) -> Dict[str, str]:
+    """
+    Second opinion on where to write, from the site itself.
+
+    The research stage reads what a search index knows about a company; the
+    crawler reads the company's own careers and contact pages. They disagree
+    often enough to be worth both: asked about Dassault Aviation the research
+    came back empty, and thirty seconds of crawling its careers page found
+    emploi@dassault-aviation.com printed on it.
+
+    Free, so it costs nothing to try on every company the research left
+    without an address. Sites behind a bot wall answer 403 to anything that is
+    not a real browser -- safran-group.com and alten.fr both do -- and those
+    stay empty until the browser fallback exists.
+    """
+    domain = site_harvest.registrable(website)
+    # A Kompass or Societe.com listing is a page about the company, and reading
+    # it harvests the directory's own switchboard address as though the
+    # employer had printed it.
+    if not domain or site_harvest.is_platform(domain):
+        return {}
+    try:
+        read = site_harvest.read_site(domain)
+    except Exception:  # noqa: BLE001 - a site that will not answer is not a failure
+        return {}
+    best = str(read.get("best") or "")
+    if not best:
+        return {}
+    return {"email": best, "source_url": "https://" + domain}
 
 
 def discover(
@@ -331,7 +399,9 @@ def discover(
         raise ValueError("Give a role to search for, or a company to search within.")
 
     say("Looking for employers" + (f" around {city}" if city else ""))
-    content = _run_task(_list_prompt(profession, city, company, count), _list_schema(), PROCESSOR)
+    content = _run_task(
+        _list_prompt(profession, city, company, count), _list_schema(count), PROCESSOR
+    )
 
     found: List[Dict[str, str]] = []
     dropped = 0
@@ -370,6 +440,8 @@ def discover(
             "website": item["website"],
             "city": item["city"],
             "source": "parallel",
+            "source_url": "",
+            "email_kind": "",
             "notes": f"Found for: {profession}" if profession else "",
         }
         say(f"Reading {item['company']}")
@@ -379,6 +451,20 @@ def discover(
             ).items() if v and k != "phone"})
         except Exception as exc:  # noqa: BLE001 - one unreadable site is not a failed search
             say(f"Could not read {item['company']}: {exc}", "warn")
+
+        # A company with no address is a row that cannot be written to, which
+        # is the one outcome this whole search exists to avoid. Before giving
+        # up on it, read the site directly -- it is free, it takes seconds, and
+        # it looks at pages rather than at what was written about them.
+        if not lead["email"]:
+            found = crawl_for_address(lead["website"] or item["website"])
+            if found:
+                lead.update(found)
+                say(f"Found {found['email']} on the site of {item['company']}")
+            else:
+                say(f"{item['company']} publishes no application address", "warn")
+        if lead["email"]:
+            lead["email_kind"] = "published"
         return lead
 
     # Four at a time: enough to keep a ten-company search inside a few minutes,

@@ -229,13 +229,16 @@ def upsert_prospect(data: Dict[str, Any], source: str = "manual") -> Tuple[Dict[
         if existing is None:
             conn.execute(
                 "INSERT INTO prospects (dedupe_key, company, contact_name, role, email,"
-                " email_status, website, city, source, stage, notes, created_at, updated_at)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " email_status, website, city, source, stage, notes, email_kind,"
+                " source_url, created_at, updated_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     key, company, contact, (data.get("role") or "").strip(), email,
                     (data.get("email_status") or ("guessed" if email else "unknown")),
                     (data.get("website") or "").strip(), (data.get("city") or "").strip(),
                     source, (data.get("stage") or "new"), (data.get("notes") or "").strip(),
+                    (data.get("email_kind") or ("published" if email else "")),
+                    (data.get("source_url") or "").strip(),
                     now, now,
                 ),
             )
@@ -245,7 +248,8 @@ def upsert_prospect(data: Dict[str, Any], source: str = "manual") -> Tuple[Dict[
             created = True
         else:
             merged = dict(existing)
-            for field in ("contact_name", "role", "email", "website", "city", "notes"):
+            for field in ("contact_name", "role", "email", "website", "city", "notes",
+                          "email_kind", "source_url"):
                 value = (data.get(field) or "").strip()
                 if value:
                     merged[field] = value
@@ -270,11 +274,15 @@ def upsert_prospect(data: Dict[str, Any], source: str = "manual") -> Tuple[Dict[
                     )
             conn.execute(
                 "UPDATE prospects SET contact_name=?, role=?, email=?, email_status=?,"
-                " website=?, city=?, notes=?, stage=?, updated_at=? WHERE id=?",
+                " website=?, city=?, notes=?, stage=?, email_kind=?, source_url=?,"
+                " updated_at=? WHERE id=?",
                 (
                     merged["contact_name"], merged["role"], merged["email"],
                     merged["email_status"], merged["website"], merged["city"],
-                    merged["notes"], merged["stage"], now, merged["id"],
+                    merged["notes"], merged["stage"],
+                    merged.get("email_kind") or ("published" if merged["email"] else ""),
+                    merged.get("source_url") or "",
+                    now, merged["id"],
                 ),
             )
             row = conn.execute(

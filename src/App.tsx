@@ -501,7 +501,7 @@ export function App() {
    */
   const handleSearchDestination = async (
     destination: string,
-    overrides?: { query?: string; lastPosted?: string },
+    overrides?: { query?: string; lastPosted?: string; coords?: { lat: number; lng: number } },
   ) => {
     if (!destination.trim()) return;
     const useQuery = overrides?.query ?? searchQuery;
@@ -557,48 +557,57 @@ export function App() {
 
     // 2. Geocode custom European destination via OpenStreetMap Nominatim
     try {
-      const q = encodeURIComponent(cleanDest);
-      const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${q}&format=json&limit=1`, {
-        headers: { 'User-Agent': 'MapJob/1.0' },
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data && data.length > 0) {
-          const lat = parseFloat(data[0].lat);
-          const lng = parseFloat(data[0].lon);
-
-          const location = await resolveLocationFromCoords(lat, lng);
-          if (requestId !== searchRequestRef.current) return;
-          const display = location.displayLabel || `${cleanDest}, ${location.country.toUpperCase()}`;
-          whereRef.current = cleanDest;
-          setActiveLocationLabel(display);
-          setMapBounds(null);
-          setMapCenterTarget({ lat, lng, zoom: 12 });
-
-          const fetchParams = {
-            where: location.name,
-            country: location.country,
-            centerLat: lat,
-            centerLng: lng,
-            defaultWhat: location.defaultWhat,
-            query: useQuery,
-            lastPosted: usePosted,
-            page: 1,
-          };
-          activeParamsRef.current = fetchParams;
-          setCurrentPage(2);
-
-          await loadFeedWithRefill(
-            { keywords: fetchParams.query, city: fetchParams.where },
-            () => requestId === searchRequestRef.current,
-            (liveJobs) => {
-              setJobs(liveJobs);
-              setIsLoadingJobs(false);
-            }
-          );
-          return;
+      // Unless the place was picked from the suggestions list, which already
+      // carries its coordinates. Looking the name up again would be a second
+      // chance to land somewhere else: "Amiens" is unambiguous, "Springfield"
+      // and "Neustadt" are not, and the point of choosing from a list is that
+      // the choice is the answer.
+      let lat = overrides?.coords?.lat ?? NaN;
+      let lng = overrides?.coords?.lng ?? NaN;
+      if (Number.isNaN(lat) || Number.isNaN(lng)) {
+        const q = encodeURIComponent(cleanDest);
+        const res = await fetch(
+          `https://nominatim.openstreetmap.org/search?q=${q}&format=json&limit=1`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.length > 0) {
+            lat = parseFloat(data[0].lat);
+            lng = parseFloat(data[0].lon);
+          }
         }
+      }
+
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        const location = await resolveLocationFromCoords(lat, lng);
+        if (requestId !== searchRequestRef.current) return;
+        const display = location.displayLabel || `${cleanDest}, ${location.country.toUpperCase()}`;
+        whereRef.current = cleanDest;
+        setActiveLocationLabel(display);
+        setMapBounds(null);
+        setMapCenterTarget({ lat, lng, zoom: 12 });
+
+        const fetchParams = {
+          where: location.name,
+          country: location.country,
+          centerLat: lat,
+          centerLng: lng,
+          defaultWhat: location.defaultWhat,
+          query: useQuery,
+          lastPosted: usePosted,
+          page: 1,
+        };
+        activeParamsRef.current = fetchParams;
+        setCurrentPage(2);
+
+        await loadFeedWithRefill(
+          { keywords: fetchParams.query, city: fetchParams.where },
+          () => requestId === searchRequestRef.current,
+          (liveJobs) => {
+            setJobs(liveJobs);
+            setIsLoadingJobs(false);
+          }
+        );
+        return;
       }
     } catch (err) {
       console.warn('Geocoding error:', err);
@@ -651,6 +660,25 @@ export function App() {
   const whereRef = useRef(searchBrief?.where ?? 'eindhoven');
 
   const handleStartFromBrief = (brief: SearchBrief) => {
+    /*
+     * The gate goes down before anything else, and this is the whole reason a
+     * typed town did not work.
+     *
+     * Answering the questionnaire sets the keywords, which the hub feed effect
+     * watches. That effect fires on the very next render -- while the town is
+     * still being geocoded -- takes the next search id for itself, and loads
+     * whichever hub `selectedCity` happens to hold. So the geocode came back a
+     * few hundred milliseconds later, found its id stale, and returned without
+     * moving the map or recording where it had been asked to go. Type "Amiens",
+     * land in Paris, and the saved brief says Paris too, because the only
+     * search that finished was the one nobody asked for.
+     *
+     * A ref rather than state: effects run after the render that state would
+     * schedule, so a flag set here is already up when the feed effect looks.
+     */
+    const isHub = CITIES.some((c) => c.id === brief.where);
+    pendingDestinationRef.current = isHub ? null : brief.where;
+
     writeSearchBrief(brief);
     setSearchBrief(brief);
     setSearchQuery(brief.query);
@@ -659,7 +687,16 @@ export function App() {
     setRemoteType(brief.remoteType);
     setJobType(brief.jobType);
     setActiveLocationLabel(brief.whereLabel || brief.where);
-    void handleSearchDestination(brief.where, { query: brief.query, lastPosted: brief.lastPosted });
+    void handleSearchDestination(brief.where, {
+      query: brief.query,
+      lastPosted: brief.lastPosted,
+      // Picked from the suggestions, so the place is already decided.
+      coords: brief.whereLat !== undefined && brief.whereLng !== undefined
+        ? { lat: brief.whereLat, lng: brief.whereLng }
+        : undefined,
+    }).finally(() => {
+      pendingDestinationRef.current = null;
+    });
   };
 
   /** "Browse everything instead": the defaults, saved, so it is not asked twice. */
@@ -706,6 +743,9 @@ export function App() {
     void handleSearchDestination(searchBrief.where, {
       query: searchBrief.query,
       lastPosted: searchBrief.lastPosted,
+      coords: searchBrief.whereLat !== undefined && searchBrief.whereLng !== undefined
+        ? { lat: searchBrief.whereLat, lng: searchBrief.whereLng }
+        : undefined,
     }).finally(() => {
       pendingDestinationRef.current = null;
     });
@@ -730,6 +770,12 @@ export function App() {
       lastPosted,
       remoteType,
       jobType,
+      // The coordinates belong to the place that was chosen, so they travel
+      // with it and are dropped the moment the destination is something else.
+      // Keeping them would reopen the map on the old town under the new name.
+      ...(whereRef.current === searchBrief.where && searchBrief.whereLat !== undefined
+        ? { whereLat: searchBrief.whereLat, whereLng: searchBrief.whereLng }
+        : {}),
     };
     if (JSON.stringify(next) === JSON.stringify(searchBrief)) return;
     writeSearchBrief(next);

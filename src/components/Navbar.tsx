@@ -57,7 +57,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   setSearchQuery,
   selectedCity,
   setSelectedCity,
-  activeLocationLabel: _activeLocationLabel = '',
+  activeLocationLabel = '',
   onSearchDestination,
   lastPosted,
   setLastPosted,
@@ -74,7 +74,27 @@ export const Navbar: React.FC<NavbarProps> = ({
   const [activeSegment, setActiveSegment] = useState<'where' | 'title' | 'posted' | null>(null);
   const searchBarRef = useRef<HTMLDivElement>(null);
 
-  const [whereInput, setWhereInput] = useState('');
+  /*
+   * The Where box shows where the results are actually from.
+   *
+   * It used to start empty and stay empty: you answered "Amiens", the map went
+   * to Amiens, and the one field on screen named after the question was blank,
+   * which reads as "it did not take". The label follows the search wherever it
+   * is set from -- the questionnaire, a hub tile, dragging the map.
+   *
+   * `touched` is what keeps this from breaking the popover underneath. That
+   * list filters itself by what is typed, and a field pre-filled with
+   * "Amiens, FR" would filter every hub away and announce it was showing
+   * destinations matching a place the user never typed. So until a key is
+   * pressed the text is a label, not a query.
+   */
+  const [whereInput, setWhereInput] = useState(activeLocationLabel);
+  const [whereTouched, setWhereTouched] = useState(false);
+  useEffect(() => {
+    setWhereInput(activeLocationLabel);
+    setWhereTouched(false);
+  }, [activeLocationLabel]);
+  const whereQuery = whereTouched ? whereInput : '';
 
   // Recomputed only when the text changes, not on every keystroke elsewhere in
   // the bar. With the list this short the work is trivial either way; the memo
@@ -285,10 +305,14 @@ export const Navbar: React.FC<NavbarProps> = ({
                     value={whereInput}
                     onChange={(e) => {
                       setWhereInput(e.target.value);
+                      setWhereTouched(true);
                       if (activeSegment !== 'where') setActiveSegment('where');
                     }}
-                    onFocus={() => {
+                    onFocus={(e) => {
                       setActiveSegment('where');
+                      // The place already there is a label, so typing should
+                      // replace it rather than land in the middle of it.
+                      e.currentTarget.select();
                     }}
                     onBlur={() => {
                       // Allow click handlers inside dropdown to fire before closing
@@ -407,16 +431,16 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <div className="ic-popover absolute left-0 top-full mt-3 w-[440px] p-5 z-50 animate-airbnb-pop">
                   <div className="flex items-center justify-between mb-3 px-2">
                     <span className="text-xs font-bold text-[#f5f5f7]">
-                      {whereInput.trim() ? `Destinations matching "${whereInput}"` : 'Suggested European hubs'}
+                      {whereQuery.trim() ? `Destinations matching "${whereQuery}"` : 'Suggested European hubs'}
                     </span>
                     <span className="text-[11px] text-[rgba(235,235,245,0.42)] font-medium">Type any city or select</span>
                   </div>
 
                   <div className="max-h-[390px] overflow-y-auto pr-1 space-y-1">
                     {/* Direct search option for custom typed location */}
-                    {whereInput.trim().length > 1 && (
+                    {whereQuery.trim().length > 1 && (
                       <div
-                        onClick={() => handleSearchWhere(whereInput)}
+                        onClick={() => handleSearchWhere(whereQuery)}
                         className="flex items-center gap-3 p-3 rounded-2xl cursor-pointer bg-[#FF385C]/15 hover:bg-[#FF385C]/25 text-[#ff7089] font-bold text-sm border border-[#FF385C]/30 transition mb-2"
                       >
                         <div className="w-9 h-9 rounded-xl bg-[#FF385C] flex items-center justify-center text-white shrink-0 shadow-xs">
@@ -424,7 +448,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                         </div>
                         <div className="min-w-0 flex-1">
                           <span className="block truncate text-[#f5f5f7]">
-                            Search <span className="font-black text-[#FF385C]">"{whereInput.trim()}"</span> on live map
+                            Search <span className="font-black text-[#FF385C]">"{whereQuery.trim()}"</span> on live map
                           </span>
                           <span className="block text-[11px] text-[rgba(235,235,245,0.42)] font-normal truncate">
                             Fly map to visible area and fetch live jobs
@@ -616,8 +640,8 @@ export const Navbar: React.FC<NavbarProps> = ({
                       },
                     ]
                       .filter((dest) => {
-                        if (!whereInput.trim()) return true;
-                        const q = whereInput.toLowerCase().trim();
+                        if (!whereQuery.trim()) return true;
+                        const q = whereQuery.toLowerCase().trim();
                         return (
                           dest.name.toLowerCase().includes(q) ||
                           dest.subtitle.toLowerCase().includes(q) ||

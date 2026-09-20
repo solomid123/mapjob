@@ -18,6 +18,15 @@ export interface SearchBrief {
   where: string;
   /** What to call that place on screen while it resolves. */
   whereLabel: string;
+  /**
+   * Where the place actually is, when it was picked from the suggestions.
+   *
+   * Carried so the map opens on the town that was chosen rather than on
+   * whatever a second lookup of the same word returns: there are nine Neustadts
+   * in Germany, and the list is where the ambiguity was already settled.
+   */
+  whereLat?: number;
+  whereLng?: number;
   /** One of the posted-date buckets the filter bar uses: 'all', '24h', ... */
   lastPosted: string;
   /** '' | 'Remote' | 'Hybrid' | 'On-site' */
@@ -130,6 +139,53 @@ const FRESHNESS = [
   { id: 'all', label: 'Anytime', sub: 'Everything on the board' },
 ];
 
+/** One row of the place list: what to show, what to search, where it is. */
+interface PlaceHit {
+  /** "Amiens, Somme, France" -- enough to tell two towns of one name apart. */
+  label: string;
+  /** Just the town, because that is what a job board understands. */
+  name: string;
+  lat: number;
+  lng: number;
+}
+
+/**
+ * Towns matching what has been typed, from OpenStreetMap.
+ *
+ * Nominatim asks callers to stay under a request a second, which the debounce
+ * below and the three-character floor between them keep to comfortably: a
+ * request only leaves after the typing stops.
+ */
+async function lookupPlaces(text: string, signal: AbortSignal): Promise<PlaceHit[]> {
+  const q = encodeURIComponent(text.trim());
+  const res = await fetch(
+    'https://nominatim.openstreetmap.org/search?format=json&addressdetails=1'
+    + `&accept-language=en&limit=6&q=${q}`,
+    { signal });
+  if (!res.ok) return [];
+  const rows = (await res.json()) as {
+    lat: string; lon: string; name?: string; display_name?: string;
+    addresstype?: string; type?: string; address?: Record<string, string>;
+  }[];
+  const seen = new Set<string>();
+  const hits: PlaceHit[] = [];
+  for (const row of rows) {
+    const addr = row.address || {};
+    const name = row.name || addr.city || addr.town || addr.village || addr.municipality || '';
+    if (!name) continue;
+    // Region and country, not the whole postal address: the full display_name
+    // runs to eight fields and buries the one word that tells two Neustadts
+    // apart.
+    const region = addr.state || addr.county || addr.region || '';
+    const country = addr.country || '';
+    const label = [name, region, country].filter(Boolean).join(', ');
+    if (seen.has(label)) continue;
+    seen.add(label);
+    hits.push({ label, name, lat: parseFloat(row.lat), lng: parseFloat(row.lon) });
+  }
+  return hits.filter((h) => Number.isFinite(h.lat) && Number.isFinite(h.lng));
+}
+
 interface SearchSetupProps {
   onStart: (brief: SearchBrief) => void;
   /** Take the defaults and go straight to the map. */
@@ -141,6 +197,16 @@ export const SearchSetup: React.FC<SearchSetupProps> = ({ onStart, onSkip }) => 
   const [brief, setBrief] = useState<SearchBrief>(defaultSearchBrief);
   const [whereText, setWhereText] = useState('');
   const fieldRef = useRef<HTMLInputElement | null>(null);
+
+  // The place list, and which row the arrow keys are on. -1 is "none": the
+  // typed text stands on its own, so Enter without choosing still works.
+  const [places, setPlaces] = useState<PlaceHit[]>([]);
+  const [placeIndex, setPlaceIndex] = useState(-1);
+  const [lookingUp, setLookingUp] = useState(false);
+  // Set when a row is taken, cleared by the next keystroke. Without it the
+  // effect below would immediately look up the label it just filled in and
+  // reopen the list under the choice.
+  const chosenRef = useRef('');
 
   const current = STEPS[step];
   const isLast = step === STEPS.length - 1;
@@ -168,12 +234,88 @@ export const SearchSetup: React.FC<SearchSetupProps> = ({ onStart, onSkip }) => 
   /** Typing a town beats the hub tapped before it, and tapping a hub clears the text. */
   const chooseTypedWhere = (v: string) => {
     setWhereText(v);
-    setBrief((b) => ({ ...b, where: v.trim(), whereLabel: v.trim() }));
+    chosenRef.current = '';
+    // Typing after a choice discards its coordinates: they described the row
+    // that was picked, not whatever the word says now.
+    setBrief((b) => ({
+      ...b, where: v.trim(), whereLabel: v.trim(),
+      whereLat: undefined, whereLng: undefined,
+    }));
+  };
+
+  /** A row from the list: the exact place, coordinates and all. */
+  const choosePlace = (hit: PlaceHit) => {
+    chosenRef.current = hit.label;
+    setWhereText(hit.label);
+    setPlaces([]);
+    setPlaceIndex(-1);
+    setBrief((b) => ({
+      ...b, where: hit.name, whereLabel: hit.label, whereLat: hit.lat, whereLng: hit.lng,
+    }));
   };
 
   const chooseHub = (id: string, name: string) => {
     setWhereText('');
-    setBrief((b) => ({ ...b, where: id, whereLabel: name }));
+    setPlaces([]);
+    setPlaceIndex(-1);
+    chosenRef.current = '';
+    setBrief((b) => ({
+      ...b, where: id, whereLabel: name, whereLat: undefined, whereLng: undefined,
+    }));
+  };
+
+  /*
+   * Look the typed town up while it is being typed.
+   *
+   * Only after the typing stops: a lookup per keystroke would be six requests
+   * for one word, and OpenStreetMap asks for one a second. The request is
+   * abandoned when the next one starts, so a slow answer for "ami" cannot
+   * arrive after "amiens" and replace the right list with a stale one.
+   */
+  useEffect(() => {
+    const text = whereText.trim();
+    if (current.id !== 'where' || text.length < 3 || text === chosenRef.current) {
+      setPlaces([]);
+      setPlaceIndex(-1);
+      setLookingUp(false);
+      return;
+    }
+    const controller = new AbortController();
+    setLookingUp(true);
+    const timer = setTimeout(() => {
+      lookupPlaces(text, controller.signal)
+        .then((hits) => { setPlaces(hits); setPlaceIndex(-1); })
+        .catch(() => undefined)
+        .finally(() => setLookingUp(false));
+    }, 320);
+    return () => { clearTimeout(timer); controller.abort(); setLookingUp(false); };
+  }, [whereText, current.id]);
+
+  /** Arrow keys walk the list; Enter takes the highlighted row, or the text. */
+  const whereKeys = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowDown' && places.length) {
+      e.preventDefault();
+      setPlaceIndex((i) => (i + 1) % places.length);
+      return;
+    }
+    if (e.key === 'ArrowUp' && places.length) {
+      e.preventDefault();
+      setPlaceIndex((i) => (i <= 0 ? places.length - 1 : i - 1));
+      return;
+    }
+    if (e.key === 'Escape' && places.length) {
+      // Swallowed, so dismissing the list does not also walk back a question.
+      e.preventDefault();
+      e.stopPropagation();
+      setPlaces([]);
+      setPlaceIndex(-1);
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (placeIndex >= 0 && places[placeIndex]) choosePlace(places[placeIndex]);
+      else next();
+    }
   };
 
   const Icon = current.icon;
@@ -270,10 +412,55 @@ export const SearchSetup: React.FC<SearchSetupProps> = ({ onStart, onSkip }) => 
                       ref={fieldRef}
                       value={whereText}
                       onChange={(e) => chooseTypedWhere(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); next(); } }}
+                      onKeyDown={whereKeys}
                       placeholder="Any town in Europe"
-                      className="w-full bg-transparent border-0 border-b border-white/15 focus:border-[#0a84ff] outline-none pl-8 pr-0 py-3 text-[24px] sm:text-[28px] ic-title text-[#f5f5f7] placeholder:text-white/20 transition-colors duration-200"
+                      autoComplete="off"
+                      role="combobox"
+                      aria-expanded={places.length > 0}
+                      aria-controls="where-suggestions"
+                      className="w-full bg-transparent border-0 border-b border-white/15 focus:border-[#0a84ff] outline-none pl-8 pr-10 py-3 text-[24px] sm:text-[28px] ic-title text-[#f5f5f7] placeholder:text-white/20 transition-colors duration-200"
                     />
+                    {/* A quiet spinner, because a list that appears half a
+                      * second after you stop typing looks like a page that
+                      * ignored you until it does not. */}
+                    {lookingUp && (
+                      <span className="absolute right-1 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full border-2 border-white/20 border-t-[#0a84ff] animate-spin" />
+                    )}
+                    {/* The towns themselves. Picking one settles which Neustadt
+                      * is meant and hands the map its coordinates, so the place
+                      * that opens is the place that was chosen rather than
+                      * whatever a second lookup of the same word returns. */}
+                    {places.length > 0 && (
+                      <ul
+                        id="where-suggestions"
+                        role="listbox"
+                        className="absolute left-0 right-0 top-full mt-2 z-20 ic-glass rounded-2xl overflow-hidden py-1 max-h-[280px] overflow-y-auto animate-in fade-in slide-in-from-top-1 duration-150"
+                      >
+                        {places.map((hit, i) => (
+                          <li key={hit.label}>
+                            <button
+                              type="button"
+                              role="option"
+                              aria-selected={i === placeIndex}
+                              // Mouse down, not click: the field blurring first
+                              // would close the list out from under the cursor.
+                              onMouseDown={(e) => { e.preventDefault(); choosePlace(hit); }}
+                              onMouseEnter={() => setPlaceIndex(i)}
+                              className={`w-full text-left px-4 py-2.5 cursor-pointer transition-colors duration-150 ${
+                                i === placeIndex ? 'bg-[#0a84ff]/25' : 'hover:bg-white/[0.06]'
+                              }`}
+                            >
+                              <span className="block ic-title text-[15px] text-[#f5f5f7] truncate">
+                                {hit.name}
+                              </span>
+                              <span className="block ic-caption text-[12px] text-[rgba(235,235,245,0.52)] truncate">
+                                {hit.label.slice(hit.name.length + 2) || hit.label}
+                              </span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
                   <p className="ic-caption mt-5 mb-2.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[rgba(235,235,245,0.42)]">
                     Or one of the hubs

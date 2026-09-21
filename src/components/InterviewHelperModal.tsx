@@ -1,3 +1,4 @@
+import { API_BASE } from '../services/apiBase';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Mic, MicOff, Trash2, Sparkles, MonitorUp, Square,
@@ -15,7 +16,14 @@ import {
   InterviewSetup,
   documentsText,
   type InterviewContext,
+  type InterviewLang,
 } from './InterviewSetup';
+import { currentUser, userKey } from '../services/account';
+
+/** What each recogniser calls the language. One table, four call sites. */
+const SPEECH_CODE: Record<InterviewLang, string> = {
+  fr: 'fr-FR', en: 'en-US', de: 'de-DE',
+};
 
 interface InterviewHelperModalProps {
   isOpen: boolean;
@@ -48,7 +56,24 @@ interface AnswerCard {
   ts: string;
 }
 
-const BACKEND = 'http://127.0.0.1:8000';
+const BACKEND = API_BASE;
+
+/**
+ * What to call an answer on screen.
+ *
+ * `model` is kept on the card because an empty one means "still streaming",
+ * but its value is a vendor's build name -- "gpt-5.6-terra" -- which tells the
+ * person in an interview nothing they can use. What matters is whether the
+ * answer came from the backend, from the offline fallback, or was cut short.
+ */
+function answerLabel(model: string): string {
+  const m = (model || '').toLowerCase();
+  if (!m) return 'Answer';
+  if (m.includes('heuristic')) return 'Offline answer';
+  if (m.includes('vision')) return 'Screen';
+  if (m.includes('interrupted')) return 'Answer · interrupted';
+  return 'Answer';
+}
 
 /** mm:ss, and hh:mm:ss once an interview has run past the hour. */
 function clock(total: number): string {
@@ -107,6 +132,17 @@ export function looksLikeQuestion(text: string): boolean {
 }
 
 /**
+ * Labels the model puts at the head of a line when it slips back into writing
+ * a document: "Situation:", "Aufgabe:", "Résultat:". Only ever stripped at
+ * the start of a line, so a sentence that happens to contain the word keeps
+ * it. The prompt asks for none of these; this is what catches the ones that
+ * arrive anyway, because the first thing on the teleprompter is the first
+ * thing that gets said out loud.
+ */
+const STAR_LABEL =
+  /^[\s>*\-•]*\*{0,2}(situation|task|action|r[eé]sult(?:at)?s?|context(?:e)?|t[aâ]che|actions?|aufgabe|maßnahme|maßnahmen|ergebnis(?:se)?|kontext|ausgangslage)\*{0,2}\s*:\s*/gim;
+
+/**
  * Strips the markdown emphasis the model sprinkles into answers.
  *
  * Nobody says "asterisk asterisk" out loud, and the teleprompter is read
@@ -114,7 +150,10 @@ export function looksLikeQuestion(text: string): boolean {
  * emphasis someone else chose is a distraction at reading size.
  */
 function spoken(text: string): string {
-  return text.replace(/\*\*(.+?)\*\*/gs, '$1').replace(/(^|\s)\*(\S[^*]*?)\*(?=\s|$)/g, '$1$2');
+  return text
+    .replace(/\*\*(.+?)\*\*/gs, '$1')
+    .replace(/(^|\s)\*(\S[^*]*?)\*(?=\s|$)/g, '$1$2')
+    .replace(STAR_LABEL, '');
 }
 
 /**
@@ -132,13 +171,6 @@ const HANDS_FREE_SILENCE_MS = 450;
 const HANDS_FREE_SETTLE_MS = 250;
 
 /**
- * Spoken French, near enough: 150 words a minute at five and a half letters a
- * word. Used to pace the hands-free pane, which should run out of text at
- * about the moment the speaker runs out of answer.
- */
-const SPOKEN_CHARS_PER_SECOND = 14;
-
-/**
  * Where a session in progress is kept so that reloading the page does not end
  * it.
  *
@@ -146,13 +178,17 @@ const SPOKEN_CHARS_PER_SECOND = 14;
  * point: this holds a real conversation with a real person, so it lives
  * exactly as long as the tab it was recorded in and is gone the moment that
  * tab closes. Nothing here is left on disk for whoever opens the browser next.
+ *
+ * Filed under the account, like everything else this browser remembers. An
+ * interview is a transcript of somebody speaking about their own life; signing
+ * out and in again in the same tab must not resume it as the other person.
  */
 const SESSION_KEY = 'mapjob.interview.live';
 
 interface SavedSession {
   v: 1;
   ctx: InterviewContext;
-  lang: 'fr' | 'en';
+  lang: InterviewLang;
   lines: TranscriptLine[];
   answers: AnswerCard[];
   memory: string[];
@@ -162,7 +198,7 @@ interface SavedSession {
 
 function readSavedSession(): SavedSession | null {
   try {
-    const raw = sessionStorage.getItem(SESSION_KEY);
+    const raw = sessionStorage.getItem(userKey(SESSION_KEY));
     if (!raw) return null;
     const s = JSON.parse(raw) as SavedSession;
     // A brief is what makes a session: without one there is nothing to resume
@@ -177,7 +213,7 @@ function readSavedSession(): SavedSession | null {
 
 function writeSavedSession(s: SavedSession) {
   try {
-    sessionStorage.setItem(SESSION_KEY, JSON.stringify(s));
+    sessionStorage.setItem(userKey(SESSION_KEY), JSON.stringify(s));
   } catch {
     // Out of quota, most likely a long transcript alongside a large attached
     // document. Not being able to resume is not worth throwing mid-interview.
@@ -186,21 +222,29 @@ function writeSavedSession(s: SavedSession) {
 
 function clearSavedSession() {
   try {
-    sessionStorage.removeItem(SESSION_KEY);
+    sessionStorage.removeItem(userKey(SESSION_KEY));
   } catch {
     // Nothing to clear.
   }
 }
 
-function heuristicAnswer(question: string): string {
-  return (
-    `Bonne question${question ? ` — « ${question.slice(0, 90)} »` : ''}. ` +
-    'Chez SLB puis Technip Energies, sur un sujet similaire : ' +
-    'Situation — dimensionnement sous chargement thermomécanique sévère ; ' +
-    'Tâche — livrer une conception CAO 3D (CATIA / SolidWorks / Creo) justifiée par FEA Abaqus / Ansys ; ' +
-    'Action — modèle paramétrique, convergence de maillage, corrélation essais, cotation GPS ISO ; ' +
-    'Résultat — dossier validé en revue, zéro reprise en industrialisation.'
-  );
+/**
+ * What the teleprompter shows when the answer backend cannot be reached.
+ *
+ * It used to be one candidate's employers, in French, complete with a STAR
+ * breakdown -- which for the other account was somebody else's work history,
+ * in a language she is not interviewing in, on a screen she is reading out
+ * loud. So it claims nothing now: it is a sentence that buys the few seconds
+ * it takes to see the helper is offline and answer in your own words.
+ */
+const OFFLINE_LINE: Record<string, string> = {
+  fr: 'Bonne question. Je prends un instant pour répondre précisément — qu’est-ce qui vous intéresse le plus là-dedans ?',
+  de: 'Das ist eine gute Frage. Ich denke kurz nach, damit ich Ihnen eine genaue Antwort geben kann — worauf kommt es Ihnen dabei am meisten an?',
+  en: 'That’s a good question. Let me take a second so I give you a proper answer — what matters most to you there?',
+};
+
+function heuristicAnswer(lang: string): string {
+  return OFFLINE_LINE[lang] || OFFLINE_LINE.en;
 }
 
 export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOpen, onClose }) => {
@@ -227,7 +271,7 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
   const [hasAudioInput, setHasAudioInput] = useState(false);
   const [audioActive, setAudioActive] = useState(false);
   const [engineNote, setEngineNote] = useState('');
-  const [lang, setLang] = useState<'fr' | 'en'>(() => restored?.lang ?? 'fr');
+  const [lang, setLang] = useState<InterviewLang>(() => restored?.lang ?? 'fr');
   const [lines, setLines] = useState<TranscriptLine[]>(() => restored?.lines ?? []);
   const [answers, setAnswers] = useState<AnswerCard[]>(() => restored?.answers ?? []);
   const [manual, setManual] = useState('');
@@ -382,14 +426,14 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
   ctxRef.current = ctx;
   thinkingRef.current = thinking;
 
-  const handleLangChange = useCallback((newLang: 'fr' | 'en') => {
+  const handleLangChange = useCallback((newLang: InterviewLang) => {
     setLang(newLang);
     if (relayWsRef.current && relayWsRef.current.readyState === WebSocket.OPEN) {
       relayWsRef.current.send(JSON.stringify({ type: 'set_lang', lang: newLang }));
     }
     if (recogRef.current) {
       try {
-        recogRef.current.lang = newLang === 'fr' ? 'fr-FR' : 'en-US';
+        recogRef.current.lang = SPEECH_CODE[newLang];
       } catch { /* noop */ }
     }
   }, []);
@@ -591,7 +635,7 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
       const recog = new SR();
       recog.continuous = true;
       recog.interimResults = true;
-      recog.lang = lang === 'fr' ? 'fr-FR' : 'en-US';
+      recog.lang = SPEECH_CODE[lang];
       recog.onresult = (ev: any) => {
         let interim = '';
         for (let i = ev.resultIndex; i < ev.results.length; i++) {
@@ -1006,6 +1050,10 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
           question: q || tail.slice(-500),
           transcript: tail,
           lang,
+          // Whose interview this is: the answer is spoken in the first person,
+          // and it has to be grounded in that person's CV rather than in
+          // whichever one this app was written for.
+          user: currentUser(),
           job_title: ctxRef.current?.jobTitle || '',
           company: ctxRef.current?.company || '',
           job_description: ctxRef.current?.jobDescription || '',
@@ -1054,9 +1102,9 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
         // and say so, instead of throwing away a usable half-answer.
         finishAnswer(id, `${model} · interrupted`, handsFree);
       } else {
-        replaceAnswer(id, heuristicAnswer(q), 'offline heuristic');
+        replaceAnswer(id, heuristicAnswer(lang), 'offline heuristic');
         finishAnswer(id, 'offline heuristic', handsFree);
-        setEngineNote((n) => n || 'Answer backend offline — showing CV-grounded heuristic. Start api_server.py for Fuelix.');
+        setEngineNote((n) => n || 'Answer backend offline — nothing can be written for you. Start api_server.py for Fuelix.');
       }
     } finally {
       setThinking(false);
@@ -1100,19 +1148,14 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
   }, [autoAnswer]);
 
   /**
-   * The hands-free pane reads itself.
+   * The hands-free pane keeps the newest line in view.
    *
-   * Chasing the newest token was the wrong instinct: the answer is being read
-   * aloud from the first word, so jumping to the last one leaves the reader
-   * at the end of a paragraph they have not started, having to scroll back by
-   * hand -- in the one mode whose entire promise is that they do not.
-   *
-   * So it starts at the top and creeps. The speed is not a setting: the
-   * overflow is divided by how long the remaining text takes to say, which
-   * means a long answer in a short pane moves faster, a short one barely
-   * moves, and the last line arrives under the eye at about the moment it is
-   * spoken. It is recomputed every frame, so it keeps adjusting while the
-   * model is still writing.
+   * There is no crawl any more, because there is usually nothing to crawl
+   * through: the box is the height of the answer and grows with it, so the
+   * last word written is the last line of the box and the eye is already
+   * there. Only a long answer reaches the ceiling, and then this keeps the
+   * text arriving at the bottom edge rather than putting a scrollbar on a
+   * pane that is sitting over somebody's face.
    */
   useEffect(() => {
     const el = handsFreeScrollRef.current;
@@ -1120,31 +1163,13 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
     setHandsFreeScroll(true);
   }, [autoCardId]);
 
+  const autoCardText = answers.find((a) => a.id === autoCardId)?.answer ?? '';
+
   useEffect(() => {
     if (autoCardId === null || !handsFreeScroll) return;
-    let raf = 0;
-    let last = performance.now();
-    const step = (now: number) => {
-      const el = handsFreeScrollRef.current;
-      const dt = Math.min(0.1, (now - last) / 1000);
-      last = now;
-      if (el) {
-        const overflow = el.scrollHeight - el.clientHeight;
-        const left = overflow - el.scrollTop;
-        if (left > 1) {
-          const card = answersRef.current.find((a) => a.id === autoCardId);
-          const chars = card ? card.answer.length : 0;
-          // French out loud is roughly 14 characters a second. What is left to
-          // scroll has to last as long as what is left to say.
-          const seconds = Math.max(4, chars / SPOKEN_CHARS_PER_SECOND);
-          el.scrollTop = Math.min(overflow, el.scrollTop + (overflow / seconds) * dt);
-        }
-      }
-      raf = requestAnimationFrame(step);
-    };
-    raf = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(raf);
-  }, [autoCardId, handsFreeScroll]);
+    const el = handsFreeScrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [autoCardId, handsFreeScroll, autoCardText]);
 
   /**
    * Hands-free mode: answer a question without being asked to.
@@ -1430,20 +1455,16 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
               <span>{chrono}</span>
             </div>
             <div className="ic-segmented flex items-center rounded-full overflow-hidden text-[12px] font-semibold">
-              <button
-                type="button"
-                onClick={() => handleLangChange('fr')}
-                className={`ic-segmented-item px-3 py-1.5 cursor-pointer ${lang === 'fr' ? 'is-on' : ''}`}
-              >
-                FR
-              </button>
-              <button
-                type="button"
-                onClick={() => handleLangChange('en')}
-                className={`ic-segmented-item px-3 py-1.5 cursor-pointer ${lang === 'en' ? 'is-on' : ''}`}
-              >
-                EN
-              </button>
+              {(['fr', 'en', 'de'] as const).map((code) => (
+                <button
+                  key={code}
+                  type="button"
+                  onClick={() => handleLangChange(code)}
+                  className={`ic-segmented-item px-3 py-1.5 cursor-pointer ${lang === code ? 'is-on' : ''}`}
+                >
+                  {code.toUpperCase()}
+                </button>
+              ))}
             </div>
             {/* Hands-free. It is a switch rather than a mode you enter,
                 because it has to be turned off the instant it misfires. */}
@@ -1563,7 +1584,11 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
                   person asking. */}
               {autoCard && (
                 <div
-                  className="absolute inset-x-2 bottom-2 max-h-[68%] flex flex-col rounded-xl overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200"
+                  // Anchored at the top and left to grow: the box is as tall as
+                  // the answer is long, so it opens as one line and reaches
+                  // down the screen while the model writes, instead of standing
+                  // there full-height with a scrollbar down the side of it.
+                  className="absolute inset-x-2 top-2 max-h-[calc(100%-1rem)] flex flex-col rounded-xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200"
                   style={{
                     background: `rgba(10,14,28,${AUTO_TINT[autoTint]})`,
                     backdropFilter: 'blur(22px) saturate(150%)',
@@ -1583,7 +1608,7 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
                       type="button"
                       onClick={() => setHandsFreeScroll((v) => !v)}
                       className="ic-fill w-6 h-6 rounded-full text-[#f5f5f7] cursor-pointer shrink-0 flex items-center justify-center"
-                      title={handsFreeScroll ? 'Stop the pane scrolling itself' : 'Let the pane scroll itself again'}
+                      title={handsFreeScroll ? 'Stop following the newest line' : 'Follow the newest line again'}
                     >
                       {handsFreeScroll ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
                     </button>
@@ -1627,7 +1652,7 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
                     // scrollbar, and the button hands it back.
                     onWheel={() => setHandsFreeScroll(false)}
                     onPointerDown={() => setHandsFreeScroll(false)}
-                    className="flex-1 overflow-y-auto px-4 py-3 text-white font-medium leading-relaxed whitespace-pre-wrap select-text"
+                    className="no-scrollbar min-h-0 overflow-y-auto px-4 py-3 text-[#f5f5f7] font-medium leading-relaxed tracking-tight whitespace-pre-wrap select-text"
                     style={{
                       fontSize: `${autoFontSize}px`,
                       lineHeight: 1.5,
@@ -1782,7 +1807,7 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
                 <div key={a.id} className="rounded-2xl bg-white/[0.05] shadow-[inset_0_0_0_0.5px_rgba(255,255,255,0.1)] p-4">
                   <div className="flex items-center justify-between gap-2 mb-1">
                     <span className="ic-caption text-[10px] font-semibold uppercase tracking-[0.08em] text-[#0a84ff]">
-                      {a.model} · {a.ts}
+                      {answerLabel(a.model)} · {a.ts}
                     </span>
                     <div className="flex items-center gap-1">
                       <button
@@ -1872,8 +1897,10 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
         </div>
 
         {/* The teleprompter itself: one answer, large, floating over the call.
-            The backdrop is pointer-events-none so the shared tab underneath
-            stays clickable -- only the panel takes the mouse. */}
+            Compact leaves the backdrop pointer-events-none so the shared tab
+            underneath stays clickable and only the card takes the mouse; full
+            size is covering the call anyway, so there the backdrop catches a
+            click and closes the whole thing. */}
         {teleprompterOpen && (() => {
           const idx =
             activeAnswerIdx !== null && activeAnswerIdx >= 0 && activeAnswerIdx < answers.length
@@ -1892,8 +1919,23 @@ export const InterviewHelperModal: React.FC<InterviewHelperModalProps> = ({ isOp
                   : 'items-center justify-center bg-black/10 backdrop-blur-[2px]'
               }`}
             >
+              {/* Everything around the panel. Clicking there dismisses the
+                  teleprompter outright -- it goes away, back into the button
+                  that opened it, the same as Esc and the X. It does not shrink
+                  into a corner card: that is a second thing left on screen over
+                  a live call, which is not what "click outside to close" means
+                  anywhere else. Only in full size -- the compact card leaves
+                  the screen alone, and a transparent sheet over a live call
+                  would swallow clicks meant for it. */}
+              {!compact && (
+                <div
+                  className="absolute inset-0 pointer-events-auto cursor-zoom-out"
+                  onClick={() => setTeleprompterOpen(false)}
+                  title="Click outside to close it"
+                />
+              )}
               <div
-                className={`ic-popover pointer-events-auto flex flex-col transition-all overflow-hidden ${
+                className={`ic-popover relative pointer-events-auto flex flex-col transition-all overflow-hidden ${
                   compact
                     ? 'w-full max-w-sm max-h-[46vh] rounded-2xl'
                     : 'w-full max-w-3xl max-h-[84vh] rounded-3xl'

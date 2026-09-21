@@ -1,14 +1,19 @@
+import { API_BASE } from '../services/apiBase';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { currentUser, userKey, withUser } from '../services/account';
 import {
-  Activity, Building2, FileText, Loader2, MailCheck, Plus,
-  RefreshCw, Search, Send, ShieldCheck, Trash2, Users, X,
+  Activity, Building2, FileText, Loader2, MailCheck,
+  Plug, Plus, RefreshCw, Search, Send, ShieldCheck, Trash2,
+  Users, X,
 } from 'lucide-react';
+import {
+  connectMailbox, disconnectMailbox, mailboxStatus, NO_MAILBOX,
+  type MailboxStatus,
+} from '../services/mailboxApi';
+import { useAttachmentChooser } from './AttachmentChooser';
+import { NO_ATTACHMENTS, type AttachmentChoice } from '../services/documentsApi';
 
-const BACKEND =
-  import.meta.env.VITE_API_BASE_URL ||
-  (typeof window !== 'undefined'
-    ? `http://${window.location.hostname || 'localhost'}:8000`
-    : 'http://localhost:8000');
+const BACKEND = API_BASE;
 
 /**
  * The outreach workspace: find an employer, find the person, prove the
@@ -150,33 +155,113 @@ const StatCard: React.FC<{ label: string; value: number | string; sub?: string }
 );
 
 /**
- * One integration, and whether it can run.
+ * How the integrations are shelved, and what each one looks like.
  *
- * Names the variable to set and never the value in it: this is a web page, and
- * a status row that shows the first six characters of a key to look helpful
+ * Six services in one flat list read as six equal chores. They are not: the
+ * mailbox is the one a person connects with their own Google account and the
+ * one without which nothing at all leaves the building, while the rest are keys
+ * an operator pastes into a file once and never thinks about again. Grouping
+ * says that much before a word is read.
+ *
+ * A capability the server invents tomorrow still renders -- it falls into
+ * "Other services" with a plug icon rather than disappearing off the page.
+ */
+/**
+ * The mark on each integration card.
+ *
+ * Artwork rather than the line icons the rest of the app uses, because these
+ * rows are not app functions -- they are other people's services, and a service
+ * is recognised by its own mark long before its name is read. The tint behind
+ * each one is taken from the art so the tile reads as one object.
+ *
+ * The files live in `public/integrations/` and are served as static assets, not
+ * bundled: an integration added next month is a PNG dropped in a folder and a
+ * line here. `alt` is empty on purpose -- the label beside the mark already
+ * says what it is, and a screen reader announcing "Gmail Gmail" is noise.
+ */
+const CAP_LOOK: Record<string, { art: string; tint: string }> = {
+  gmail: { art: '/integrations/gmail.png', tint: 'bg-[#ea4335]/12' },
+  smtp: { art: '/integrations/smtp.png', tint: 'bg-[#8bc34a]/12' },
+  discovery: { art: '/integrations/discovery.png', tint: 'bg-sky-400/12' },
+  verification: { art: '/integrations/verification.png', tint: 'bg-emerald-400/12' },
+  writer: { art: '/integrations/writer.png', tint: 'bg-amber-400/12' },
+  dossier: { art: '/integrations/dossier.png', tint: 'bg-rose-400/12' },
+};
+
+const CAP_GROUPS: { title: string; keys: string[] }[] = [
+  { title: 'Mailbox', keys: ['gmail', 'smtp'] },
+  { title: 'Finding people', keys: ['discovery', 'verification'] },
+  { title: 'Writing and documents', keys: ['writer', 'dossier'] },
+];
+
+/**
+ * One integration as a card: mark, name, one line, and what you can do about it.
+ *
+ * Names the variable to set and never the value in it. This is a web page, and
+ * a status card that shows the first six characters of a key to look helpful
  * has published the key.
  */
-const CapabilityRow: React.FC<{ cap: Capability }> = ({ cap }) => (
-  <div className="flex items-start gap-3 py-2.5 border-b border-white/[0.07] last:border-0">
-    <span
-      className={`mt-[5px] w-2 h-2 rounded-full shrink-0 ${
-        cap.ready ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.7)]' : 'bg-white/25'
-      }`}
-    />
-    <div className="min-w-0 flex-1">
-      <p className="text-[13.5px] font-semibold tracking-[-0.01em] text-[#f5f5f7]">{cap.label}</p>
-      <p className="text-[12px] text-[rgba(235,235,245,0.52)]">{cap.detail}</p>
+const CapabilityCard: React.FC<{
+  id: string;
+  cap: Capability;
+  action?: React.ReactNode;
+}> = ({ id, cap, action }) => {
+  const look = CAP_LOOK[id];
+  return (
+    <div className="flex items-center gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.035] px-3.5 py-3">
+      <span
+        className={`shrink-0 grid place-items-center w-9 h-9 rounded-xl ${
+          look?.tint || 'bg-white/[0.08]'
+        }`}
+      >
+        {look ? (
+          // Something not set up is shown greyed and faded rather than hidden:
+          // the point of this panel is what the account has and has not got,
+          // and a full-colour mark beside "not configured" reads as working.
+          <img
+            src={look.art}
+            alt=""
+            aria-hidden="true"
+            draggable={false}
+            className={`w-[22px] h-[22px] object-contain transition duration-300 ${
+              cap.ready ? '' : 'opacity-45 grayscale'
+            }`}
+          />
+        ) : (
+          <Plug className="w-[18px] h-[18px] text-[rgba(235,235,245,0.62)]" strokeWidth={1.9} />
+        )}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5">
+          <p className="truncate text-[13.5px] font-semibold tracking-[-0.01em] text-[#f5f5f7]">
+            {cap.label}
+          </p>
+          {cap.ready ? (
+            <span
+              className="shrink-0 w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_7px_rgba(52,211,153,0.75)]"
+              title="Working"
+            />
+          ) : null}
+        </div>
+        <p className="truncate text-[11.5px] text-[rgba(235,235,245,0.52)]" title={cap.detail}>
+          {cap.detail}
+        </p>
+      </div>
+      {action ?? (
+        <span
+          className={`shrink-0 text-[11px] font-semibold px-2.5 py-1 rounded-full ${
+            cap.ready
+              ? 'bg-emerald-400/15 text-emerald-200'
+              : 'bg-white/[0.08] text-[rgba(235,235,245,0.62)]'
+          }`}
+          title={cap.ready ? 'Configured' : `Set ${cap.env} in .env`}
+        >
+          {cap.ready ? 'Connected' : 'Set up'}
+        </span>
+      )}
     </div>
-    <span
-      className={`shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-full ${
-        cap.ready ? 'bg-emerald-400/15 text-emerald-200' : 'bg-white/[0.08] text-[rgba(235,235,245,0.62)]'
-      }`}
-      title={cap.ready ? 'Configured' : `Set ${cap.env} in .env`}
-    >
-      {cap.ready ? 'Connected' : 'Needs ' + cap.env}
-    </span>
-  </div>
-);
+  );
+};
 
 const StagePill: React.FC<{ stage: string }> = ({ stage }) => (
   <span
@@ -224,7 +309,7 @@ const CLEARED_KEY = 'mapjob.outreach.clearedBefore';
 
 const readCleared = (): number => {
   if (typeof window === 'undefined') return 0;
-  const raw = Number(window.localStorage.getItem(CLEARED_KEY) || 0);
+  const raw = Number(window.localStorage.getItem(userKey(CLEARED_KEY)) || 0);
   return Number.isFinite(raw) ? raw : 0;
 };
 
@@ -289,6 +374,9 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
   // decides whether mail leaves. Null means nothing is being asked.
   const [ask, setAsk] = useState<number[] | null>(null);
   const askRef = useRef<HTMLDivElement | null>(null);
+  /* The second question, after "really send": which held documents go with the
+   * letter and the CV. It opens for nobody who holds no documents. */
+  const { ask: askAttachments, chooser: attachmentChooser } = useAttachmentChooser();
   const [sendPreview, setSendPreview] = useState<SendPreview | null>(null);
   const [campaign, setCampaign] = useState<CampaignState | null>(null);
   const [openDoc, setOpenDoc] = useState<DocumentRow | null>(null);
@@ -299,6 +387,19 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
   const [docDoomed, setDocDoomed] = useState<number | null>(null);
   const [testing, setTesting] = useState(false);
   const [testNote, setTestNote] = useState('');
+
+  /**
+   * The mailbox this account sends from.
+   *
+   * Asked for separately from the capability list because it is the one
+   * integration with a person on the other end of it: the rest are keys in a
+   * file, this is a Google account somebody signs into. `mailboxBusy` covers
+   * the seconds either side of that -- the request that mints the consent URL,
+   * and the wait while the tab is open and the answer has not come back yet.
+   */
+  const [mailbox, setMailbox] = useState<MailboxStatus>(NO_MAILBOX);
+  const [mailboxBusy, setMailboxBusy] = useState(false);
+  const [mailboxNote, setMailboxNote] = useState('');
 
   /**
    * The ticked rows, and the console's high-water mark.
@@ -331,13 +432,13 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
   }, [section]);
 
   useEffect(() => {
-    if (clearedBefore) window.localStorage.setItem(CLEARED_KEY, String(clearedBefore));
-    else window.localStorage.removeItem(CLEARED_KEY);
+    if (clearedBefore) window.localStorage.setItem(userKey(CLEARED_KEY), String(clearedBefore));
+    else window.localStorage.removeItem(userKey(CLEARED_KEY));
   }, [clearedBefore]);
 
   const loadOverview = useCallback(async () => {
     try {
-      const res = await fetch(`${BACKEND}/api/outreach/overview`);
+      const res = await fetch(withUser(`${BACKEND}/api/outreach/overview`));
       if (!res.ok) throw new Error(`Backend answered ${res.status}`);
       const data = await res.json();
       setStats(data.stats || {});
@@ -354,7 +455,11 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
   const loadProspects = useCallback(async (nextPage: number, search: string) => {
     setBusy(true);
     try {
-      const params = new URLSearchParams({ page: String(nextPage), page_size: '20' });
+      // The account is part of every question this page asks. The table is
+      // one person's prospect list, never both, and the server scopes on it.
+      const params = new URLSearchParams({
+        page: String(nextPage), page_size: '20', user: currentUser(),
+      });
       if (search.trim()) params.set('query', search.trim());
       const res = await fetch(`${BACKEND}/api/outreach/prospects?${params}`);
       const data = await res.json();
@@ -370,7 +475,7 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
 
   const loadDocuments = useCallback(async () => {
     try {
-      const res = await fetch(`${BACKEND}/api/outreach/documents`);
+      const res = await fetch(withUser(`${BACKEND}/api/outreach/documents`));
       const data = await res.json();
       setDocs(data.documents || []);
     } catch {
@@ -380,10 +485,19 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
 
   const loadSendPreview = useCallback(async () => {
     try {
-      const res = await fetch(`${BACKEND}/api/outreach/campaign/preview`);
+      const res = await fetch(withUser(`${BACKEND}/api/outreach/campaign/preview`));
       setSendPreview(await res.json());
     } catch {
       setSendPreview(null);
+    }
+  }, []);
+
+  const loadMailbox = useCallback(async () => {
+    try {
+      setMailbox(await mailboxStatus());
+    } catch {
+      // The bridge being down is already said once, at the top of the page.
+      setMailbox(NO_MAILBOX);
     }
   }, []);
 
@@ -391,11 +505,62 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
     loadOverview();
     loadDocuments();
     loadSendPreview();
-    fetch(`${BACKEND}/api/outreach/events?limit=200`)
+    loadMailbox();
+    fetch(withUser(`${BACKEND}/api/outreach/events?limit=200`))
       .then((r) => r.json())
       .then((d) => setEvents(d.events || []))
       .catch(() => undefined);
-  }, [loadOverview, loadDocuments, loadSendPreview]);
+  }, [loadOverview, loadDocuments, loadSendPreview, loadMailbox]);
+
+  /*
+   * The consent happens in another tab, so nothing here can await it. What can
+   * be noticed is the moment the user comes back to this one -- which is the
+   * moment they expect the card to have changed, and the moment it does.
+   */
+  useEffect(() => {
+    const back = () => { loadMailbox(); loadOverview(); };
+    window.addEventListener('focus', back);
+    return () => window.removeEventListener('focus', back);
+  }, [loadMailbox, loadOverview]);
+
+  /**
+   * Send them to Google, in a tab of their own.
+   *
+   * Not a redirect of this page: a campaign may be running with a live log on
+   * screen, and throwing that away to ask a question would be a poor trade. The
+   * page keeps watching, and the card changes when they come back.
+   */
+  const startMailboxConnect = async () => {
+    setMailboxBusy(true);
+    setMailboxNote('');
+    try {
+      const url = await connectMailbox();
+      if (!url) throw new Error('The server did not return a sign-in link.');
+      window.open(url, '_blank', 'noopener,noreferrer');
+      setMailboxNote('Finish signing in on the Google tab, then come back here.');
+    } catch (err) {
+      setMailboxNote(err instanceof Error ? err.message : 'Could not start sign-in.');
+    } finally {
+      setMailboxBusy(false);
+    }
+  };
+
+  const dropMailbox = async () => {
+    setMailboxBusy(true);
+    try {
+      const out = await disconnectMailbox();
+      // Said plainly, because this button did not do it: the grant lives in the
+      // user's Google account and only they can withdraw it.
+      setMailboxNote('Disconnected here. Google still lists the app until you '
+        + 'remove it at myaccount.google.com/permissions.');
+      void out;
+      await Promise.all([loadMailbox(), loadOverview()]);
+    } catch (err) {
+      setMailboxNote(err instanceof Error ? err.message : 'Could not disconnect.');
+    } finally {
+      setMailboxBusy(false);
+    }
+  };
 
   // Search is debounced, page changes are not: typing should not fire a query
   // per keystroke, and a click on "next" should not wait a quarter second.
@@ -409,7 +574,7 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
    * is on screen. A log you only receive while watching it is not a log.
    */
   useEffect(() => {
-    const source = new EventSource(`${BACKEND}/api/outreach/stream`);
+    const source = new EventSource(withUser(`${BACKEND}/api/outreach/stream`));
     source.onmessage = (ev) => {
       try {
         const parsed: PipelineEvent = JSON.parse(ev.data);
@@ -434,7 +599,7 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
       const res = await fetch(`${BACKEND}/api/outreach/prospects`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(draft),
+        body: JSON.stringify({ ...draft, user: currentUser() }),
       });
       if (!res.ok) throw new Error(String(res.status));
       setDraft({ ...EMPTY_DRAFT });
@@ -452,7 +617,8 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
     setError('');
     setHunting(true);
     try {
-      const res = await fetch(`${BACKEND}/api/outreach/prospects/${id}/enrich`, { method: 'POST' });
+      const res = await fetch(withUser(`${BACKEND}/api/outreach/prospects/${id}/enrich`),
+        { method: 'POST' });
       if (!res.ok) {
         const detail = await res.json().catch(() => ({}));
         throw new Error(detail.detail || 'That lookup could not be started.');
@@ -464,7 +630,7 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
   };
 
   const removeProspect = async (id: number) => {
-    await fetch(`${BACKEND}/api/outreach/prospects/${id}`, { method: 'DELETE' });
+    await fetch(withUser(`${BACKEND}/api/outreach/prospects/${id}`), { method: 'DELETE' });
     await Promise.all([loadProspects(page, query), loadOverview()]);
   };
 
@@ -507,13 +673,18 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
         // The board speaks its own two words, `was` and `wo`, and they are
         // passed through as typed: a search that works on the website works
         // here, which is the point of using its API rather than reading it.
-        body: JSON.stringify(fast
-          ? { city: hunt.city, keyword: hunt.keyword, limit: hunt.limit }
-          : board
-            ? { was: hunt.profession, wo: hunt.city, umkreis: 25,
-                count: hunt.count, skip_agencies: true,
-                published_within: hunt.freshDays, offer_type: hunt.offerType }
-            : hunt),
+        body: JSON.stringify({
+          ...(fast
+            ? { city: hunt.city, keyword: hunt.keyword, limit: hunt.limit }
+            : board
+              ? { was: hunt.profession, wo: hunt.city, umkreis: 25,
+                  count: hunt.count, skip_agencies: true,
+                  published_within: hunt.freshDays, offer_type: hunt.offerType }
+              : hunt),
+          // Whose list these employers land on. A search run from her page
+          // files Ausbildung places on her table, not on his.
+          user: currentUser(),
+        }),
       });
       if (!res.ok) {
         const detail = await res.json().catch(() => ({}));
@@ -534,7 +705,7 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
       const res = await fetch(`${BACKEND}/api/outreach/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ limit: 200, smtp: true }),
+        body: JSON.stringify({ limit: 200, smtp: true, user: currentUser() }),
       });
       if (!res.ok) {
         const detail = await res.json().catch(() => ({}));
@@ -557,7 +728,11 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
    * write to any more, the table does, which is why the send controls live
    * over the table and this page only reports.
    */
-  const startCampaign = async (asLive: boolean, ids: number[]) => {
+  const startCampaign = async (
+    asLive: boolean,
+    ids: number[],
+    attachments: AttachmentChoice = NO_ATTACHMENTS,
+  ) => {
     setError('');
     try {
       const res = await fetch(`${BACKEND}/api/outreach/campaign`, {
@@ -565,6 +740,16 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           role: sendRole, dry_run: !asLive, limit: ids.length, ids,
+          // Named rows only, and the confirmation above the table has already
+          // said which of them have had an application before.
+          again: true,
+          // What the chooser said goes with the letter and the CV, and whether
+          // the whole lot is bound into one PDF.
+          document_ids: attachments.documentIds,
+          merge_documents: attachments.merge,
+          // Who is writing. It decides the language of the letter as much as
+          // the name at the bottom: his go out in French, hers in German.
+          user: currentUser(),
         }),
       });
       if (!res.ok) {
@@ -597,6 +782,18 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
    * which mailbox, and the answer is given there. A decision you cannot forget
    * having made, because you make it every time.
    */
+  /**
+   * How many of these companies have already had one of these.
+   *
+   * Not a refusal -- the second letter is allowed, and sometimes wanted, when
+   * the first went out with the wrong CV. It is the one fact that changes what
+   * the click means, so the confirmation says it before anything leaves.
+   */
+  const repeats = useCallback(
+    (ids: number[]) => ids.filter((id) =>
+      prospects.find((p) => p.id === id)?.stage === 'sent').length,
+    [prospects]);
+
   const sendRows = (ids: number[]) => {
     if (!ids.length) return;
     setAsk(ids);
@@ -613,9 +810,21 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
 
   const doSend = async (ids: number[], asLive: boolean) => {
     setAsk(null);
+    // Which held documents go with these letters, asked once for the whole
+    // selection and not at all by someone who holds none. Cancelling here
+    // cancels the send: the strip above has already been answered, so this is
+    // the last point at which nothing has left.
+    const attachments = await askAttachments({
+      context: 'email',
+      count: ids.length,
+      target: ids.length === 1
+        ? prospects.find((p) => p.id === ids[0])?.company || ''
+        : '',
+    });
+    if (!attachments) return;
     setRowBusy(ids.length === 1 ? ids[0] : -1);
     try {
-      await startCampaign(asLive, ids);
+      await startCampaign(asLive, ids, attachments);
       setPicked(new Set());
     } finally {
       setRowBusy(null);
@@ -627,7 +836,7 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
     await fetch(`${BACKEND}/api/outreach/prospects/remove`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids }),
+      body: JSON.stringify({ ids, user: currentUser() }),
     });
     setPicked(new Set());
     await Promise.all([loadProspects(page, query), loadOverview(), loadSendPreview()]);
@@ -648,7 +857,7 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
       const res = await fetch(`${BACKEND}/api/outreach/documents/remove`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids }),
+        body: JSON.stringify({ ids, user: currentUser() }),
       });
       if (!res.ok) throw new Error('The application could not be deleted.');
       if (openDoc && ids.includes(openDoc.id)) setOpenDoc(null);
@@ -671,12 +880,21 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
   const sendTestToSelf = async () => {
     setError('');
     setTestNote('');
+    // The point of this button is to see exactly what an employer would get,
+    // so it asks the same question a real send asks.
+    const attachments = await askAttachments({ context: 'email', target: 'your own mailbox' });
+    if (!attachments) return;
     setTesting(true);
     try {
       const res = await fetch(`${BACKEND}/api/outreach/campaign/test`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role: sendRole }),
+        body: JSON.stringify({
+          role: sendRole,
+          document_ids: attachments.documentIds,
+          merge_documents: attachments.merge,
+          user: currentUser(),
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || 'The test did not send.');
@@ -702,7 +920,7 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
 
   const stopCampaign = async () => {
     try {
-      await fetch(`${BACKEND}/api/outreach/campaign/cancel`, { method: 'POST' });
+      await fetch(withUser(`${BACKEND}/api/outreach/campaign/cancel`), { method: 'POST' });
     } catch {
       /* if the server is gone the run is gone with it */
     }
@@ -714,7 +932,7 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
     if (!campaign?.running) return undefined;
     const id = window.setInterval(async () => {
       try {
-        const res = await fetch(`${BACKEND}/api/outreach/campaign/status`);
+        const res = await fetch(withUser(`${BACKEND}/api/outreach/campaign/status`));
         const state: CampaignState = await res.json();
         setCampaign(state);
         if (!state.running) {
@@ -736,7 +954,7 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
   /** Call off a run in flight. It stops after the company it is reading. */
   const stopHunt = async () => {
     try {
-      await fetch(`${BACKEND}/api/outreach/discover/cancel`, { method: 'POST' });
+      await fetch(withUser(`${BACKEND}/api/outreach/discover/cancel`), { method: 'POST' });
     } catch {
       /* if the server is gone the run is gone with it */
     }
@@ -746,7 +964,7 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
     if (!hunting) return undefined;
     const id = window.setInterval(async () => {
       try {
-        const res = await fetch(`${BACKEND}/api/outreach/discover/status`);
+        const res = await fetch(withUser(`${BACKEND}/api/outreach/discover/status`));
         const state = await res.json();
         // A sweep fills the table for twenty minutes. Reloading it as it goes
         // is the difference between watching it work and waiting for it.
@@ -814,6 +1032,69 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
     [caps],
   );
 
+  /**
+   * The capability list, shelved.
+   *
+   * Built from what the server actually sent rather than from the shelf
+   * headings, so a service added to the backend tomorrow appears under "Other
+   * services" instead of vanishing because nobody updated a list in the UI.
+   */
+  const capGroups = useMemo(() => {
+    const seen = new Set<string>();
+    const groups = CAP_GROUPS.map((group) => {
+      const entries = group.keys
+        .filter((key) => caps[key])
+        .map((key) => { seen.add(key); return [key, caps[key]] as [string, Capability]; });
+      return { title: group.title, entries };
+    }).filter((group) => group.entries.length > 0);
+    const rest = Object.entries(caps).filter(([key]) => !seen.has(key));
+    return rest.length ? [...groups, { title: 'Other services', entries: rest }] : groups;
+  }, [caps]);
+
+  /**
+   * The Gmail card's button, which is the only one on this panel that does
+   * anything: the others are keys in a file and a button would be a lie.
+   */
+  const mailboxAction = useMemo(() => {
+    const spin = mailboxBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null;
+    if (mailbox.connected && mailbox.own) {
+      return (
+        <div className="shrink-0 flex items-center gap-1.5">
+          <span
+            className="hidden md:inline max-w-[11rem] truncate text-[11.5px] text-[rgba(235,235,245,0.62)]"
+            title={mailbox.address}
+          >
+            {mailbox.address}
+          </span>
+          <button
+            type="button"
+            onClick={dropMailbox}
+            disabled={mailboxBusy}
+            className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full bg-white/[0.08] text-[rgba(235,235,245,0.72)] hover:bg-white/[0.14] transition-colors disabled:opacity-50"
+            title="Forget the token stored here"
+          >
+            {spin}
+            Disconnect
+          </button>
+        </div>
+      );
+    }
+    return (
+      <button
+        type="button"
+        onClick={startMailboxConnect}
+        disabled={mailboxBusy || !mailbox.can_connect}
+        className="shrink-0 inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 rounded-full bg-white text-[#14101f] hover:bg-white/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        title={mailbox.can_connect
+          ? 'Sign in with Google and send from your own address'
+          : 'This install has no Google OAuth client configured'}
+      >
+        {spin}
+        {mailbox.connected ? 'Use my Gmail' : 'Connect'}
+      </button>
+    );
+  }, [mailbox, mailboxBusy]);
+
   const sectionBody = () => {
     if (section === 'dashboard') {
       return (
@@ -827,17 +1108,68 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
             <StatCard label="Dossiers" value={stats.dossiers ?? 0} sub="PDFs assembled" />
           </div>
 
-          <div className="ic-glass rounded-2xl px-4 py-3">
-            <div className="flex items-baseline justify-between gap-3 pb-1">
+          <div className="ic-glass rounded-2xl px-4 py-3.5">
+            <div className="flex items-baseline justify-between gap-3 pb-3">
               <h3 className="ic-title text-[15px] text-[#f5f5f7]">Integrations</h3>
               <span className="text-[12px] text-[rgba(235,235,245,0.52)]">
                 {connected} of {Object.keys(caps).length || 6} connected
               </span>
             </div>
-            {Object.entries(caps).map(([key, cap]) => (
-              <CapabilityRow key={key} cap={cap} />
+
+            {capGroups.map((group) => (
+              <div key={group.title} className="pb-3.5 last:pb-0">
+                <p className="pb-2 text-[10.5px] font-semibold uppercase tracking-[0.09em] text-[rgba(235,235,245,0.38)]">
+                  {group.title}
+                </p>
+                <div className="grid sm:grid-cols-2 gap-2.5">
+                  {group.entries.map(([key, cap]) => (
+                    <CapabilityCard
+                      key={key}
+                      id={key}
+                      cap={cap}
+                      action={key === 'gmail' ? mailboxAction : undefined}
+                    />
+                  ))}
+                </div>
+              </div>
             ))}
-            <p className="pt-3 text-[12px] leading-relaxed text-[rgba(235,235,245,0.42)]">
+
+            {mailboxNote ? (
+              <p className="pt-1 text-[12px] leading-relaxed text-[rgba(235,235,245,0.62)]">
+                {mailboxNote}
+              </p>
+            ) : null}
+
+            {/*
+              * Said where the consequence is, not in a settings page nobody
+              * opens. A mailbox inherited from `.env` is the machine's, and on
+              * a machine with two accounts on it one of them is sending from an
+              * address that is not theirs -- with the employer's reply going to
+              * whoever owns it.
+              */}
+            {mailbox.connected && !mailbox.own ? (
+              <p className="pt-2 text-[12px] leading-relaxed text-amber-200/80">
+                Sending through the mailbox set up on this machine
+                {mailbox.address ? ` (${mailbox.address})` : ''} — the install's own,
+                not one this account connected. Connect yours and replies come back
+                to you.
+              </p>
+            ) : null}
+
+            {/* Only once the server has answered. Before that `can_connect` is
+              * false because nothing has been asked yet, and a page that opens
+              * by announcing a missing OAuth client is reporting its own
+              * loading state as a fault in the install. */}
+            {mailbox.user && !mailbox.can_connect ? (
+              <p className="pt-2 text-[12px] leading-relaxed text-[rgba(235,235,245,0.42)]">
+                Connecting a mailbox needs the install's Google OAuth client:
+                GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET in .env, with{' '}
+                {mailbox.redirect_uri || `${BACKEND}/api/mailbox/callback`}{' '}
+                registered on it as a redirect URI.
+              </p>
+            ) : null}
+
+            <p className="pt-2.5 text-[12px] leading-relaxed text-[rgba(235,235,245,0.42)]">
               Keys belong in the project's .env file, pasted straight in. Nothing on
               this page ever displays one, and a key sent through a chat window has
               to be treated as burnt and rotated.
@@ -1076,7 +1408,7 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                 type="button"
                 onClick={async () => {
                   const res = await fetch(
-                    `${BACKEND}/api/outreach/prospects/remove-addressless`,
+                    withUser(`${BACKEND}/api/outreach/prospects/remove-addressless`),
                     { method: 'POST' });
                   if (res.ok) { setPicked(new Set()); await loadProspects(page, query); }
                 }}
@@ -1200,6 +1532,17 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                     </>
                   )}
                 </p>
+                {/* The one fact that changes what this click means. The rule
+                  * that used to refuse a second letter now only warns, so the
+                  * warning has to be here, where the decision is, and not in a
+                  * tooltip on a button that has already been pressed. */}
+                {repeats(ask) > 0 && (
+                  <p className="text-[12px] text-amber-200/90">
+                    {ask.length === 1
+                      ? 'This company has already had one of these. Sending now means a second copy.'
+                      : `${repeats(ask)} of these have already had one. They will receive a second copy.`}
+                  </p>
+                )}
                 <p className="text-[11.5px] text-[rgba(235,235,245,0.62)]">
                   {mailboxReady
                     ? <>They leave from <span className="text-[#f5f5f7]">{sendPreview?.mailbox?.address}</span>
@@ -1258,7 +1601,9 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                   onClick={() => sendRows([...picked])}
                   disabled={rowBusy !== null || Boolean(campaign?.running)}
                   className="rounded-xl px-3.5 py-1.5 text-[13px] font-semibold inline-flex items-center gap-2 bg-[#0a84ff] text-white hover:bg-[#0a84ff]/90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
-                  title={`Send ${picked.size} application${picked.size === 1 ? '' : 's'}`}
+                  title={repeats([...picked]) > 0
+                    ? `${repeats([...picked])} of these have already had an application`
+                    : `Send ${picked.size} application${picked.size === 1 ? '' : 's'}`}
                 >
                   <Send className="w-3.5 h-3.5" />
                   Send {picked.size}
@@ -1427,11 +1772,19 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                       * guessed addresses, second letters and the daily cap are
                       * the same rules, decided in the same place on the server.
                       * Disabled when there is nothing to write to, and the
-                      * tooltip says which of the two it would do. */}
+                      * tooltip says which of the two it would do.
+                      *
+                      * A row already written to keeps its button. Greying it
+                      * out was the wrong call: the first letter can go with the
+                      * wrong CV, the advert can be reposted, the documents can
+                      * be re-tailored -- and then the one thing the user wants
+                      * is the thing the app has taken away. It asks first, in
+                      * so many words, and the confirmation says a second copy
+                      * is going to a company that has already had one. */}
                     <button
                       type="button"
                       onClick={() => sendRows([p.id])}
-                      disabled={!p.email || p.stage === 'sent'
+                      disabled={!p.email
                         || p.email_status === 'invalid'
                         || rowBusy !== null || Boolean(campaign?.running)}
                       title={!p.email
@@ -1439,14 +1792,20 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                         : p.email_status === 'invalid'
                           ? 'The mail server said there is no such mailbox'
                           : p.stage === 'sent'
-                            ? 'Already written to'
+                            ? `Write to ${p.company} again — they have had one of these already`
                             : `Send an application to ${p.company}`}
                       className={`p-1.5 rounded-lg hover:bg-white/[0.08] disabled:opacity-25 disabled:cursor-not-allowed cursor-pointer transition-colors ${
                         ask?.includes(p.id)
                           ? 'text-[#0a84ff] bg-[#0a84ff]/15'
-                          : 'text-[#0a84ff] hover:text-[#3b9bff]'
+                          : p.stage === 'sent'
+                            ? 'text-[rgba(235,235,245,0.42)] hover:text-[#0a84ff]'
+                            : 'text-[#0a84ff] hover:text-[#3b9bff]'
                       }`}
                     >
+                      {/* The same paper plane either way: what it does is the
+                        * same thing. The stage pill beside it already says
+                        * "Sent", so the colour only has to stop this row
+                        * reading as outstanding work. */}
                       <Send className="w-4 h-4" />
                     </button>
                     {/* Look this one company up again. The same reading a search
@@ -1843,7 +2202,7 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                       </button>
                     ))}
                   <a
-                    href={`${BACKEND}/api/outreach/documents/${chosen.id}/pdf?part=${docPart}`}
+                    href={withUser(`${BACKEND}/api/outreach/documents/${chosen.id}/pdf?part=${docPart}`)}
                     target="_blank"
                     rel="noreferrer"
                     className="ml-auto rounded-lg px-2.5 py-1 text-[12px] bg-white/[0.05] text-[rgba(235,235,245,0.62)] hover:bg-white/[0.09] cursor-pointer transition-colors"
@@ -1870,7 +2229,8 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
               <iframe
                 key={`${chosen.id}-${docPart}`}
                 title="Application PDF"
-                src={`${BACKEND}/api/outreach/documents/${chosen.id}/pdf?part=${docPart}#view=FitH`}
+                src={withUser(`${BACKEND}/api/outreach/documents/${chosen.id}/pdf?part=${docPart}`)
+                  + '#view=FitH'}
                 className="flex-1 min-h-[320px] w-full bg-[rgba(10,11,14,0.6)]"
               />
 
@@ -1893,6 +2253,10 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
 
   return (
     <div className="flex-1 w-full max-w-[1760px] mx-auto px-4 sm:px-6 lg:px-8 py-3 flex flex-col h-[calc(100vh-80px)] overflow-hidden animate-in fade-in duration-150">
+      {/* "Which of your documents go with these?" -- the last thing between a
+        * confirmed send and a stranger's inbox, so it sits above everything. */}
+      {attachmentChooser}
+
       {/* The shell is glass too, and deliberately thinner than the panels
         * inside it: two sheets of the same darkness stacked make an opaque
         * wall, and the point of the wallpaper is that it is still there. */}
@@ -1971,7 +2335,9 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
             <div className="flex items-center gap-2 shrink-0">
               <button
                 type="button"
-                onClick={() => { loadOverview(); loadProspects(page, query); loadDocuments(); }}
+                onClick={() => {
+                  loadOverview(); loadProspects(page, query); loadDocuments(); loadMailbox();
+                }}
                 className="ic-fill w-9 h-9 rounded-full flex items-center justify-center cursor-pointer"
                 title="Refresh"
               >

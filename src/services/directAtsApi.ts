@@ -1,7 +1,8 @@
+import { API_BASE } from './apiBase';
 import type { Job } from '../types/job';
 import { currentUser } from './account';
 
-const BACKEND_URL = import.meta.env.VITE_API_BASE_URL || (typeof window !== 'undefined' ? `http://${window.location.hostname || 'localhost'}:8000` : 'http://localhost:8000');
+const BACKEND_URL = API_BASE;
 
 export interface DirectApplyResult {
   success: boolean;

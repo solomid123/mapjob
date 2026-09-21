@@ -1,0 +1,61 @@
+# What must not go into the image.
+#
+# The Dockerfile copies services/ and scripts/ and nothing else, so most of
+# this is belt and braces -- but an image is a file anyone who can pull it can
+# read, and the two things this repository has most of are screenshots of real
+# job applications and live session cookies.
+
+# Secrets and live sessions. None of these belong in an image; they arrive at
+# runtime through --env-file and the volume.
+.env
+*.env
+.chrome_profile/
+.chrome_profile_test/
+agent_profile/
+**/cookies_vault.json
+**/cookies_vault.prev.json
+**/saved_cookies.json
+**/cloud_account.json
+**/portal_accounts.json
+google_service_account.json
+**/token.json
+**/credentials.json
+
+# Personal data. cv_master/ is deliberately absent from this list: it holds the
+# master CV templates the tailor cuts from, and the entrypoint moves it onto
+# the volume on first boot, where the generated per-account copies join it.
+**/profile.json
+**/profiles/
+**/documents/
+**/user_data/
+**/candidate_vault.json
+**/*.pdf
+**/*.docx
+
+# State that belongs on the volume, not in the layer.
+**/*.db
+**/applications.jsonl
+**/geocode_cache.json
+**/browser_use_cache.json
+
+# Weight with no purpose.
+node_modules/
+dist/
+.git/
+.github/
+**/__pycache__/
+*.pyc
+.backup/
+scratch/
+test_data/
+tests/
+ios/
+expo-mapjob/
+MapJOB_browser-extension/
+*.png
+*.jpg
+*.jpeg
+*.html
+*.log
+**/screenshots/
+

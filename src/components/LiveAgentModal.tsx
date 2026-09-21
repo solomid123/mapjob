@@ -1,3 +1,4 @@
+import { API_BASE } from '../services/apiBase';
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   X, 
@@ -63,7 +64,7 @@ export const LiveAgentModal: React.FC<LiveAgentModalProps> = ({
     let isMounted = true;
     const fetchState = async () => {
       try {
-        const res = await fetch('http://127.0.0.1:8000/api/apply/state');
+        const res = await fetch(`${API_BASE}/api/apply/state`);
         if (res.ok && isMounted) {
           const data: LiveAgentState = await res.json();
           setState(data);

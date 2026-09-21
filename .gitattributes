@@ -1,0 +1,10 @@
+# This repository is edited on Windows and its container runs Linux.
+#
+# A shell script checked out with CRLF line endings fails in a way that reads
+# like a missing file: the kernel takes "#!/usr/bin/env bash\r" literally and
+# reports that bash\r does not exist. Force LF on the files Linux executes.
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+

@@ -1,4 +1,7 @@
-const BACKEND_URL = import.meta.env.VITE_API_BASE_URL || (typeof window !== 'undefined' ? `http://${window.location.hostname || 'localhost'}:8000` : 'http://localhost:8000');
+import { API_BASE } from './apiBase';
+import { withUser } from './account';
+
+const BACKEND_URL = API_BASE;
 
 export interface EmailStatus {
   receipt_email_configured: boolean;
@@ -15,7 +18,7 @@ export interface EmailStatus {
  */
 export async function getEmailStatus(): Promise<EmailStatus | null> {
   try {
-    const res = await fetch(`${BACKEND_URL}/api/apply/email-status`);
+    const res = await fetch(withUser(`${BACKEND_URL}/api/apply/email-status`));
     if (!res.ok) return null;
     return await res.json();
   } catch {

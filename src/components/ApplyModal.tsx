@@ -1,3 +1,4 @@
+import { API_BASE } from '../services/apiBase';
 import React, { useState, useEffect, useRef } from 'react';
 import { X, FileText, CheckCircle2, ArrowRight, Building2, MonitorPlay, Sparkles, ChevronDown, AlertCircle, ExternalLink } from 'lucide-react';
 import type { Job } from '../types/job';
@@ -134,7 +135,7 @@ export const ApplyModal: React.FC<ApplyModalProps> = ({
       setIsSubmitting(false);
       setSubmissionNotice({
         type: 'error',
-        message: err.message || 'Could not connect to automation backend at http://127.0.0.1:8000.'
+        message: err.message || `Could not connect to the automation backend at ${API_BASE}.`
       });
     }
   };

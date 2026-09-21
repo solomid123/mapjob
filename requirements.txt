@@ -1,0 +1,41 @@
+# What the API needs to run, at the versions this desk has been running it on.
+#
+# Pinned on purpose. This app drives real browsers against real job boards and
+# sends real applications; a silent minor-version bump in Playwright or
+# Selenium is the kind of thing that changes a selector's behaviour at two in
+# the morning with nobody watching. Bump a line when you mean to, not when a
+# deploy happens to run.
+#
+#   pip install -r requirements.txt
+#   python -m playwright install --with-deps chromium
+
+# --- the API itself -------------------------------------------------------
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.13.3
+python-multipart==0.0.20        # file uploads: CVs, attachments
+websockets==14.1                # the transcribe relay
+python-dotenv==1.0.0
+
+# --- talking to the outside ----------------------------------------------
+requests==2.33.1
+httpx==0.27.2                   # pulled in by openai; pinned so it stays put
+openai==2.33.0                  # also the client for Fuelix, same protocol
+dnspython==2.6.1                # MX lookups in email_verify
+
+# --- browsers -------------------------------------------------------------
+playwright==1.49.1
+selenium==4.46.0
+undetected-chromedriver==3.5.5
+psutil==7.0.0                   # finding and not killing the wrong Chrome
+
+# --- documents ------------------------------------------------------------
+pypdf==6.14.2
+PyMuPDF==1.27.2.3               # imported as fitz: reading an uploaded CV
+python-docx==1.0.1
+reportlab==4.2.2                # writing the letter and the Deckblatt
+pillow==12.3.0
+
+# --- storage --------------------------------------------------------------
+psycopg2-binary==2.9.12         # Supabase Postgres
+

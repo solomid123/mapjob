@@ -1,0 +1,30 @@
+# A tunnel from a hostname you own to the API running on this desk.
+#
+# Copy to the place cloudflared reads on this machine:
+#   Windows: C:\Users\<you>\.cloudflared\config.yml
+#   Linux:   ~/.cloudflared/config.yml
+# and replace the two names. Nothing here is a secret; the credentials are the
+# JSON file the tunnel login wrote, and that file must never be committed.
+#
+# The point of a tunnel rather than a forwarded port: no open port on the
+# router, no static IP, and the machine dials out rather than being dialled.
+
+tunnel: mapjob
+credentials-file: C:\Users\ba2rb\.cloudflared\mapjob.json
+
+ingress:
+  # The API. Everything the SPA calls lives under /api, plus the websocket the
+  # interview helper uses and the PDF routes the document panes open.
+  - hostname: api.example.com
+    service: http://127.0.0.1:8000
+    originRequest:
+      # An apply run can hold a request open while a browser works through a
+      # form. The default 30s would cut those off mid-application.
+      connectTimeout: 30s
+      noTLSVerify: true
+      # Long-lived responses: the run log stream and the transcribe socket.
+      keepAliveTimeout: 300s
+
+  # Anything that reaches the tunnel and is not the hostname above.
+  - service: http_status:404
+

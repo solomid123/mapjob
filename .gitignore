@@ -47,6 +47,8 @@ saved_cookies.json
 cookies_vault.json
 services/automation/saved_cookies.json
 services/automation/cookies_vault.json
+services/automation/cookies_vault.prev.json
+services/automation/cloud_account.json
 
 # Candidate documents (PII)
 *_CV.pdf
@@ -89,3 +91,16 @@ services/automation/verify_cache.db-shm
 # with the CV merged after it. Personal data twice over -- the candidate's and
 # the employer's contact's -- and regenerated from the ledger on demand.
 services/automation/dossiers/
+
+# The cloud engine remembers its uploaded CV id here. Account-scoped, not code.
+services/automation/browser_use_cache.json
+
+# The profile page writes here: home address, phone, employment history.
+services/automation/profile.json
+
+# Tailored CVs and letters: a home address and an employment history per job.
+services/automation/documents/
+
+# Connected mailboxes: one refresh token per account. A key to somebody's mail.
+services/automation/mailboxes.json
+services/automation/mailboxes.part

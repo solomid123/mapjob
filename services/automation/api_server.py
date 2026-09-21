@@ -25,7 +25,7 @@ if sys.platform == "win32":
 from typing import Optional, Dict, Any, List
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, FileResponse, Response
+from fastapi.responses import StreamingResponse, FileResponse, Response, HTMLResponse
 import urllib.request
 import re
 import requests
@@ -47,6 +47,8 @@ except Exception:  # noqa: BLE001 - python-dotenv is optional, the app is not
     pass
 
 from services.automation.ai_dom_agent import AIDOMAgent
+from services.automation import people
+from services.automation import profile_store
 from services.automation.candidate_profile import CANDIDATE_PROFILE
 from services.automation.page_agent_manager import PageAgentManager
 from services.automation import agent_profile
@@ -96,6 +98,12 @@ active_agent_status = {
 
 current_manager_container = {"manager": None}
 current_driver_container = {"driver": None}
+
+# Which engine the last /api/apply chose, and therefore whose progress
+# /api/apply/state and /api/cancel are talking about. A single name rather than
+# a pair of parallel states: the panel shows one run, so the server should be
+# able to answer "what is happening" without the client having to ask twice.
+active_engine = {"name": "local"}
 
 # Set when Stop is pressed.
 #
@@ -158,6 +166,26 @@ class ApplyRequest(pydantic.BaseModel):
     # A rehearsal by default: the agent fills the form and stops with the Submit
     # button untouched, so nothing reaches an employer unless it is asked for.
     dry_run: Optional[bool] = True
+    # Which browser does the work: "local" drives Chrome on this machine,
+    # "cloud" hands the same brief and the same CV to Browser Use's hosted
+    # browser. The default stays local, because that is the one that needs no
+    # account, costs nothing per run, and is what every existing caller means.
+    engine: Optional[str] = "local"
+    # The advert itself. Sent because the run tailors the CV against it before
+    # it opens the browser, and the backend has no copy of a listing the
+    # frontend fetched from a board: without these two the tailoring would have
+    # nothing to read but a job title.
+    description: Optional[str] = ""
+    location: Optional[str] = ""
+    # Which held documents ride along -- transcripts, a diploma, a work permit --
+    # and whether they go as one bound PDF or as separate files. Ids, not paths:
+    # a request that named a file would be a request to read any file on disk.
+    document_ids: List[str] = []
+    merge_documents: bool = False
+    # Whose application this is. It decides whose documents may be attached,
+    # whose profile fills the form, and which language the letter is written
+    # in -- so it is not a display preference, it is part of the request.
+    user: Optional[str] = ""
 
 # --------------------------------------------------------------------------
 # Driver failures, in the candidate's language.
@@ -320,18 +348,20 @@ def classify_outcome(result: Dict[str, Any], dry_run: bool) -> str:
 def log_outcome(outcome: str, *, job_title: str, company: str, url: str,
                 job_id: Optional[str], message: str, evidence: str = "",
                 dry_run: bool = False, started_at: Optional[float] = None,
-                extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                extra: Optional[Dict[str, Any]] = None,
+                user: str = "") -> Dict[str, Any]:
     """Records the run in the ledger and says so in the log, in plain words."""
     record = record_outcome(outcome, company=company, job_title=job_title, url=url,
                             job_id=job_id, message=message, evidence=evidence,
-                            dry_run=dry_run, started_at=started_at, extra=extra)
+                            dry_run=dry_run, started_at=started_at, extra=extra,
+                            user=user or str(agent_state.get("user") or ""))
     if outcome not in ("awaiting_review", "cancelled"):
         push_log(f"Tracked as: {OUTCOMES.get(outcome, outcome)}.", step=10)
     return record
 
 def finalize_submission(job_title: str, company: str, portal_url: str, evidence: str,
                         job_id: Optional[str], notify_email: Optional[str],
-                        started_at: float) -> Dict[str, Any]:
+                        started_at: float, user: str = "") -> Dict[str, Any]:
     """Record a *verified* submission and tell the candidate it happened.
 
     This runs only after the agent confirmed the employer's own success state,
@@ -343,7 +373,11 @@ def finalize_submission(job_title: str, company: str, portal_url: str, evidence:
     from services.automation.supabase_db import save_application_record
 
     submitted_at = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started_at))
-    recipient = notify_email or CANDIDATE_PROFILE.get("email") or ""
+    # The receipt goes to whoever applied. Defaulting to the module profile
+    # sent her confirmations to his inbox, where she never saw them.
+    recipient = (notify_email
+                 or profile_store.profile_for(people.resolve(user)).get("email")
+                 or "")
 
     try:
         save_application_record(
@@ -394,14 +428,41 @@ def finalize_submission(job_title: str, company: str, portal_url: str, evidence:
         "employer_confirmation": {"found": False, "pending": True},
     }
 
+def tailor_for_run(job_id: Optional[str], job_title: str, company: str,
+                   location: str, url: str, description: str,
+                   user: str = "") -> str:
+    """The local engine's CV for this advert, reported into the run's own log.
+
+    Whose CV is part of the question: one of the two accounts does not have a
+    CV that is rewritten per advert, and answering for the wrong person here
+    attaches the wrong life to the form."""
+    try:
+        from services.automation import tailor as tailor_module
+    except Exception:
+        return ""
+    return tailor_module.cv_for_application(
+        job_id or "", job_title, company, location, url, description,
+        log=lambda message: push_log(message, step=1), user=user)
+
+
 def run_agent_thread(target_url: str, job_title: str = "Candidate Position", company: str = "Employer",
                     headless: bool = False, job_id: Optional[str] = None,
-                    notify_email: Optional[str] = None, dry_run: bool = True):
+                    notify_email: Optional[str] = None, dry_run: bool = True,
+                    description: str = "", location: str = "", user: str = ""):
     active_agent_status["is_running"] = True
     started_at = time.time()
     push_log(f"Starting Autonomous AI Application Engine for URL: {target_url}", step=1)
     if dry_run:
         push_log("Rehearsal mode: the form gets filled, the Submit button is left for you.", step=1)
+
+    # The CV this run will carry, cut for this advert. It happens before the
+    # browser opens because it is the one part of the run that can be done
+    # without a page in front of it, and because an employer's form left open
+    # for twenty seconds while a model thinks is a session waiting to time out.
+    # An unchanged advert returns the document already on disk, so the second
+    # application to the same listing pays nothing.
+    tailored_cv = tailor_for_run(job_id, job_title, company, location, target_url,
+                                 description, user=user)
 
     # 1. Pre-resolve direct destination portal if this is an Adzuna aggregator wrapper
     resolved_url = resolve_direct_portal(target_url)
@@ -488,6 +549,10 @@ def run_agent_thread(target_url: str, job_title: str = "Candidate Position", com
         # run whose whole point is that you can watch it. It owns no state
         # until `run_agent`, so moving it up costs nothing.
         page_manager = PageAgentManager(driver, log_callback=push_log)
+        # Only if the file is really there: use_cv says no rather than leaving
+        # the run with a path to nothing, and the standard CV stays in place.
+        if tailored_cv and not page_manager.use_cv(tailored_cv):
+            push_log("The tailored CV could not be read; sending the standard one.", step=2)
         current_manager_container["manager"] = page_manager
         # An empty browser window, but a real one: proof the run got that far.
         page_manager.capture_screenshot()
@@ -503,7 +568,17 @@ def run_agent_thread(target_url: str, job_title: str = "Candidate Position", com
         # The agent now types every field itself rather than finishing off what
         # a second filler started, so the run is a handful of steps longer at
         # roughly four seconds each. The budget reflects that.
-        res = page_manager.run_agent(job_title=job_title, company=company, candidate=CANDIDATE_PROFILE,
+        # Whose details get typed into the employer's form.
+        #
+        # This read the module-level profile, which is one person: an
+        # application started from her account filled in his name, his address
+        # and his phone number, and with `submit` on that is what the employer
+        # receives. The secrets are stripped on the way out -- the dict is
+        # handed to a model that decides what goes in each field, and a portal
+        # password is not an answer to any of them.
+        res = page_manager.run_agent(job_title=job_title, company=company,
+                                     candidate=profile_store.public_profile(
+                                         profile_store.profile_for(people.resolve(user))),
                                      max_wait_seconds=180, submit=not dry_run)
 
         success = res.get("success", False)
@@ -527,6 +602,10 @@ def run_agent_thread(target_url: str, job_title: str = "Candidate Position", com
                 "job_id": job_id,
                 "notify_email": notify_email,
                 "started_at": started_at,
+                # Whose application is waiting on the screen. The send button
+                # comes back as a separate request with nothing on it, and the
+                # receipt for it has to reach the person who applied.
+                "user": people.resolve(user),
                 "expires_at": time.time() + REVIEW_WINDOW_SECONDS,
             })
             threading.Thread(target=expire_pending_review, args=(pending_review["expires_at"],),
@@ -544,6 +623,7 @@ def run_agent_thread(target_url: str, job_title: str = "Candidate Position", com
                 job_id=job_id,
                 notify_email=notify_email,
                 started_at=started_at,
+                user=user,
             )
             push_log("Application recorded and receipt processed.", step=10, done=True, success=True)
         elif barrier:
@@ -780,6 +860,7 @@ def submit_pending_thread():
                 job_id=pending_review.get("job_id"),
                 notify_email=pending_review.get("notify_email"),
                 started_at=started_at,
+                user=str(pending_review.get("user") or agent_state.get("user") or ""),
             )
             push_log("Application recorded and receipt processed.", step=10, done=True, success=True)
         elif barrier:
@@ -842,6 +923,18 @@ def root():
 
 @app.post("/api/cancel")
 def cancel_application():
+    if active_engine.get("name") == "cloud":
+        # Stopping a cloud run means telling the cloud, not closing a window
+        # here: there is no window here. The remote session is billed by the
+        # minute, so this call matters even after the panel has been closed.
+        # The ledger entry is written by the engine's own finish hook, which runs
+        # for every ending there is; writing one here too would record the same
+        # stop twice.
+        from services.automation import browser_use_cloud
+        if browser_use_cloud.is_running():
+            browser_use_cloud.cancel()
+        return {"status": "cancelled", "engine": "cloud"}
+
     agent_cancelled.set()
     active_agent_status["is_running"] = False
     agent_state["is_running"] = False
@@ -881,7 +974,8 @@ def cancel_application():
                    url=agent_state.get("target_url", ""),
                    job_id=agent_state.get("job_id", ""),
                    message="Stopped from the panel before it finished.",
-                   started_at=agent_state.get("started_at"))
+                   started_at=agent_state.get("started_at"),
+                   user=str(agent_state.get("user") or ""))
     return {"status": "cancelled"}
 
 
@@ -976,7 +1070,7 @@ def get_apply_screenshot(seq: int = 0):
 
 
 @app.get("/api/applications")
-def list_applications(limit: int = 50, job_id: str = ""):
+def list_applications(limit: int = 50, job_id: str = "", user: str = ""):
     """
     What happened to every application that has been run, newest first.
 
@@ -984,7 +1078,7 @@ def list_applications(limit: int = 50, job_id: str = ""):
     that when it closes. This is the durable answer to "did that one go
     through?" -- including, and especially, for the runs that did not.
     """
-    records = read_outcomes(limit=max(1, min(limit, 500)), job_id=job_id)
+    records = read_outcomes(limit=max(1, min(limit, 500)), job_id=job_id, user=user)
     return {
         "count": len(records),
         "vocabulary": OUTCOMES,
@@ -996,6 +1090,13 @@ def list_applications(limit: int = 50, job_id: str = ""):
 
 @app.get("/api/apply/state")
 def get_apply_state():
+    # The cloud engine keeps its own copy of this exact shape, so answering for
+    # it is a handover rather than a translation: one contract, one poller, one
+    # panel, whichever browser is doing the work.
+    if active_engine.get("name") == "cloud":
+        from services.automation import browser_use_cloud
+        return browser_use_cloud.state()
+
     manager = current_manager_container.get("manager")
     seq = int(getattr(manager, "screenshot_seq", 0) or 0) or int(agent_state.get("screenshot_seq") or 0)
     # A URL rather than the picture itself, so polling this stays cheap.
@@ -1017,11 +1118,535 @@ def get_apply_state():
         "model": PAGE_AGENT_MODEL,
         # True while a filled form is sitting in an open browser, unsent.
         "awaiting_review": bool(pending_review.get("driver")),
+        "engine": "local",
+        # The local engine sends pictures, not a page; the field exists so the
+        # panel can decide by looking at the data instead of at the engine name.
+        "live_url": "",
     }
+
+# ---------------------------------------------------------------------------
+# The profile
+#
+# One record behind the application forms, the interview answers, the letters
+# and the tailored CV. It is served without `password` / `passwords` and cannot
+# be written with them: a page that could show a password is a page that leaks
+# it to every tab and screen share, and the apply engines read those from the
+# defaults file and .env instead.
+# ---------------------------------------------------------------------------
+
+class ProfilePatch(pydantic.BaseModel):
+    """Whatever the page changed. Absent keys are left alone, null clears one."""
+    model_config = pydantic.ConfigDict(extra="allow")
+
+
+@app.get("/api/people")
+def list_people():
+    """
+    Who this app is for.
+
+    Two accounts with opposite searches -- mechanical engineering in France,
+    an Ausbildung in Germany -- and the language each applies in, so the page
+    does not have to guess it and the letter writer does not have to ask.
+    """
+    from services.automation import people
+
+    return {"people": people.all_people(), "default": people.DEFAULT}
+
+
+class SignInBody(pydantic.BaseModel):
+    user: str = ""
+    password: str = ""
+
+
+@app.post("/api/people/signin")
+def people_signin(body: SignInBody):
+    """
+    The front door's lock.
+
+    Checked here rather than in the browser so the answer is not shipped in the
+    bundle for anyone who opens the dev tools. It is still only the front door:
+    every other route in this app answers for whatever `user=` it is given, and
+    this check does not change that. See `people.password_ok` for what that
+    means and what it would take to be more.
+
+    A wrong password costs a third of a second before it is refused. Not a
+    defence -- it is a four-digit default -- but it turns a guessing script from
+    thousands of tries a second into a few, which is the difference between
+    walking the whole keyspace over a coffee and not.
+    """
+    from services.automation import people
+
+    who = people.resolve(body.user)
+    if not people.password_ok(who, body.password):
+        time.sleep(0.35)
+        # Which account it was is not a secret -- they are listed on the page --
+        # but nothing here says whether the name or the password was the part
+        # that was wrong, because only one of the two can be.
+        return {"ok": False, "user": "", "reason": "That is not the password."}
+    return {"ok": True, "user": who,
+            # So a deployment can be told, on the page, that it is still using
+            # the password this repository ships with.
+            "default_password": people.password_is_default(who)}
+
+
+@app.get("/api/profile")
+def get_profile(user: str = ""):
+    profile_store = _import_profile_store()
+    from services.automation import people
+
+    who = people.resolve(user)
+    return {
+        "user": who,
+        "person": people.get(who),
+        "profile": profile_store.public_profile(profile_store.profile_for(who)),
+        # So the page can grey out what it may not write rather than offering a
+        # field whose save silently does nothing.
+        "editable": list(profile_store.EDITABLE),
+        "stored": sorted(profile_store.load_overlay(who).keys()),
+    }
+
+
+@app.put("/api/profile")
+def update_profile(patch: ProfilePatch, user: str = ""):
+    profile_store = _import_profile_store()
+    from services.automation import candidate_profile as cp
+    from services.automation import people
+
+    who = people.resolve(user)
+    incoming = patch.model_dump()
+    # `user` travels as a query parameter, but a page that sends it in the body
+    # too should not have it stored as a profile field.
+    incoming.pop("user", None)
+    refused = sorted(k for k in incoming
+                     if k in profile_store.SECRET or k not in profile_store.EDITABLE)
+    profile_store.save_overlay(incoming, who)
+    if who == people.DEFAULT:
+        # The engines still import one module-level dict by name. Keeping it in
+        # step matters only for the account it describes; everyone else is read
+        # per request, which is the direction the rest of this is going.
+        cp.reload_profile()
+    return {
+        "user": who,
+        "profile": profile_store.public_profile(profile_store.profile_for(who)),
+        "saved": sorted(k for k in incoming if k not in refused),
+        # Named, not silently dropped: a field that will not save should say so.
+        "refused": refused,
+    }
+
+
+@app.post("/api/profile/import")
+async def import_profile_from_cv(file: UploadFile = File(...), user: str = ""):
+    """Read an uploaded CV, keep it as this person's master CV, and propose the
+    fields it states.
+
+    The fields are a proposal, not a save: they go to the page, which fills its
+    boxes with them and leaves the person to correct, delete and then save. A
+    bad extraction must not be able to overwrite an employment history that was
+    typed in by hand.
+
+    The file is a different matter. It used to be read and dropped, which meant
+    the CV a person actually sends lived nowhere -- the tailoring step cut from
+    an HTML file in the repository instead, and uploading a new CV changed
+    nothing about what went out. So the upload now replaces the master CV for
+    this account: one per person, held in the same private library as their
+    other documents, kept out of the attachment chooser because it is the
+    source a tailored CV is cut from rather than a fourth thing to attach.
+    """
+    name = (file.filename or "CV.pdf").strip()
+    ext = os.path.splitext(name)[1].lower()
+    if ext not in (".pdf", ".docx"):
+        raise HTTPException(
+            status_code=415,
+            detail="Upload a PDF (or a DOCX). " + (ext or "That kind of file")
+            + " is not read here.",
+        )
+
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="That file is empty")
+    if len(raw) > 12 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="A CV over 12 MB is not a CV")
+    # The extension is a claim; the first bytes are the fact.
+    if ext == ".pdf" and not raw[:5].startswith(b"%PDF"):
+        raise HTTPException(status_code=415, detail="That is not a PDF inside")
+
+    from services.automation import people, profile_import
+
+    who = people.resolve(user)
+    try:
+        result = profile_import.read(raw, name)
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001 - the reason belongs on the page
+        raise HTTPException(status_code=422, detail=f"Could not read {name}: {e}")
+
+    # Kept after it is read, and only if it was read: a file that could not be
+    # parsed is not a master CV, it is an upload that went wrong.
+    try:
+        lib = _library()
+        held = lib.add(raw, name, title=name, kind=lib.MASTER_CV, user=who)
+        result["master_cv"] = held
+        result.setdefault("notes", []).append(
+            "Kept as your master CV. Tailored versions are cut from this file "
+            "from now on, and uploading another one replaces it.")
+    except Exception as e:  # noqa: BLE001 - the fields are still worth having
+        result.setdefault("notes", []).append(
+            "The fields were read, but the file itself was not kept as your "
+            "master CV: " + str(e)[:160])
+    return result
+
+
+def _import_profile_store():
+    from services.automation import profile_store
+    return profile_store
+
+
+# ---------------------------------------------------------------------------
+# The document library
+#
+# The CV and the letter are written per application. Everything else an
+# employer asks for -- a transcript, a diploma, a residence permit, a reference
+# -- is the same file every time, and it is held here so that both products can
+# attach it: the email campaign beside the tailored pair, the cloud agent
+# alongside the CV it uploads.
+#
+# The files are the most identifying documents a person owns. They are served
+# only by id, through this router, from one folder that nothing else writes to.
+# ---------------------------------------------------------------------------
+
+class DocumentPatch(pydantic.BaseModel):
+    title: Optional[str] = None
+    kind: Optional[str] = None
+    attach_by_default: Optional[bool] = None
+
+
+def _library():
+    from services.automation import document_library
+    return document_library
+
+
+@app.get("/api/library")
+def list_documents(user: str = ""):
+    lib = _library()
+    from services.automation import people
+
+    who = people.resolve(user)
+    master = lib.master_cv(who)
+    return {"user": who,
+            "documents": lib.all_documents(who),
+            # The master CV is held in the same library but never offered as an
+            # attachment, so the page can show it without the chooser seeing it.
+            "master_cv": lib._public(master) if master else None,
+            "kinds": list(lib.KINDS),
+            "accepts": sorted(lib.SUFFIXES.keys()),
+            "max_bytes": lib.MAX_BYTES}
+
+
+@app.post("/api/library")
+async def add_document(file: UploadFile = File(...), title: str = "",
+                       kind: str = "other", attach_by_default: bool = False,
+                       user: str = ""):
+    lib = _library()
+    raw = await file.read()
+    try:
+        row = lib.add(raw, file.filename or "document", title=title, kind=kind,
+                      attach_by_default=attach_by_default, user=user)
+    except ValueError as e:
+        raise HTTPException(status_code=415, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Could not keep that file: {e}")
+    return {"document": row}
+
+
+@app.patch("/api/library/{document_id}")
+def edit_document(document_id: str, patch: DocumentPatch, user: str = ""):
+    lib = _library()
+    row = lib.update(document_id, {k: v for k, v in patch.model_dump().items()
+                                   if v is not None}, user=user)
+    if not row:
+        raise HTTPException(status_code=404, detail="No such document.")
+    return {"document": row}
+
+
+@app.delete("/api/library/{document_id}")
+def drop_document(document_id: str, user: str = ""):
+    if not _library().remove(document_id, user=user):
+        raise HTTPException(status_code=404, detail="No such document.")
+    return {"removed": document_id}
+
+
+@app.get("/api/library/{document_id}/file")
+def read_document(document_id: str, user: str = ""):
+    """The file itself, inline, for the preview pane.
+
+    By id and by owner: an id alone would let one account read the other's
+    passport scan by guessing twelve hex characters, and a route that took a
+    path would be a file-read endpoint on the server's disk. The bytes come
+    from the private bucket via the local cache -- the browser is never given
+    a storage URL, signed or otherwise.
+    """
+    lib = _library()
+    row = lib.get(document_id, user)
+    path = lib.path_of(document_id, user)
+    if not row or not path:
+        raise HTTPException(status_code=404, detail="No such document.")
+    return FileResponse(
+        str(path), media_type=str(row.get("mime") or "application/octet-stream"),
+        headers={"Content-Disposition":
+                 'inline; filename="' + str(row.get("filename") or "document") + '"'})
+
+
+# ---------------------------------------------------------------------------
+# Tailored documents
+#
+# One CV and one letter per listing, cut from the master in cv_master/ against
+# what that employer actually advertised. Generation is slow enough to feel
+# (a model call and two print jobs, around twenty seconds) and cheap enough to
+# do on demand, so it is one blocking request rather than a job queue: the page
+# asks for a document and gets a document.
+#
+# The files themselves are served from here rather than from the web app, so
+# that there is exactly one place deciding what may be read out of that folder.
+# ---------------------------------------------------------------------------
+
+class TailorRequest(pydantic.BaseModel):
+    job_id: str
+    title: str = ""
+    company: str = ""
+    location: str = ""
+    url: str = ""
+    description: str = ""
+    # Re-tailoring an unchanged advert is a model call for a document that
+    # already exists, so it only happens when asked for.
+    force: bool = False
+    # Whose application. It decides which master is cut, whose letterhead is
+    # printed and which account's shelf the files land on.
+    user: str = ""
+
+
+@app.post("/api/tailor")
+def tailor_documents(request: TailorRequest):
+    from services.automation import tailor as tailoring
+    job = request.model_dump()
+    force = bool(job.pop("force", False))
+    if not (job.get("job_id") or "").strip():
+        raise HTTPException(status_code=400, detail="A document has to belong to a job.")
+    try:
+        meta = tailoring.tailor(job, force=force,
+                                log=lambda m: print(f"[Tailor] {m}", flush=True))
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001 - the page needs the reason, not a 500 page
+        print(f"[Tailor] failed: {exc.__class__.__name__}: {exc}", flush=True)
+        raise HTTPException(status_code=500,
+                            detail=f"Tailoring failed: {exc.__class__.__name__}")
+    return meta
+
+
+@app.get("/api/documents")
+def list_tailored_documents(job_id: str = "", limit: int = 100, user: str = ""):
+    """Everything this account has tailored, or the one job asked about.
+
+    Scoped by account, always. The Tailoring pane lists what comes back from
+    here, and unscoped it opened her page on fourteen of his French CVs."""
+    from services.automation import documents
+    if job_id:
+        meta = documents.read_meta(job_id, user)
+        return {"documents": [meta] if meta else []}
+    return {"documents": documents.list_documents(limit=max(1, min(limit, 500)),
+                                                  user=user)}
+
+
+@app.get("/api/tailor/gaps")
+def tailoring_gaps(language: str = "fr", user: str = ""):
+    """
+    Whether the master CV still matches the profile.
+
+    Worth its own endpoint because the failure is silent: the letter is written
+    from the profile and the CV is cut from the master, so a job added to one
+    and not the other produces a letter describing work the attached CV does not
+    show. The page says so rather than letting that go out.
+    """
+    from services.automation import tailor as tailoring
+    return tailoring.master_gaps(language, user)
+
+
+@app.get("/api/documents/{job_slug}/{filename}")
+def get_tailored_document(job_slug: str, filename: str, user: str = ""):
+    from services.automation import documents
+    path = documents.resolve(job_slug, filename, user)
+    if not path:
+        raise HTTPException(status_code=404, detail="No such document.")
+    media = "application/pdf" if filename.endswith(".pdf") else "text/html; charset=utf-8"
+    # inline: these are opened in the viewer on the history pane, not downloaded.
+    return FileResponse(str(path), media_type=media,
+                        headers={"Content-Disposition": f'inline; filename="{filename}"',
+                                 "Cache-Control": "no-store"})
+
+
+@app.get("/api/apply/engines")
+def list_apply_engines():
+    """
+    Which browsers are available to apply with, so the chooser can offer a real
+    choice rather than a setting that fails on click.
+
+    The cloud engine needs an API key; without one it is listed and disabled,
+    with the name of the variable to set. The value itself is never returned --
+    the same rule the outreach overview follows.
+    """
+    from services.automation import browser_use_cloud
+    return {
+        "active": active_engine.get("name", "local"),
+        "engines": [
+            {
+                "id": "local",
+                "label": "This computer",
+                "detail": "Chrome opens here. You can watch it and take over.",
+                "available": True,
+                "model": PAGE_AGENT_MODEL,
+            },
+            {
+                "id": "cloud",
+                "label": "Browser Use cloud",
+                "detail": ("Runs on their machine, signed in, behind a French IP."
+                           if browser_use_cloud.profile_id()
+                           else "Runs on their machine behind a French IP. Signed into nothing."),
+                "available": browser_use_cloud.is_configured(),
+                "requires_env": "BROWSER_USE_API_KEY",
+                "model": browser_use_cloud.MODEL,
+            },
+        ],
+    }
+
+
+class CloudKeyBody(pydantic.BaseModel):
+    key: str = ""
+
+
+@app.get("/api/apply/cloud-key")
+def cloud_key_status():
+    """
+    Which cloud account is in force, without saying what its key is.
+
+    Four characters of tail, whether it came from .env or from this panel, the
+    profile it is using, and which sites that profile is signed into -- the last
+    read from memory rather than from their API, because this is polled while a
+    seeding job runs.
+    """
+    from services.automation import cloud_profile
+
+    return cloud_profile.status()
+
+
+@app.post("/api/apply/cloud-key")
+def cloud_key_set(body: CloudKeyBody):
+    """
+    Point the whole installation at a different Browser Use account.
+
+    This is the answer to the only question that has no good one otherwise: the
+    credit runs out mid-search, and the alternative is editing .env and
+    restarting the server, which is not a thing to do while looking at a job you
+    want to apply to.
+
+    Pasting a key does four things -- check it, drop the old account's profile
+    id because profiles do not cross organisations, find or make a profile on
+    the new account, and copy this machine's signed-in sessions into its browser
+    so the first application does not land on a login wall. The fourth runs in
+    the background; the panel watches it through the GET above.
+    """
+    from services.automation import cloud_profile
+
+    result = cloud_profile.adopt_key(body.key)
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("message", "That key did not work."))
+    return {**result, **cloud_profile.status()}
+
+
+@app.post("/api/apply/cloud-seed")
+def cloud_seed():
+    """
+    Sign the cloud browser in again, on purpose.
+
+    Not automatic, because the automatic one only fires on a profile with no
+    cookies at all: on a profile that has some, pouring the vault over it can
+    replace a session the agent is using with an older copy of itself. This is
+    the button for when it has gone stale anyway.
+    """
+    from services.automation import cloud_profile
+
+    if not cloud_profile.api_key():
+        raise HTTPException(400, "No Browser Use key is set.")
+    return cloud_profile.start_seeding()
+
+
+@app.post("/api/apply/cloud-harvest")
+def cloud_harvest():
+    """
+    Bring the cloud browser's cookies home, into the vault on this machine.
+
+    Worth doing before an account dies rather than after: reading a profile
+    means starting a browser on it, and an account with no credit left cannot
+    start one. Everything the cloud signed itself into -- boards it registered
+    on mid-application -- lives only there until this runs.
+    """
+    from services.automation import cloud_profile
+
+    if not cloud_profile.api_key():
+        raise HTTPException(400, "No Browser Use key is set.")
+    return cloud_profile.harvest()
+
+
+def _record_cloud_outcome(result: dict, snapshot: dict) -> None:
+    """Write a finished cloud run into the same ledger the local engine uses."""
+    outcome = result.get("outcome") or ("applied" if result.get("submitted") else "error")
+    if outcome not in OUTCOMES:
+        outcome = "error"
+    extra = {"engine": "cloud", "model": result.get("model") or snapshot.get("model", "")}
+    if result.get("cost_usd") is not None:
+        extra["cost_usd"] = result["cost_usd"]
+    record_outcome(outcome,
+                   company=snapshot.get("company", ""),
+                   job_title=snapshot.get("job_title", ""),
+                   url=snapshot.get("target_url", ""),
+                   job_id=snapshot.get("job_id", ""),
+                   message=result.get("message", ""),
+                   dry_run=bool(result.get("dry_run")),
+                   started_at=snapshot.get("started_at"),
+                   extra=extra,
+                   user=str(snapshot.get("user") or ""))
+
 
 @app.post("/api/apply")
 def start_application(req: ApplyRequest):
-    if active_agent_status["is_running"]:
+    from services.automation import browser_use_cloud
+
+    if (req.engine or "local").lower() == "cloud":
+        # The two engines share the "one application at a time" rule, because
+        # they share one panel: two runs would fight over the same progress rail
+        # and the candidate would have no way to tell whose step they are reading.
+        if active_agent_status["is_running"] or browser_use_cloud.is_running():
+            raise HTTPException(status_code=400, detail="An application is already running.")
+        if not browser_use_cloud.is_configured():
+            raise HTTPException(
+                status_code=503,
+                detail="The cloud engine needs BROWSER_USE_API_KEY in .env before it can run.")
+        close_pending_review("superseded by a cloud run")
+        browser_use_cloud.on_finish = _record_cloud_outcome
+        browser_use_cloud.start(req.url, req.job_title or "Position",
+                                req.company or "Employer",
+                                True if req.dry_run is None else bool(req.dry_run),
+                                job_id=req.job_id or "",
+                                description=req.description or "",
+                                location=req.location or "",
+                                document_ids=list(req.document_ids or []),
+                                merge_documents=bool(req.merge_documents),
+                                user=people.resolve(req.user))
+        active_engine["name"] = "cloud"
+        return {"status": "started", "url": req.url, "engine": "cloud",
+                "receipt_email_configured": False, "receipt_email_hint": ""}
+
+    active_engine["name"] = "local"
+    if active_agent_status["is_running"] or browser_use_cloud.is_running():
         raise HTTPException(status_code=400, detail="An application is already running in background.")
 
     # A browser left open on someone else's half-reviewed form has no claim on
@@ -1051,12 +1676,29 @@ def start_application(req: ApplyRequest):
     agent_state["last_result"] = None
     agent_state["dry_run"] = True if req.dry_run is None else bool(req.dry_run)
     agent_state["started_at"] = time.time()
+    # Whose run. The ledger line this produces is filed under it, so one
+    # account's history never shows the other's applications.
+    agent_state["user"] = people.resolve(req.user)
+
+    if req.document_ids:
+        # The browser on this computer attaches the CV and nothing else: its
+        # uploader takes one path. Saying so here beats a run that quietly drops
+        # the transcript the candidate ticked and reports success anyway.
+        from services.automation import document_library as _library
+        held = _library.chosen(list(req.document_ids), user=people.resolve(req.user))
+        if held:
+            push_log("This engine attaches the CV only, so "
+                     + ", ".join(str(r.get("title") or r.get("filename")) for r in held)
+                     + " will not go with it. Use the cloud engine or an email "
+                       "application to send them.")
 
     t = threading.Thread(
         target=run_agent_thread,
         args=(req.url, req.job_title or "Candidate Position", req.company or "Employer", req.headless),
         kwargs={"job_id": req.job_id, "notify_email": req.notify_email,
-                "dry_run": True if req.dry_run is None else bool(req.dry_run)},
+                "dry_run": True if req.dry_run is None else bool(req.dry_run),
+                "description": req.description or "", "location": req.location or "",
+                "user": people.resolve(req.user)},
         daemon=True
     )
     t.start()
@@ -1070,16 +1712,120 @@ def start_application(req: ApplyRequest):
     }
 
 @app.get("/api/apply/email-status")
-def get_apply_email_status():
+def get_apply_email_status(user: str = ""):
     """Whether MapJob can email a submission receipt, and to whom."""
     from services.automation import mailer
     from services.automation.email_watcher import EmailWatcher
     return {
         "receipt_email_configured": mailer.is_configured(),
         "receipt_email_hint": mailer.configuration_hint(),
-        "recipient": CANDIDATE_PROFILE.get("email", ""),
+        # The asking account's own address, not the app's first candidate.
+        "recipient": profile_store.profile_for(people.resolve(user)).get("email", ""),
         "inbox_watch_configured": EmailWatcher().is_configured(),
     }
+
+# ---------------------------------------------------------------------------
+# Connecting a mailbox
+#
+# One OAuth client belongs to this app; the refresh token belongs to the person
+# who consented. These four routes are the whole dance, and none of them ever
+# returns a token: the page learns an address and a boolean, which is all a
+# page can safely know about somebody's mail.
+# ---------------------------------------------------------------------------
+
+# state -> account, for the few minutes between sending somebody to Google and
+# Google sending them back. It is a random string precisely so that a callback
+# cannot be forged into connecting an attacker's mailbox to somebody's account.
+_oauth_pending: Dict[str, Dict[str, Any]] = {}
+_OAUTH_TTL = 15 * 60
+
+
+@app.get("/api/mailbox/status")
+def mailbox_status(user: str = ""):
+    """Whose mailbox this account sends from, and whether Google still agrees."""
+    from services.automation import gmail_send, mailbox
+
+    who = people.resolve(user)
+    state = mailbox.connected(who)
+    live = gmail_send.check(who)
+    return {"user": who, **state, "ok": bool(live.get("ok")),
+            "how": live.get("how") or state.get("how") or "",
+            "reason": live.get("reason") or "",
+            # Whether the Connect button can do anything at all. Without a
+            # client there is no consent screen to send anybody to.
+            "can_connect": mailbox.configured(),
+            "redirect_uri": mailbox.redirect_uri()}
+
+
+@app.post("/api/mailbox/connect")
+def mailbox_connect(user: str = ""):
+    """The consent URL to open. Google asks the person, not this server."""
+    import secrets
+
+    from services.automation import mailbox
+
+    if not mailbox.configured():
+        raise HTTPException(400, "This install has no Google OAuth client. Set "
+                                 "GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET.")
+    now = time.time()
+    for key, row in list(_oauth_pending.items()):
+        if now - float(row.get("at") or 0) > _OAUTH_TTL:
+            _oauth_pending.pop(key, None)
+    state = secrets.token_urlsafe(24)
+    _oauth_pending[state] = {"user": people.resolve(user), "at": now}
+    return {"url": mailbox.auth_url(state), "redirect_uri": mailbox.redirect_uri()}
+
+
+def _closing_page(title: str, detail: str) -> HTMLResponse:
+    return HTMLResponse(
+        "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>" + title
+        + "</title><style>body{font-family:'Segoe UI',system-ui,sans-serif;"
+          "background:#14101f;color:#f5f5f7;display:flex;align-items:center;"
+          "justify-content:center;height:100vh;margin:0}div{max-width:30rem;"
+          "text-align:center}p{color:#a9a6b6;line-height:1.6}</style></head>"
+          "<body><div><h2>" + title + "</h2><p>" + detail
+        + "</p><p>You can close this tab.</p></div></body></html>")
+
+
+@app.get("/api/mailbox/callback")
+def mailbox_callback(code: str = "", state: str = "", error: str = ""):
+    """
+    Where Google sends the person back to.
+
+    Everything here is a page rather than JSON, because a human being is
+    looking at it: this URL is opened in a browser tab, not by the app.
+    """
+    from services.automation import mailbox
+
+    if error:
+        return _closing_page("Not connected", "Google said: " + str(error)[:120])
+    pending = _oauth_pending.pop(state, None)
+    if not pending or time.time() - float(pending.get("at") or 0) > _OAUTH_TTL:
+        return _closing_page("Not connected",
+                             "That link has expired. Start again from the app.")
+    try:
+        got = mailbox.exchange(code)
+    except Exception as exc:  # noqa: BLE001
+        return _closing_page("Not connected", str(exc)[:200])
+    saved = mailbox.save(pending["user"], got["address"], got["refresh_token"])
+    return _closing_page(
+        "Mailbox connected",
+        (saved.get("address") or "Your Gmail account")
+        + " will send this account's applications.")
+
+
+@app.post("/api/mailbox/disconnect")
+def mailbox_disconnect(user: str = ""):
+    """
+    Forget the token held here. Google's grant is the user's own to withdraw,
+    and saying otherwise would be a button claiming to do something it cannot.
+    """
+    from services.automation import mailbox
+
+    removed = mailbox.forget(user)
+    return {"removed": removed, "user": people.resolve(user),
+            "revoke_at": "https://myaccount.google.com/permissions"}
+
 
 @app.get("/api/apply/stream")
 async def stream_logs(request: Request):
@@ -1105,11 +1851,30 @@ async def stream_logs(request: Request):
 
 @app.get("/Badreddine_Barki_CV.pdf")
 @app.get("/cv.pdf")
-def get_cv():
+def get_cv(inline: int = 1, download: int = 0):
+    """
+    The standard CV, the one sent before there were tailored ones.
+
+    `filename=` on a FileResponse means Content-Disposition: attachment, and an
+    attachment reaching a browser is a file in Downloads whether anybody asked
+    for one or not. Opening the history pane put three copies of this CV in the
+    user's Downloads folder, because the frame showing it asked for this route
+    and this route told the browser to save it.
+
+    So the default is inline -- a file to look at -- and saving it is something
+    a caller has to ask for with `?download=1`. The fetches that matter (the
+    apply engines, the extension) read the bytes and never look at the header,
+    so nothing downstream notices; only a human clicking a link does, and that
+    click is the request to save it.
+    """
     cv_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "Badreddine_Barki_CV.pdf"))
-    if os.path.exists(cv_path):
-        return FileResponse(cv_path, media_type="application/pdf", filename="Badreddine_Barki_CV.pdf")
-    raise HTTPException(status_code=404, detail="CV not found")
+    if not os.path.exists(cv_path):
+        raise HTTPException(status_code=404, detail="CV not found")
+    if download:
+        return FileResponse(cv_path, media_type="application/pdf",
+                            filename="Badreddine_Barki_CV.pdf")
+    return FileResponse(cv_path, media_type="application/pdf",
+                        headers={"Content-Disposition": 'inline; filename="Badreddine_Barki_CV.pdf"'})
 
 @app.get("/api/auto-apply/lookup")
 def auto_apply_lookup(url: Optional[str] = None):
@@ -1166,6 +1931,9 @@ class InterviewAnswerRequest(pydantic.BaseModel):
     question: str = ""
     transcript: str = ""
     lang: str = "fr"
+    # Who is being interviewed. It decides the CV the answer is grounded in and
+    # the person the model speaks as; blank is the account this app began with.
+    user: str = ""
     # What this particular interview is about, gathered before the call. An
     # answer that names the company's own product beats a generically good one,
     # and the model cannot know any of this from the transcript alone.
@@ -1175,8 +1943,10 @@ class InterviewAnswerRequest(pydantic.BaseModel):
     notes: str = ""
     # Text pulled out of whatever the employer asked to be read beforehand.
     documents: str = ""
-    # Hands-free: nobody pressed anything, the interviewer is mid-pause, and a
-    # fast first word beats a better-reasoned one that lands five seconds late.
+    # Hands-free: nobody pressed anything, the interviewer is mid-pause. Kept
+    # because the browser still sends it, but it no longer picks the model:
+    # every answer here is read out loud within seconds of arriving, so the
+    # fast models are the right ones whether or not a button was pressed.
     fast: bool = False
     # What has already been said out loud in this interview, oldest first:
     # [{"question": ..., "answer": ...}]. Without it every answer opens by
@@ -1188,9 +1958,18 @@ class InterviewAnalyzeRequest(pydantic.BaseModel):
     image: str = ""  # data URL (jpeg/png) screenshot of the shared tab
     question: str = ""
 
-def _candidate_summary() -> str:
+def _candidate_summary(user: str = "") -> str:
+    """
+    The candidate the interview helper is speaking as.
+
+    Whose CV this is has to be a question now. Answering a German recruiter's
+    question about an Ausbildung with a French mechanical engineer's project
+    history is not a slightly-off answer, it is somebody else's answer, live,
+    in front of the person who asked.
+    """
     try:
-        p = CANDIDATE_PROFILE
+        from services.automation import profile_store as _store
+        p = _store.profile_for(user) if user else CANDIDATE_PROFILE
         lines = [
             f"Name: {p.get('full_name', 'Badreddine Barki')}",
             f"Title: {p.get('current_title', '')} ({p.get('years_of_experience', '')}y)",
@@ -1205,6 +1984,13 @@ def _candidate_summary() -> str:
             lines.append(f"- Edu: {edu.get('degree', '')}, {edu.get('institution', '')} ({edu.get('period', '')})")
         return "\n".join(lines)
     except Exception:
+        # The last resort says as little as it can get away with. It used to
+        # recite one person's employers, which for the other account would be
+        # a fabricated work history spoken out loud in an interview.
+        if user and people.resolve(user) != people.DEFAULT:
+            person = people.get(user)
+            return (str(person.get("display_name") or "The candidate") + " - "
+                    + str(person.get("focus") or "") + ".")
         return "Badreddine Barki, Ingenieur en Genie Mecanique, 3.5y R&D (Technip Energies, SLB), CAO CATIA/SolidWorks/Creo, FEA Abaqus/Ansys."
 
 @app.get("/api/assembly/token")
@@ -1348,14 +2134,25 @@ def _interview_brief(req: "InterviewAnswerRequest") -> str:
         return ""
     return "THIS INTERVIEW:\n" + "\n\n".join(parts) + "\n\n"
 
-HEURISTIC_ANSWER = (
-    "Bonne question. Chez SLB puis Technip Energies, sur un sujet similaire : "
-    "Situation - dimensionnement d'un assemblage sous chargement thermomecanique severe ; "
-    "Tache - livrer une conception validee CAO 3D CATIA/SolidWorks avec justification FEA Abaqus/Ansys ; "
-    "Action - modele parametrique, maillage converge, correlation essais et cotation GPS ISO ; "
-    "Resultat - dossier valide en revue, zero reprise en industrialisation. "
-    "Je peux detailler le maillage ou la DFMEA si vous voulez."
-)
+# What the teleprompter shows when no model can be reached.
+#
+# It used to be one candidate's employers, in French, which for the other
+# account was a fabricated work history in a language she is not interviewing
+# in -- read off a screen and said out loud to a recruiter. Whatever stands in
+# for an answer here must therefore claim nothing at all: it buys the few
+# seconds it takes to notice the helper is offline and answer for yourself.
+_HEURISTIC = {
+    "fr": ("Bonne question. Je prends un instant pour repondre precisement -- "
+           "est-ce que vous pouvez me dire ce qui vous interesse le plus la-dedans ?"),
+    "de": ("Das ist eine gute Frage. Ich denke kurz nach, damit ich Ihnen eine "
+           "genaue Antwort geben kann -- worauf kommt es Ihnen dabei am meisten an?"),
+    "en": ("That's a good question. Let me take a second so I give you a proper "
+           "answer -- what matters most to you there?"),
+}
+
+
+def _heuristic_answer(lang: str) -> str:
+    return _HEURISTIC.get((lang or "en").lower(), _HEURISTIC["en"])
 
 
 # One connection to Fuelix, kept open between answers. A fresh TCP+TLS
@@ -1365,7 +2162,89 @@ HEURISTIC_ANSWER = (
 _FUELIX_SESSION = requests.Session()
 
 
-def _answer_prompt(req: "InterviewAnswerRequest") -> tuple[str, str, str]:
+# What kind of question was just asked, and therefore how much of an answer
+# it deserves.
+#
+# The copilot used to give every question the same thing: ninety seconds of
+# STAR with a metric at the end. Asked "hi, how are you?", it introduced itself
+# as a mechanical engineer and started on SLB. That is not a slightly long
+# answer, it is a person who cannot read a room -- and in an interview that is
+# the thing being assessed.
+#
+# Three families, matched on the words recruiters actually use in the three
+# languages this helper runs in. Deliberately shallow: a wrong guess costs a
+# sentence, while sending the question to a model to be classified first costs
+# a second of silence in front of the recruiter.
+_ASK_STORY = re.compile(
+    r"(tell me about a time|give me an example|for example|walk me through|"
+    r"describe a (situation|time|project)|how did you (handle|deal|approach)|"
+    r"exemple|parlez[- ]moi d|d[ée]crivez|racontez|comment avez[- ]vous|"
+    r"beispiel|erz[aä]hlen sie|schildern sie|wie sind sie vorgegangen|"
+    r"herausforderung|situation)",
+    re.IGNORECASE,
+)
+_SMALL_TALK = re.compile(
+    r"^\W*(hi|hello|hey|good (morning|afternoon|evening)|how are you|how'?s it going|"
+    r"thanks? for (joining|coming|taking)|nice to meet|great to meet|can you hear|"
+    r"bonjour|salut|comment allez[- ]vous|[çc]a va|merci d|ravi de|encha[nt][ée]|"
+    r"hallo|guten (tag|morgen|abend)|wie geht es ihnen|freut mich|"
+    r"sch[oö]n,? dass|k[oö]nnen sie mich h[oö]ren)",
+    re.IGNORECASE,
+)
+_SHORT_FACT = re.compile(
+    r"(when can you start|notice period|are you available|availability|"
+    r"salary|expectations|where are you based|do you live|driving licen[cs]e|"
+    r"how many years|are you willing|would you be able|do you have a|"
+    r"disponible|pr[ée]avis|salaire|pr[ée]tentions|permis|o[uù] habitez|"
+    r"combien d.ann[ée]es|wann k[oö]nnen sie|k[uü]ndigungsfrist|gehalt|"
+    r"verf[uü]gbar|f[uü]hrerschein|wohnen sie|wie viele jahre)",
+    re.IGNORECASE,
+)
+
+
+# The token budget for a greeting, named so the prompt builder can tell one
+# apart from a real question without running the regexes a second time.
+_SMALL_TALK_BUDGET = 120
+
+
+def _answer_shape(question: str) -> tuple[str, int]:
+    """How long this answer should be, and how many tokens that needs.
+
+    Returned as an instruction rather than a word count alone, because a model
+    told "be brief" pads to the limit while a model told what kind of moment
+    this is writes the right thing at the right length.
+    """
+    q = (question or "").strip()
+    if _ASK_STORY.search(q):
+        return (
+            "This one asks for a real example, so tell one: what the situation "
+            "was, what you did about it, how it turned out. 90-140 words, one "
+            "example only, told as speech -- no labels, no headings.",
+            420,
+        )
+    if _SMALL_TALK.search(q):
+        return (
+            "This is small talk, not a question about your experience. Answer "
+            "it the way a person would: one sentence, two at most, warm and "
+            "easy. Do NOT mention your degree, your employers, your years of "
+            "experience or your skills -- nobody asked yet.",
+            _SMALL_TALK_BUDGET,
+        )
+    if _SHORT_FACT.search(q):
+        return (
+            "This is a direct question with a direct answer. One to three "
+            "sentences, no example, no background.",
+            200,
+        )
+    return (
+        "Answer the question itself, in two to four sentences. Reach for "
+        "something from the CV only if it makes the answer clearer; otherwise "
+        "just answer.",
+        300,
+    )
+
+
+def _answer_prompt(req: "InterviewAnswerRequest") -> tuple[str, str, str, int]:
     """The question, the system prompt and the user prompt for one answer.
 
     Shared by the blocking and the streaming endpoint so the two can never
@@ -1374,7 +2253,9 @@ def _answer_prompt(req: "InterviewAnswerRequest") -> tuple[str, str, str]:
     question = (req.question or req.transcript or "").strip()[-1500:]
     if not question:
         raise HTTPException(status_code=400, detail="Empty question/transcript")
-    lang = "French" if req.lang == "fr" else "English"
+    lang = {"fr": "French", "de": "German", "en": "English"}.get(req.lang, "English")
+    who = people.resolve(req.user)
+    speaking = people.get(who)
 
     # The conversation so far, in the candidate's own voice. Trimmed hard: the
     # model needs to know which ground is already covered, not to re-read three
@@ -1388,13 +2269,55 @@ def _answer_prompt(req: "InterviewAnswerRequest") -> tuple[str, str, str]:
         said = said[:700] + ("..." if len(said) > 700 else "")
         history += f"\nQ{i}: {asked}\nYou answered: {said}\n"
 
+    # The person is named rather than described: an interview answer is spoken
+    # in the first person, and a model that thinks it is standing in for a
+    # mechanical engineer will reach for a mechanical engineer's examples
+    # whatever the CV underneath it says.
+    shape, budget = _answer_shape(question)
+    small_talk = budget == _SMALL_TALK_BUDGET
+    if small_talk:
+        # A greeting needs none of the rules below. There is no CV here to
+        # misuse, no example to shape and nothing to invent, so every one of
+        # those paragraphs was four hundred tokens of instruction read before
+        # a ten-word answer that somebody is waiting for in real time.
+        return question, (
+            f"You are helping someone in a live interview, speaking as them in "
+            f"{lang}, first person. The recruiter has just said something "
+            f"conversational, not a question about their experience.\n\n"
+            f"{shape}\n\n"
+            "Reply with the words to say and nothing else: warm, natural, "
+            "contractions welcome, no headings and no markdown."
+        ), f"THE RECRUITER JUST SAID:\n{question}", budget
     system = (
-        "You are a real-time interview copilot for Badreddine Barki, mechanical/R&D engineer. "
-        f"Answer in {lang}, first person, 60-90 seconds spoken (120-170 words), STAR structure. "
-        "Ground every claim in the CV below; never invent employers, degrees, or visa status. "
-        "When a THIS INTERVIEW brief is present, aim the answer at that role and company and "
-        "borrow their vocabulary, but never claim knowledge the brief does not contain. "
-        "End with one crisp metric or result. No preamble, answer only."
+        f"You are a real-time interview copilot for {speaking.get('display_name') or 'the candidate'}"
+        + (", " + str(speaking.get("focus")).lower() if speaking.get("focus") else "") + ". "
+        f"Write what they should say next, in {lang}, first person.\n\n"
+        # Everything here is read out loud a second after it appears. The old
+        # prompt asked for STAR and got it literally: answers that began
+        # "Situation:" and were spoken that way to a recruiter.
+        "This is speech, not a document. No headings, no labels, no bullet "
+        "points, no numbered lists, no markdown, and never the words "
+        "'Situation', 'Task', 'Action', 'Result' (or their equivalents in any "
+        "language) as labels on what you say. Write sentences a person can "
+        "read aloud without sounding like they are reading.\n\n"
+        "Tone: warm, natural, respectful. Speak to them like a colleague you "
+        "would be glad to work with -- contractions, ordinary words, the "
+        "occasional short sentence. No corporate filler, no flattery, no "
+        "'I am delighted to', no summing yourself up in the third person.\n\n"
+        # The size of the answer was the worst of it: every question,
+        # including "how are you?", was getting ninety seconds of CV.
+        f"LENGTH AND DEPTH, for this question specifically: {shape}\n\n"
+        "Answer the question that was actually asked, and only that. Do not "
+        "recite the CV. Do not list your skills. Do not open by introducing "
+        "yourself unless you have just been asked to. Bring in an employer, a "
+        "project or a number when it is the evidence the question wants, and "
+        "leave them out when it is not.\n\n"
+        "Never invent an employer, a degree, a certificate or a visa status: "
+        "everything factual comes from the CV below. When a THIS INTERVIEW "
+        "brief is present, aim the answer at that role and company and borrow "
+        "their vocabulary, but claim no knowledge the brief does not contain.\n\n"
+        "Reply with the words to say and nothing else -- no preamble, no notes, "
+        "no options, no explanation of what you are doing."
     )
     if history:
         # Each request is stateless, so without this the model answers every
@@ -1410,20 +2333,34 @@ def _answer_prompt(req: "InterviewAnswerRequest") -> tuple[str, str, str]:
             "is a follow-up, carry on from what you said instead of restating it."
         )
     already = f"ALREADY ANSWERED IN THIS INTERVIEW:\n{history}\n" if history else ""
+    # "Hello, how are you?" does not need a CV, and sending one costs twice:
+    # the profile is read out of Postgres before the request can even leave,
+    # and the model then has two thousand characters of employers and skills
+    # in front of it while being told not to mention any of them. So for the
+    # greetings the CV is simply not fetched -- the answer arrives sooner and
+    # there is nothing there to recite.
+    cv = "" if small_talk else f"CANDIDATE CV:\n{_candidate_summary(who)}\n\n"
     user = (
-        f"CANDIDATE CV:\n{_candidate_summary()}\n\n{_interview_brief(req)}{already}"
+        f"{cv}{_interview_brief(req)}{already}"
         f"LIVE INTERVIEW (last words first):\n{req.transcript.strip()[-2000:]}\n\n"
         f"CURRENT QUESTION:\n{question}"
     )
-    return question, system, user
+    return question, system, user, budget
 
 
 @app.post("/api/interview/answer")
 def interview_answer(req: InterviewAnswerRequest):
     """Generate a spoken-style interview answer from live transcript + CV via Fuelix."""
-    from services.automation.config import FUELIX_API_KEY, FUELIX_BASE_URL, FUELIX_WRITER, FUELIX_WRITER_FALLBACK
-    _question, system, user = _answer_prompt(req)
-    for model in [FUELIX_WRITER, FUELIX_WRITER_FALLBACK]:
+    from services.automation.config import (
+        FUELIX_API_KEY, FUELIX_BASE_URL, FUELIX_WRITER, FUELIX_WRITER_FALLBACK,
+        FUELIX_LIVE, FUELIX_LIVE_FALLBACK,
+    )
+    _question, system, user, budget = _answer_prompt(req)
+    # The live models first, whoever is asking. An interview answer is read out
+    # loud in the next breath: a model that writes a better paragraph in twelve
+    # seconds is worse here than one that writes a good one in two. The writer
+    # models stay behind them as the fallback, not the first choice.
+    for model in [FUELIX_LIVE, FUELIX_LIVE_FALLBACK, FUELIX_WRITER, FUELIX_WRITER_FALLBACK]:
         if not model or not FUELIX_API_KEY:
             continue
         try:
@@ -1433,15 +2370,15 @@ def interview_answer(req: InterviewAnswerRequest):
                 json={"model": model, "messages": [
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
-                ], "temperature": 0.4, "max_tokens": 450},
+                ], "temperature": 0.6, "max_tokens": budget},
                 timeout=45,
             )
             if r.status_code == 200:
                 return {"answer": r.json()["choices"][0]["message"]["content"].strip(), "model": model}
         except Exception:
             continue
-    # Offline heuristic fallback (STAR, CV-grounded)
-    return {"answer": HEURISTIC_ANSWER, "model": "heuristic"}
+    # Offline fallback: something to say while the model is unreachable.
+    return {"answer": _heuristic_answer(req.lang), "model": "heuristic"}
 
 
 @app.post("/api/interview/answer/stream")
@@ -1457,8 +2394,10 @@ def interview_answer_stream(req: InterviewAnswerRequest):
         FUELIX_API_KEY, FUELIX_BASE_URL, FUELIX_WRITER, FUELIX_WRITER_FALLBACK,
         FUELIX_LIVE, FUELIX_LIVE_FALLBACK,
     )
-    _question, system, user = _answer_prompt(req)
-    models = [FUELIX_LIVE, FUELIX_LIVE_FALLBACK] if req.fast else [FUELIX_WRITER, FUELIX_WRITER_FALLBACK]
+    _question, system, user, budget = _answer_prompt(req)
+    # Same order in both paths. "fast" used to decide whether the answer was
+    # worth waiting for; it never was -- the recruiter is still in the room.
+    models = [FUELIX_LIVE, FUELIX_LIVE_FALLBACK, FUELIX_WRITER, FUELIX_WRITER_FALLBACK]
 
     def sse(obj: dict) -> str:
         return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
@@ -1474,7 +2413,7 @@ def interview_answer_stream(req: InterviewAnswerRequest):
                     json={"model": model, "messages": [
                         {"role": "system", "content": system},
                         {"role": "user", "content": user},
-                    ], "temperature": 0.4, "max_tokens": 450, "stream": True},
+                    ], "temperature": 0.6, "max_tokens": budget, "stream": True},
                     stream=True,
                     timeout=45,
                 ) as r:
@@ -1506,7 +2445,7 @@ def interview_answer_stream(req: InterviewAnswerRequest):
         # Every model failed or there is no key: the candidate still gets
         # something to say, exactly as the blocking endpoint would have given.
         yield sse({"model": "heuristic"})
-        yield sse({"delta": HEURISTIC_ANSWER})
+        yield sse({"delta": _heuristic_answer(req.lang)})
         yield sse({"done": True})
 
     return StreamingResponse(generate(), media_type="text/event-stream", headers={
@@ -1552,6 +2491,10 @@ class DirectApplyRequest(pydantic.BaseModel):
     company: str = ""
     job_title: str = ""
     candidate: Optional[Dict[str, Any]] = None
+    # Whose application. It decides the name and the address that would be
+    # typed into the employer's form, the CV that goes with them and the
+    # mailbox the receipt lands in -- not a preference, part of the request.
+    user: str = ""
 
 # Below this many listings on screen, a viewport search is worth double-checking
 # against the plain national feed. Set where it is because a real city view
@@ -1732,18 +2675,27 @@ def apply_direct_ats(req: DirectApplyRequest):
     emails a receipt for an application that was not actually sent.
     """
     from services.automation.direct_ats_client import submit_direct_api_application
-    from services.automation.candidate_profile import CANDIDATE_PROFILE
     from services.automation.supabase_db import save_application_record, get_candidate_details
-    from services.automation import mailer
+    from services.automation import mailer, letter_writer, profile_store
     from services.automation.email_watcher import EmailWatcher
 
+    # Whose details go into somebody else's form.
+    #
+    # This used to read the module-level CANDIDATE_PROFILE, which is one
+    # person: her application would have been typed out under his name and the
+    # receipt would have gone to his mailbox. It also handed that whole dict --
+    # portal passwords included -- to a third-party ATS client. Both are fixed
+    # here: the account's own profile, through the same allow-list the letters
+    # use.
+    who = people.resolve(req.user)
+    mine = profile_store.profile_for(who)
     c_info = get_candidate_details()
-    c_info.update(CANDIDATE_PROFILE or {})
+    c_info.update(letter_writer.safe_profile(who))
     if req.candidate:
         c_info.update(req.candidate)
 
-    cv_path = (CANDIDATE_PROFILE.get("resumes") or {}).get("en") \
-        or (CANDIDATE_PROFILE.get("resumes") or {}).get("fr")
+    resumes = mine.get("resumes") or {}
+    cv_path = resumes.get("en") or resumes.get("fr") or resumes.get("de")
 
     started_at = time.time()
     result = submit_direct_api_application(
@@ -1778,7 +2730,7 @@ def apply_direct_ats(req: DirectApplyRequest):
     # Only reachable once some ATS accepts an unauthenticated submission. The
     # receipt is deliberately gated on the ATS's own success status so it can
     # never claim an application that was never sent.
-    recipient = c_info.get("email") or CANDIDATE_PROFILE.get("email") or ""
+    recipient = c_info.get("email") or mine.get("email") or ""
     result["recipient"] = recipient
     result["receipt_email"] = mailer.send_application_receipt(
         to_email=recipient,
@@ -1875,6 +2827,28 @@ def get_browser_apply_screenshot(run_id: str):
     return FileResponse(str(path), media_type="image/png")
 
 
+# The spoken languages this app supports, and the code each recogniser wants.
+# German is here because one of the two people using this app is interviewing
+# for an Ausbildung in Germany: an interview helper that can only hear French
+# and English is, for her, an interview helper that cannot hear.
+SPEECH_CODES = {"fr": "fr-FR", "en": "en-US", "de": "de-DE"}
+
+
+def speech_code(lang: str) -> str:
+    return SPEECH_CODES.get((lang or "")[:2].lower(), "en-US")
+
+
+def speech_fallback(lang: str) -> str:
+    """
+    The second guess when the first returns nothing.
+
+    English, unless the interview is in English -- a candidate switching
+    languages mid-answer nearly always switches into English, and a German
+    interview misheard as French produces words in neither.
+    """
+    return "fr-FR" if (lang or "")[:2].lower() == "en" else "en-US"
+
+
 def query_google_speech_l16(sess: requests.Session, pcm_bytes: bytes, l_code: str = "fr-FR") -> str:
     url = f"http://www.google.com/speech-api/v2/recognize?client=chromium&lang={l_code}&key=AIzaSyBOti4mM-6x9WDnZIjIeyEU21OpBXqWBgw"
     headers = {"Content-Type": "audio/l16; rate=16000"}
@@ -1922,7 +2896,7 @@ async def ws_transcribe(websocket: WebSocket, lang: str = "fr", engine: str = "g
             try:
                 import websockets as ws_lib
                 model = GEMINI_LIVE_MODEL or "gemini-3.5-transcribe-live"
-                codes = ["fr-FR"] if lang == "fr" else ["en-US"]
+                codes = [speech_code(lang)]
                 vocab = ["CATIA", "SolidWorks", "Creo", "Abaqus", "Ansys", "thermomecanique",
                          "mecatronique", "cotation GPS", "tolerancement", "DFMEA",
                          "Technip Energies", "Framatome", "metrologie", "industrialisation"]
@@ -2001,8 +2975,8 @@ async def ws_transcribe(websocket: WebSocket, lang: str = "fr", engine: str = "g
     last_interim = ""
     interim_inflight = False
 
-    pref_lang = "fr-FR" if lang == "fr" else "en-US"
-    fallback_lang = "en-US" if lang == "fr" else "fr-FR"
+    pref_lang = speech_code(lang)
+    fallback_lang = speech_fallback(lang)
 
     hallucinations = {
         "you", "thank you", "thank you.", "merci", "merci.", "merci d'avoir regardé",
@@ -2047,8 +3021,8 @@ async def ws_transcribe(websocket: WebSocket, lang: str = "fr", engine: str = "g
 
             if data.get("type") == "set_lang" or ("lang" in data and "audio_data" not in data):
                 new_l = data.get("lang", "en")
-                pref_lang = "fr-FR" if new_l == "fr" else "en-US"
-                fallback_lang = "en-US" if new_l == "fr" else "fr-FR"
+                pref_lang = speech_code(new_l)
+                fallback_lang = speech_fallback(new_l)
                 continue
 
             chunk_b64 = data.get("audio_data")

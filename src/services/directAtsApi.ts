@@ -1,4 +1,5 @@
 import type { Job } from '../types/job';
+import { currentUser } from './account';
 
 const BACKEND_URL = import.meta.env.VITE_API_BASE_URL || (typeof window !== 'undefined' ? `http://${window.location.hostname || 'localhost'}:8000` : 'http://localhost:8000');
 
@@ -291,6 +292,9 @@ export async function applyViaDirectAtsApi(job: Job): Promise<DirectApplyResult>
     provider: job.atsProvider || '',
     company: job.company,
     job_title: job.title,
+    // Whose application. The backend fills the form from this account's
+    // profile and sends the receipt to its mailbox.
+    user: currentUser(),
   };
 
   const res = await fetch(`${BACKEND_URL}/api/jobs/apply-direct`, {
@@ -350,6 +354,17 @@ export interface BrowserApplyRun {
   steps: string[];
   /** Server-relative; use `browserApplyScreenshotUrl` to load it. */
   screenshot_url: string;
+  /**
+   * Which browser is doing the work, and how to watch it.
+   *
+   * The engine on this machine sends stills, one frame at a time, because it
+   * owns the window and can screenshot it. The cloud engine has no window here
+   * at all; it hands over a page of its own to embed. So the panel chooses what
+   * to render from whichever of these two is filled, not from the engine's name
+   * -- a run with neither is simply a run with nothing to show yet.
+   */
+  engine: 'local' | 'cloud';
+  live_url: string;
   /**
    * The raw failure, when there was one: a driver exception with its session
    * banner and its stack frames. `message` is the sentence; this is the
@@ -452,6 +467,103 @@ interface AgentState {
   started_at: number | null;
   model: string;
   awaiting_review: boolean;
+  /** Absent on an older backend, which only ever had the local engine. */
+  engine?: 'local' | 'cloud';
+  /** The cloud's own live view page, embeddable. Empty for the local engine. */
+  live_url?: string;
+}
+
+/** One of the browsers the candidate can apply with. */
+export interface ApplyEngine {
+  id: 'local' | 'cloud';
+  label: string;
+  detail: string;
+  /** False when the engine is not set up; the chooser shows it greyed. */
+  available: boolean;
+  /** The .env name to set, when that is what is missing. Never a value. */
+  requires_env?: string;
+  model: string;
+}
+
+/** Which engines this backend can actually run right now. */
+export async function listApplyEngines(): Promise<ApplyEngine[]> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/apply/engines`);
+    if (!res.ok) throw new Error(String(res.status));
+    const data = await res.json();
+    return (data.engines || []) as ApplyEngine[];
+  } catch {
+    // An older backend, or none. The local engine is the one that has always
+    // been there, so offering it alone is the honest fallback.
+    return [{ id: 'local', label: 'This computer', detail: 'Chrome opens here.',
+              available: true, model: '' }];
+  }
+}
+
+/**
+ * The cloud account this install is using, as the settings panel sees it.
+ *
+ * No key comes back, ever -- four characters of tail, which name an account
+ * without being one.
+ */
+export interface CloudAccount {
+  configured: boolean;
+  tail: string;
+  /** 'settings' when it was typed in here, 'env' when the server started with it. */
+  source: 'settings' | 'env' | '';
+  profile_id: string;
+  /** Sites that browser is signed into. */
+  domains: string[];
+  /** Sites this machine could sign it into. */
+  vault_domains: string[];
+  vault_cookies: number;
+  seeding: { running: boolean; status: string; message: string; domains: string[] };
+  changed_at: number;
+}
+
+const EMPTY_ACCOUNT: CloudAccount = {
+  configured: false, tail: '', source: '', profile_id: '', domains: [],
+  vault_domains: [], vault_cookies: 0,
+  seeding: { running: false, status: '', message: '', domains: [] }, changed_at: 0,
+};
+
+export async function getCloudAccount(): Promise<CloudAccount> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/apply/cloud-key`);
+    if (!res.ok) throw new Error(String(res.status));
+    return { ...EMPTY_ACCOUNT, ...(await res.json()) } as CloudAccount;
+  } catch {
+    return EMPTY_ACCOUNT;
+  }
+}
+
+/**
+ * Swap in a different Browser Use account. Throws with the server's own
+ * sentence when the key is refused, because "it did not work" is not a reason.
+ */
+export async function setCloudKey(key: string): Promise<CloudAccount & { message?: string }> {
+  const res = await fetch(`${BACKEND_URL}/api/apply/cloud-key`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || 'That key did not work.');
+  return { ...EMPTY_ACCOUNT, ...data };
+}
+
+export async function seedCloudBrowser(): Promise<CloudAccount['seeding']> {
+  const res = await fetch(`${BACKEND_URL}/api/apply/cloud-seed`, { method: 'POST' });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || 'The browser could not be signed in.');
+  return data;
+}
+
+export async function harvestCloudCookies(): Promise<{ status: string; count?: number; added?: number; replaced?: number; domains?: string[]; message?: string }> {
+  const res = await fetch(`${BACKEND_URL}/api/apply/cloud-harvest`, { method: 'POST' });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || 'The cookies could not be read.');
+  return data;
 }
 
 const PHASE_STATUS: Record<string, BrowserApplyStatus> = {
@@ -498,13 +610,19 @@ function toRun(state: AgentState): BrowserApplyRun {
     // no reason code to hand over and nothing to look up an explanation with.
     reason: '',
     fields_filled: result?.fields_filled ?? 0,
-    ats: state.model ? `page agent · ${state.model}` : 'page agent',
+    // Which of the two engines is driving, and nothing else. The model's build
+    // name used to be appended here and shown in the panel's header; it is a
+    // vendor's version string, it means nothing to the person waiting, and it
+    // is not what this panel is about.
+    ats: state.engine === 'cloud' ? 'cloud agent' : 'page agent',
     resume_attached: !!result?.resume_attached,
     // Every required answer is the agent's to give or to leave; it does not
     // hand back a list of what it skipped, so nothing is claimed here.
     missing_required: [],
     steps: (state.logs || []).map((entry) => entry.message).filter(Boolean),
     screenshot_url: state.screenshot_url || '',
+    engine: state.engine === 'cloud' ? 'cloud' : 'local',
+    live_url: state.live_url || '',
     detail: result?.detail || '',
     done,
     elapsed: state.started_at ? Math.round(Date.now() / 1000 - state.started_at) : 0,
@@ -523,9 +641,19 @@ function toRun(state: AgentState): BrowserApplyRun {
  * skimming a screenshot catches very little the verifier does not.
  *
  * Pass `true` to get the old rehearsal, which leaves the browser parked on the
- * filled form for `submitReviewedForm` to send.
+ * filled form for `submitReviewedForm` to send. Note that only the local engine
+ * can hold a form that way: the cloud tears its browser down with the run, so a
+ * rehearsal there is a rehearsal and nothing more.
+ *
+ * `engine` picks the browser. Defaulted rather than required so that every
+ * existing caller keeps the behaviour it was written against.
  */
-export async function startBrowserApply(job: Job, dryRun = false): Promise<BrowserApplyRun> {
+export async function startBrowserApply(
+  job: Job,
+  dryRun = false,
+  engine: 'local' | 'cloud' = 'local',
+  attachments: { documentIds: string[]; merge: boolean } = { documentIds: [], merge: false },
+): Promise<BrowserApplyRun> {
   const res = await fetch(`${BACKEND_URL}/api/apply`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -535,6 +663,23 @@ export async function startBrowserApply(job: Job, dryRun = false): Promise<Brows
       company: job.company,
       job_title: job.title,
       dry_run: dryRun,
+      engine,
+      // The advert's own text. The run tailors the CV against it before opening
+      // the browser, and the backend never saw this listing: it came from a
+      // board the frontend queried. Without it the CV would be cut against a
+      // job title and nothing else.
+      description: job.description || '',
+      location: job.location || '',
+      // The held documents this run carries -- a transcript, a diploma, a work
+      // permit -- as ids rather than paths, and whether they are bound into one
+      // PDF. Only the cloud engine can attach them; the local one says so in
+      // its own log rather than dropping them in silence.
+      document_ids: attachments.documentIds,
+      merge_documents: attachments.merge,
+      // Whose application this is. The server resolves it to a person and
+      // reads that person's profile, master CV and documents; sent without it
+      // the run would quietly apply as whoever this app belonged to first.
+      user: currentUser(),
     }),
   });
   if (!res.ok) {

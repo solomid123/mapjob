@@ -27,25 +27,22 @@ different hostnames and nothing in the browser can guess the second from the
 first. Without it the app falls back to its own origin and every call 404s —
 loudly, which is the intended failure.
 
-## The back half, free: this machine behind a Cloudflare Tunnel
+## Which back half you are deploying
 
-The cheapest honest answer. The API keeps running where it already runs, and
-the tunnel gives it a public hostname without an open port, a static IP, or a
-bill.
+With the cloud apply engine — the only one that matters once the app is not on
+this desk — the browser runs on Browser Use's machines. The container never
+starts a browser of its own; it talks to a rented one over the network. That
+is why the image is `python:3.12-slim` and 400MB rather than Playwright's
+2GB, and why any small host will do.
 
-    winget install --id Cloudflare.cloudflared
-    cloudflared tunnel login
-    cloudflared tunnel create mapjob
-    cloudflared tunnel route dns mapjob api.example.com
-    # copy cloudflared.example.yml to ~/.cloudflared/config.yml, edit the names
-    cloudflared tunnel run mapjob
-
-This is also the only arrangement where the cookie vault, the Chrome profiles
-and the candidate's personal data stay on a disk you own.
+The local undetected-Chrome engine is the exception, and it is the reason the
+tunnel option below exists at all: it needs a desktop Chrome and a screen.
 
 ## The back half, off this machine: Fly or Railway
 
-A real container with a volume. Roughly $3–5 a month.
+A real container with a volume, always on, a few dollars a month. This is the
+option to pick if the point of deploying is that the app works when the PC is
+off.
 
     docker build -t mapjob-api .
     docker run -p 8000:8000 --env-file .env -v mapjob-data:/data mapjob-api
@@ -62,18 +59,31 @@ On Fly: `fly launch --no-deploy`, then `fly volumes create mapjob_data --size 3`
 then a `[mounts]` section pointing `/data` at it, then `fly secrets set` for
 everything in `.env`.
 
+One thing to set deliberately: Fly stops idle machines by default, and a
+stopped machine is a cancelled apply run. Either leave a machine always
+running, or accept that runs only happen while something is watching.
+
 ### Render's free tier is the wrong choice here
 
 It sleeps after fifteen minutes of no traffic, which kills a run in flight, and
 its free disk is ephemeral, so the ledger and the SQLite files disappear on
 each deploy. Those are the two things this app most needs not to happen.
 
-## What the container cannot do
+## The back half, free: this machine behind a Cloudflare Tunnel
 
-The local undetected-Chrome engine. It wants a real desktop Chrome and a
-screen, and the image has neither — it ships Playwright's Chromium. The cloud
-apply engine, the boards, the letters, the documents and the mailbox all work.
-If the local engine matters, the tunnel arrangement is the one to pick.
+The cheapest honest answer. The API keeps running where it already runs, and
+the tunnel gives it a public hostname without an open port, a static IP, or a
+bill.
+
+    winget install --id Cloudflare.cloudflared
+    cloudflared tunnel login
+    cloudflared tunnel create mapjob
+    cloudflared tunnel route dns mapjob api.example.com
+    # copy cloudflared.example.yml to ~/.cloudflared/config.yml, edit the names
+    cloudflared tunnel run mapjob
+
+This is also the only arrangement where the cookie vault, the Chrome profiles
+and the candidate's personal data stay on a disk you own.
 
 ## Before pointing a public hostname at it
 

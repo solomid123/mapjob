@@ -1,19 +1,24 @@
-# The API, in a box.
+# The API, in a box. No browser in it, on purpose.
 #
-# Built on Playwright's own image because getting a browser's system libraries
-# right on a bare python image is a day of work that someone has already done.
-# The version in the tag must match the playwright pin in requirements.txt --
-# the library and the browsers it drives are one thing wearing two labels.
+# Applications are submitted by the cloud engine, which means the browser runs
+# on Browser Use's machines and this container only talks to it over the
+# network. The one place Playwright is still used -- seeding the rented
+# browser with cookies -- connects to that remote browser rather than starting
+# a local one, so no Chromium needs to be installed here.
 #
-# What this image can do: the cloud apply engine, the boards, the letters, the
-# documents, the mailbox, and Playwright's own Chromium. What it cannot do:
-# the local undetected-Chrome engine, which wants a real desktop Chrome and a
-# screen. That engine stays on the desk it was written for.
+# That keeps the image around 400MB instead of 2GB, which is the difference
+# between a deploy that takes a minute and one that takes fifteen.
+#
+# What this image cannot do: the local undetected-Chrome engine, which wants a
+# real desktop Chrome and a screen. That engine stays on the desk it was
+# written for. If it is ever needed in a container, the base line below
+# becomes mcr.microsoft.com/playwright/python:v1.49.1-jammy and the browser
+# download comes back.
 #
 #   docker build -t mapjob-api .
 #   docker run -p 8000:8000 --env-file .env -v mapjob-data:/data mapjob-api
 
-FROM mcr.microsoft.com/playwright/python:v1.49.1-jammy
+FROM python:3.12-slim
 
 # Python should not buffer its output: the app's log lines are how a run is
 # watched, and a buffered line is a line that arrives after the thing it was
@@ -21,14 +26,20 @@ FROM mcr.microsoft.com/playwright/python:v1.49.1-jammy
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
-    MAPJOB_DATA=/data
+    MAPJOB_DATA=/data \
+    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
 WORKDIR /app
 
-# Dependencies first, so that editing a Python file does not reinstall Chromium.
+# curl is the health check; the rest of the dependencies arrive as wheels and
+# need no compiler.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+# Dependencies first, so editing a Python file does not reinstall everything.
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt \
- && python -m playwright install chromium
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY services ./services
 COPY scripts ./scripts

@@ -1991,7 +1991,7 @@ def _candidate_summary(user: str = "") -> str:
             person = people.get(user)
             return (str(person.get("display_name") or "The candidate") + " - "
                     + str(person.get("focus") or "") + ".")
-        return "Badreddine Barki, Ingenieur en Genie Mecanique, 3.5y R&D (Technip Energies, SLB), CAO CATIA/SolidWorks/Creo, FEA Abaqus/Ansys."
+        return "Badreddine Barki, Ingenieur en Genie Mecanique, 3+ y R&D (SLB), CAO CATIA/SolidWorks/Creo, FEA Abaqus/Ansys."
 
 @app.get("/api/assembly/token")
 def assembly_token():
@@ -2899,7 +2899,7 @@ async def ws_transcribe(websocket: WebSocket, lang: str = "fr", engine: str = "g
                 codes = [speech_code(lang)]
                 vocab = ["CATIA", "SolidWorks", "Creo", "Abaqus", "Ansys", "thermomecanique",
                          "mecatronique", "cotation GPS", "tolerancement", "DFMEA",
-                         "Technip Energies", "Framatome", "metrologie", "industrialisation"]
+                         "Framatome", "metrologie", "industrialisation"]
                 gemini_url = (f"wss://generativelanguage.googleapis.com/ws/"
                               f"google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent"
                               f"?key={GEMINI_API_KEY}")

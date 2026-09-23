@@ -110,7 +110,7 @@ def answer_screening_question(
     if fuelix_client:
         system_prompt = (
             "You are Badreddine Barki, a French-fluent Mechanical & Mechatronics R&D Engineer "
-            "with 4 years of experience at Technip Energies. Answer the application question truthfully, "
+            "with over 3 years of R&D experience at SLB. Answer the application question truthfully, "
             "concisely (1-2 sentences), professional, in the language of the question. Never hallucinate fake credentials."
         )
         user_prompt = f"Candidate Profile:\n{json.dumps(candidate_vault, ensure_ascii=False)}\n\nQuestion:\n{question_text}"

@@ -34,7 +34,7 @@ class AIFormAnalyzer:
                 prompt = (
                     f"Rédige une lettre ou message de motivation court et percutant en français "
                     f"(maximum {max_words} mots) pour Badreddine Barki, Ingénieur en Génie Mécanique "
-                    f"(3+ ans d'expérience R&D chez Technip Energies et SLB, spécialiste CAO 3D CATIA/SolidWorks/Creo, "
+                    f"(3+ ans d'expérience R&D chez SLB, spécialiste CAO 3D CATIA/SolidWorks/Creo, "
                     f"calcul de structures FEA Abaqus/Ansys, et validation V&V, résidant à Amiens Hauts-de-France).\n"
                     f"Poste: {job_title}\n"
                     f"Entreprise: {company}\n"
@@ -51,7 +51,7 @@ class AIFormAnalyzer:
         return (
             f"Madame, Monsieur,\n\n"
             f"Ingénieur en Génie Mécanique fort de plus de 3 années d'expérience en R&D industrielle "
-            f"(Technip Energies, SLB), je maîtrise la conception mécanique 3D (CATIA V5, SolidWorks, Creo), "
+            f"(SLB), je maîtrise la conception mécanique 3D (CATIA V5, SolidWorks, Creo), "
             f"le dimensionnement par éléments finis (Abaqus, Ansys) et le suivi technique des sous-traitants. "
             f"Résidant dans les Hauts-de-France (Amiens), je suis immédiatement mobile et disponible pour rejoindre "
             f"les équipes de {company} et mettre mon expertise au service de vos projets pour le poste de {job_title}.\n\n"

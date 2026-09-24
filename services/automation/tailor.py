@@ -926,10 +926,11 @@ LETTER_CSS = """
   .head__contact { display:flex; flex-direction:column; gap:0.5mm; font-size:8.5pt;
                    line-height:1.35; color:var(--muted);
                    border-left:1.5pt solid var(--text); padding-left:3.5mm; margin-top:3.5mm; }
+  .head__sep { border-bottom:1px solid var(--border); margin:5mm 0 6mm; }
 
   /* ---------- Who it is to, and when. One line each, no labels ---------- */
   .meta { display:flex; justify-content:space-between; align-items:flex-start;
-          gap:8mm; margin-top:9mm; }
+          gap:8mm; margin-top:3mm; }
   /* The rule down the left is the only thing that says "this is the addressee".
      A label would say it in words and cost a line; the CV already uses a plain
      black hairline under the letterhead, so this is the same mark turned on its
@@ -1025,16 +1026,32 @@ def letter_html(letter: Dict[str, str], job: Dict) -> str:
     name_mark = (_escape(" ".join(parts[:-1])) + " <span>" + _escape(parts[-1]) + "</span>"
                  if len(parts) > 1 else full_name)
 
+    subj = str(letter["subject"]).strip()
+    tagline_raw = _tagline(job, profile)
+    role_fallback = re.split(r"\s*[|·—–]\s*", tagline_raw)[0].strip() if tagline_raw else ""
+    if not role_fallback:
+        role_fallback = str(profile.get("current_title") or profile.get("headline") or "").strip()
+        role_fallback = re.split(r"\s*[|·—–]\s*", role_fallback)[0].strip()
+
+    if subj.lower() in ("bewerbung", "candidature", "application"):
+        if letter["language"] == "de":
+            subj = f"Bewerbung als {role_fallback}" if role_fallback else "Bewerbung"
+        elif letter["language"] == "fr":
+            subj = f"Candidature au poste de {role_fallback}" if role_fallback else "Candidature"
+        else:
+            subj = f"Application - {role_fallback}" if role_fallback else "Application"
+
     return (
         "<!DOCTYPE html>\n<html lang=\"" + letter["language"] + "\">\n<head>\n"
         "<meta charset=\"UTF-8\" />\n<title>"
-        + full_name + " - " + _escape(letter["subject"])
+        + full_name + " - " + _escape(subj)
         + "</title>\n<style>" + LETTER_CSS + "</style>\n</head>\n<body>\n"
         "  <header class=\"head\">\n"
         "    <h1 class=\"head__name\">" + name_mark + "</h1>\n"
-        "    <p class=\"head__role\">" + _tagline(job, profile) + "</p>\n"
+        "    <p class=\"head__role\">" + tagline_raw + "</p>\n"
         "    <div class=\"head__contact\">" + contacts + "</div>\n"
         "  </header>\n"
+        "  <div class=\"head__sep\"></div>\n"
         "  <section class=\"meta\">\n"
         "    <div class=\"meta__to\">\n"
         "      <div class=\"meta__company\">"
@@ -1044,7 +1061,7 @@ def letter_html(letter: Dict[str, str], job: Dict) -> str:
         "    </div>\n"
         "    <div class=\"meta__date\">" + city + (", " if city else "") + today + "</div>\n"
         "  </section>\n"
-        "  <p class=\"subject\">" + _escape(letter["subject"]) + "</p>\n"
+        "  <p class=\"subject\">" + _escape(subj) + "</p>\n"
         "  <div class=\"body\">\n    <p class=\"greeting\">"
         + _escape(letter["greeting"]) + "</p>\n    "
         + paragraphs + "\n  </div>\n"

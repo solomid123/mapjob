@@ -313,7 +313,7 @@ def tailored_pair(row: Dict[str, Any], role: str = "",
         url=str(row.get("website") or row.get("source_url") or ""),
         description=_advert(row, role),
         language=language,
-        letter_factory=lambda: writer.write(row, role=role, language=language,
+        letter_factory=lambda: writer.write(row, role=title, language=language,
                                             user=user),
         fixed_cv=fixed_cv,
         headline=headline,
@@ -445,8 +445,10 @@ def compose(row: Dict[str, Any], role: str = "",
                   "sign_off": pair["sign_off"]}
         files = {"letter_pdf": pair["letter"], "cv_pdf": pair["cv"],
                  "pack_pdf": pair.get("pack") or ""}
-    else:
-        letter = writer.write(row, role=role, user=user)
+        target_role = (str(row.get("job_title") or "").strip()
+                       or str(role or "").strip()
+                       or str(writer.safe_profile(user).get("current_title") or "").strip())
+        letter = writer.write(row, role=target_role, user=user)
         files = dossier.build(row, letter, user=user or "")
     # A German application is one bound file that opens on a cover sheet. Built
     # here, after the letter exists, because the sheet's one tailored line and
@@ -454,10 +456,13 @@ def compose(row: Dict[str, Any], role: str = "",
     if people.application_style(user) == "german_dossier" and files.get("letter_pdf"):
         from services.automation import deckblatt
 
+        target_title = (str(row.get("job_title") or "").strip()
+                        or str(role or "").strip()
+                        or str(writer.safe_profile(user).get("current_title") or "").strip())
         note = (lambda message: on_event(message, "info",
-                                         int(row["id"]) if row.get("id") else None))             if on_event else None
+                                         int(row["id"]) if row.get("id") else None)) if on_event else None
         built = deckblatt.pack(
-            {"title": str(row.get("job_title") or role or ""),
+            {"title": target_title,
              "company": str(row.get("company") or "")},
             letter_pdf=files.get("letter_pdf") or "",
             document_ids=document_ids, user=user,

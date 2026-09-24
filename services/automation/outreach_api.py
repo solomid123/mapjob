@@ -148,6 +148,7 @@ class ProspectIn(BaseModel):
     company: str
     contact_name: str = ""
     role: str = ""
+    job_title: str = ""
     email: str = ""
     email_status: str = ""
     website: str = ""
@@ -161,6 +162,7 @@ class ProspectPatch(BaseModel):
     company: Optional[str] = None
     contact_name: Optional[str] = None
     role: Optional[str] = None
+    job_title: Optional[str] = None
     email: Optional[str] = None
     email_status: Optional[str] = None
     website: Optional[str] = None

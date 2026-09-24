@@ -274,7 +274,7 @@ const StagePill: React.FC<{ stage: string }> = ({ stage }) => (
 );
 
 const EMPTY_DRAFT = {
-  company: '', contact_name: '', role: '', email: '', city: '', website: '', notes: '',
+  company: '', job_title: '', contact_name: '', role: '', email: '', city: '', website: '', notes: '',
 };
 
 /**
@@ -1430,8 +1430,13 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
           {showAdd && (
             <div className="ic-glass rounded-2xl p-3.5 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2.5">
               {([
-                ['company', 'Company *'], ['contact_name', 'Contact person'], ['role', 'Their role'],
-                ['email', 'Email address'], ['city', 'City'], ['website', 'Website'],
+                ['company', 'Company *'],
+                ['job_title', 'Position / Vacancy (e.g. Kaufmännische Assistentin)'],
+                ['contact_name', 'Contact person'],
+                ['role', 'Their role (e.g. HR, Recruiter)'],
+                ['email', 'Email address'],
+                ['city', 'City'],
+                ['website', 'Website'],
               ] as const).map(([field, label]) => (
                 <label key={field} className="block">
                   <span className="block pb-1 text-[11.5px] text-[rgba(235,235,245,0.52)]">{label}</span>

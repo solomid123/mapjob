@@ -344,9 +344,21 @@ def write(prospect: Dict[str, object], role: str = "",
     if not language:
         from services.automation import people
         language = language_for(prospect, people.letter_language(user))
+
+    if not role:
+        role = (str(prospect.get("job_title") or "").strip()
+                or str(prospect.get("role") or "").strip()
+                or str(safe_profile(user).get("current_title") or "").strip()
+                or str(safe_profile(user).get("headline") or "").strip())
+        role = re.split(r"\s*[|·—–]\s*", role)[0].strip()
+
     company = str(prospect.get("company") or "")
-    subject = SUBJECTS[language] + (" als " + role if role and language == "de"
-                                    else (" - " + role if role else ""))
+    if language == "de":
+        subject = f"Bewerbung als {role}" if role else "Bewerbung"
+    elif language == "fr":
+        subject = f"Candidature au poste de {role}" if role else "Candidature"
+    else:
+        subject = f"Application - {role}" if role else "Application"
 
     body = ""
     try:

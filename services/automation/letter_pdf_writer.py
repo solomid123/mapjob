@@ -169,7 +169,17 @@ def html_to_reportlab_pdf(html_path: Path, pdf_path: Path) -> bool:
             ('BOTTOMPADDING', (0,0), (-1,-1), 0),
         ]))
         story.append(contact_table)
-        story.append(Spacer(1, 14))
+        story.append(Spacer(1, 8))
+
+        # Middle horizontal separator rule (between sender and recipient, as drawn by user)
+        mid_rule = Table([[""]], colWidths=[519], rowHeights=[1])
+        mid_rule.setStyle(TableStyle([
+            ('LINEBELOW', (0,0), (-1,-1), 0.75, colors.HexColor('#cfcfc9')),
+            ('TOPPADDING', (0,0), (-1,-1), 0),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 0),
+        ]))
+        story.append(mid_rule)
+        story.append(Spacer(1, 8))
 
         # Meta Table: Recipient on left with 1.5pt rule, Date on right
         to_left_p = Paragraph(f"<b>{company}</b>" + (f"<br/><font color='#5a5a54'>{place}</font>" if place else ""), meta_left_style)

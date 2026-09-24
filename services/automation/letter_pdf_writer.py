@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 ReportLab PDF generator for cover letters as an infallible fallback.
-Produces a clean, pixel-perfect A4 PDF matching MapJob's authentic cover letter design.
+Produces a clean, pixel-perfect A4 PDF matching MapJob's authentic cover letter design
+with horizontal rule under role, left vertical rules for sender and recipient.
 """
 
 from __future__ import annotations
@@ -103,23 +104,18 @@ def html_to_reportlab_pdf(html_path: Path, pdf_path: Path) -> bool:
         )
         role_style = ParagraphStyle(
             'HeadRole', parent=styles['Normal'],
-            fontName='Helvetica-Bold', fontSize=8.2, leading=11,
+            fontName='Helvetica-Bold', fontSize=8.5, leading=11.5,
             textColor=colors.HexColor('#1a1a1a')
         )
         contact_style = ParagraphStyle(
             'HeadContact', parent=styles['Normal'],
-            fontName='Helvetica', fontSize=8.5, leading=12,
+            fontName='Helvetica', fontSize=8.5, leading=12.5,
             textColor=colors.HexColor('#5a5a54')
         )
         meta_left_style = ParagraphStyle(
             'MetaLeft', parent=styles['Normal'],
             fontName='Helvetica-Bold', fontSize=10, leading=13,
             textColor=colors.black
-        )
-        meta_left_sub = ParagraphStyle(
-            'MetaLeftSub', parent=styles['Normal'],
-            fontName='Helvetica', fontSize=8.5, leading=12,
-            textColor=colors.HexColor('#5a5a54')
         )
         meta_right_style = ParagraphStyle(
             'MetaRight', parent=styles['Normal'],
@@ -148,6 +144,19 @@ def html_to_reportlab_pdf(html_path: Path, pdf_path: Path) -> bool:
         if role:
             story.append(Spacer(1, 3))
             story.append(Paragraph(role, role_style))
+        story.append(Spacer(1, 4))
+
+        # Horizontal rule directly under name & role tagline (as drawn by user)
+        header_rule = Table([[""]], colWidths=[519], rowHeights=[1])
+        header_rule.setStyle(TableStyle([
+            ('LINEBELOW', (0,0), (-1,-1), 0.75, colors.black),
+            ('TOPPADDING', (0,0), (-1,-1), 0),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 0),
+        ]))
+        story.append(header_rule)
+        story.append(Spacer(1, 8))
+
+        # Sender contact table with left vertical rule
         contact_table = Table([[Paragraph(contact_text, contact_style)]], colWidths=[519])
         contact_table.setStyle(TableStyle([
             ('LINELEFT', (0,0), (0,0), 1.5, colors.black),
@@ -157,18 +166,9 @@ def html_to_reportlab_pdf(html_path: Path, pdf_path: Path) -> bool:
             ('BOTTOMPADDING', (0,0), (-1,-1), 0),
         ]))
         story.append(contact_table)
-        
-        # Horizontal hairline under header (matching .head { border-bottom: 1px solid var(--text) })
-        header_rule = Table([[""]], colWidths=[519], rowHeights=[1])
-        header_rule.setStyle(TableStyle([
-            ('LINEBELOW', (0,0), (-1,-1), 0.75, colors.black),
-            ('TOPPADDING', (0,0), (-1,-1), 0),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 0),
-        ]))
-        story.append(header_rule)
         story.append(Spacer(1, 14))
 
-        # Meta Table: Addressee on left with 1.5pt rule, Date on right
+        # Meta Table: Recipient on left with 1.5pt rule, Date on right
         to_left_p = Paragraph(f"<b>{company}</b>" + (f"<br/><font color='#5a5a54'>{place}</font>" if place else ""), meta_left_style)
         meta_table_data = [
             [to_left_p, Paragraph(date_str, meta_right_style)]
@@ -214,4 +214,3 @@ def html_to_reportlab_pdf(html_path: Path, pdf_path: Path) -> bool:
         return pdf_path.exists() and pdf_path.stat().st_size > 1000
     except Exception:
         return False
-

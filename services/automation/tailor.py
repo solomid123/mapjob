@@ -915,22 +915,17 @@ LETTER_CSS = """
   }
   strong { font-weight:700; }
 
-  /* ---------- Letterhead: the CV's header, unchanged ---------- */
-  .head { border-bottom:1px solid var(--text); padding-bottom:5mm; }
+  /* ---------- Letterhead ---------- */
+  .head { margin-bottom:5mm; }
   .head__name { font-size:26pt; font-weight:400; line-height:1.02;
                 letter-spacing:-0.01em; }
   .head__name span { font-weight:700; }
   .head__role { text-transform:uppercase; letter-spacing:0.16em; font-size:8.5pt;
-                color:var(--text-dim); margin:3mm 0 4mm; }
-  /* A column, not a row. Four facts strung along one line with middots read as
-     a caption; stacked, each is a way of reaching him, which is what they are.
-     It is also how they are used -- a reader looking for the phone number scans
-     down a short list rather than across a sentence -- and it costs three lines
-     on a page that has room for them. The CV keeps its single row: there the
-     header sits over two columns and the width is the point. */
-  .head__contact { display:flex; flex-direction:column; gap:0; font-size:8.5pt;
+                color:var(--text-dim); margin:3mm 0 4mm; padding-bottom:3.5mm;
+                border-bottom:1px solid var(--text); }
+  .head__contact { display:flex; flex-direction:column; gap:0.5mm; font-size:8.5pt;
                    line-height:1.35; color:var(--muted);
-                   border-left:1.5pt solid var(--text); padding-left:3.2mm; margin-top:1mm; }
+                   border-left:1.5pt solid var(--text); padding-left:3.5mm; margin-top:3.5mm; }
 
   /* ---------- Who it is to, and when. One line each, no labels ---------- */
   .meta { display:flex; justify-content:space-between; align-items:flex-start;

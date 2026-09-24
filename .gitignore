@@ -64,6 +64,8 @@ scratch/
 # ...but the app's own wallpapers are source assets, not artefacts. Without
 # this the build has no background on any machine but the one it was added on.
 !public/wallpaper-*.jpg
+!public/integrations/*
+!public/integrations/
 
 # Same mistake, worse consequence: /*.html was meant to catch captured pages
 # dumped at the repo root by agent runs, and it also caught index.html -- the

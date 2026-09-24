@@ -1,0 +1,6 @@
+requirements.txt
+.python-version
+services/
+scripts/
+*.py
+tests/

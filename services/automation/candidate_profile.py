@@ -1,3 +1,16 @@
+"""
+The candidate, as the rest of the app knows him.
+
+What is written below is the starting point, not the last word: anything edited
+on the profile page is stored beside this file and laid over these values at
+import time (see the bottom of the file). Editing here still works and is what
+a fresh checkout gets.
+
+`password` and `passwords` are the exception. They are read from here by the
+apply engines and are deliberately not editable from the page and not sent to
+any browser -- see `profile_store.SECRET`.
+"""
+
 import os
 
 CANDIDATE_PROFILE = {
@@ -40,17 +53,6 @@ CANDIDATE_PROFILE = {
     ],
     "experiences": [
         {
-            "role": "Ingénieur Projets R&D – Simulation & Intégrité des Structures",
-            "company": "Technip Energies",
-            "location": "Paris / Hauts-de-France, France",
-            "period": "Août 2025 - Présent",
-            "highlights": [
-                "Conception mécanique 3D détaillée sous contraintes thermomécaniques sévères",
-                "Calculs par éléments finis non-linéaires (Abaqus/Ansys) et optimisation topologique",
-                "Pilotage d'études d'ingénierie et justification technique"
-            ]
-        },
-        {
             "role": "Ingénieur de Recherche et Développement Mécanique",
             "company": "SLB GROUP",
             "location": "Abbeville, France",
@@ -91,3 +93,20 @@ CANDIDATE_PROFILE = {
         "en": os.getenv("CANDIDATE_CV_EN", os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "Badreddine_Barki_CV.pdf"))),
     }
 }
+
+
+# The edits from the profile page, laid over the defaults above. In place, so
+# that `from ... import CANDIDATE_PROFILE` anywhere else sees them too.
+try:
+    from services.automation import profile_store as _profile_store
+    _profile_store.apply_to(CANDIDATE_PROFILE)
+except Exception:
+    # An unreadable overlay leaves the defaults standing, which is a working
+    # profile. Failing here would take the apply engine down with it.
+    pass
+
+
+def reload_profile() -> dict:
+    """Re-read the overlay after the profile page has written to it."""
+    from services.automation import profile_store as store
+    return store.apply_to(CANDIDATE_PROFILE)

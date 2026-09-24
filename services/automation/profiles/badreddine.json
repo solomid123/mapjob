@@ -1,0 +1,111 @@
+{
+  "city": "Amiens",
+  "email": "badreddinebarki@gmail.com",
+  "address": "14 rue de la 2e DB",
+  "country": "France",
+  "summary": "Mechanical Engineer with a Master of Science in Mechanical Engineering (Université Clermont Auvergne) and Engineering Training from ENSAM Meknès. Specialized in mechanical design, non-linear finite element simulation (Abaqus, COMSOL, Ansys), structural mechanics, vibration analysis, and GD&T. Over three years of industrial R&D experience in France (SLB Group, Sigma) leading 3D CAD modeling (SolidWorks, CATIA V5, Creo), parametric simulation, sensor integration, physical testing, and DFMEA/RCA failure analysis. Eager to leverage strong mechanical engineering and simulation fundamentals to drive next-generation e-bike powertrain and drivetrain innovations at E2 DRIVES.",
+  "website": "https://barkibadreddine.com",
+  "headline": "Kauffrau für Groß- und Außenhandelsmanagement (Fachrichtung Außenhandel)",
+  "linkedin": "https://linkedin.com/in/barki-badreddine-bb2328146",
+  "education": [
+    {
+      "note": "Specialization: Materials, Structures, Reliability, and Machinery Thesis: Finite Element Modeling and Numerical Simulation of Carbon/Epoxy Composite Structural Components",
+      "degree": "Master of Science (M.Sc.) in Mechanical Engineering",
+      "period": "Sep 2020 – Jun 2022",
+      "location": "France",
+      "institution": "University School of Physics and Engineering, Université Clermont Auvergne"
+    },
+    {
+      "note": "Curriculum: Transmission design, gear mechanics, manufacturing automation, CAD/CAM, robotics, materials science, and industrialization",
+      "degree": "Engineering Degree Program in Product and Process Industrialization",
+      "period": "Sep 2015 – Jun 2020",
+      "location": "Meknès, Morocco",
+      "institution": "National Higher School of Arts and Crafts (ENSAM)"
+    }
+  ],
+  "full_name": "Badreddine Barki",
+  "languages": {
+    "Arabic": "Native",
+    "French": "C1 Proficient – TCF Certified",
+    "English": "C2 Proficient – EF SET Certified, Score: 74/100, cert.efset."
+  },
+  "last_name": "Barki",
+  "first_name": "Badreddine",
+  "experiences": [
+    {
+      "role": "R&D Mechanical Engineer",
+      "period": "Mar 2022 – Jul 2025",
+      "company": "SLB GROUP",
+      "location": "Abbeville, France",
+      "highlights": [
+        "Mechanical Design & Structural Optimization: Designed, simulated, and optimized complex structural mechanical assemblies using SolidWorks, CATIA V5, and Creo, achieving a 15% mass reduction and 25% structural strength enhancement.",
+        "Parametric Modeling & FEA Simulation: Developed an in-house FEA numerical simulation model under Abaqus and Python/C++, automating parametric calculations across +100 design configurations, eliminating physical trial-and-error prototyping, and saving €15,000 per study.",
+        "Instrumentation & Physical Testing: Supervised mechanical testing and dynamic instrumentation (DIC optical sensors, strain gauges), correlating physical test data with numerical simulation models for vibration and structural assessment.",
+        "Failure Analysis & Root Cause Troubleshooting: Applied DFMEA and Root Cause Analysis (RCA) methodologies to diagnose structural failure modes and component wear, reducing non-conformity costs by 18%.",
+        "GD&T & Supplier Qualification: Created accurate manufacturing drawings adhering to GD&T standards and led technical supplier qualifications, generating €80,000 in direct R&D budget savings."
+      ]
+    },
+    {
+      "role": "R&D Simulation & Dynamic Systems Engineer (Master’s Thesis Intern)",
+      "period": "Mar 2021 – Sep 2021",
+      "company": "Sigma",
+      "location": "Clermont-Ferrand, France",
+      "highlights": [
+        "Multiphysics FEA & NVH Simulation: Conducted thermal-mechanical multiphysics simulations (COMSOL, Ansys) to optimize sensor positioning and evaluate stress distributions and dynamic vibrations on moving mechanical parts.",
+        "Vibration Signal Processing (Python/MATLAB): Developed automated signal processing algorithms in Python and MATLAB for dynamic vibration analysis, accelerating study execution speed by 30%.",
+        "Structural Health Monitoring (SHM): Engineered predictive monitoring solutions using integrated strain and vibration sensors (+25% tracking efficiency)."
+      ]
+    },
+    {
+      "role": "Mechanical Engineering Intern",
+      "period": "Jun 2017 – Aug 2017",
+      "company": "Groupe OCP",
+      "location": "Morocco",
+      "highlights": [
+        "Material Wear & Gearbox Reliability: Investigated dynamic wear phenomena, lubrication degradation, and mechanical friction in heavy industrial gearboxes and drive systems to optimize preventive maintenance."
+      ]
+    }
+  ],
+  "soft_skills": [
+    "teamfähig",
+    "zuverlässig",
+    "lernbereit",
+    "verantwortungsbewusst",
+    "organisiert"
+  ],
+  "full_address": "14 rue de la 2e DB, Amiens, France",
+  "current_title": "R&D Mechanical Engineer",
+  "certifications": [
+    "EF SET English Certificate (C2 Proficient – 74/100) 2024",
+    "TCF French Language Certificate (C1 Level) 2023",
+    "Agile Project Management Certification 2023",
+    "Data Science & Analytics Certification 2022",
+    "ABAQUS FEA Composite Materials Training 2021"
+  ],
+  "phone_formatted": "+33 7 45 76 80 10",
+  "technical_skills": [
+    "Transmission Systems",
+    "Metal & Plastic Gear Calculations",
+    "Bearings",
+    "Shafts",
+    "Lubrication Strategies",
+    "NVH (Noise, Vibration, Harshness) Optimization",
+    "GD&T (Cotation fonctionnelle GPS)",
+    "Manufacturing Drawings",
+    "DfM/DfAM",
+    "DFMEA/RCA",
+    "SolidWorks",
+    "CATIA V5",
+    "3DEXPERIENCE",
+    "Creo",
+    "Abaqus",
+    "COMSOL Multiphysics",
+    "Ansys",
+    "KISSsoft / SMT MASTA (Gear analysis concepts)",
+    "Windchill PLM",
+    "Python (NumPy, SciPy)",
+    "MATLAB",
+    "C/C++",
+    "Data Analysis"
+  ]
+}

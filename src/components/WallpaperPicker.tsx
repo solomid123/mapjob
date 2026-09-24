@@ -19,7 +19,7 @@ const STORAGE_KEY = 'mapjob.wallpaper';
  * :root in index.css -- with no attribute set, those are what actually paint,
  * and a tick against a different name in this menu would be a lie.
  */
-const DEFAULT_WALLPAPER: WallpaperId = 'teal';
+const DEFAULT_WALLPAPER: WallpaperId = 'violet';
 
 const WALLPAPERS: { id: WallpaperId; name: string; swatch: string }[] = [
   { id: 'mist', name: 'Mist', swatch: 'linear-gradient(135deg,#e3ebe6,#b3bfb7 52%,#8b9c95)' },

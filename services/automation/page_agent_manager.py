@@ -68,9 +68,10 @@ PAGE_TEXT_JS = """
 """ % (AGENT_UI_SELECTOR, AGENT_UI_SELECTOR)
 
 
-def load_cv_data_url() -> str:
-    if os.path.exists(CV_PDF_PATH):
-        with open(CV_PDF_PATH, "rb") as f:
+def load_cv_data_url(path: str = "") -> str:
+    path = path or CV_PDF_PATH
+    if os.path.exists(path):
+        with open(path, "rb") as f:
             encoded = base64.b64encode(f.read()).decode("utf-8")
             return f"data:application/pdf;base64,{encoded}"
     return ""
@@ -173,8 +174,37 @@ def signup_password_for_new_accounts() -> str:
     return PORTAL_SIGNUP_PASSWORD or PORTAL_PASSWORD_PRIMARY
 
 
+# What the brief says about the CV, for the engine that puts it on the form
+# itself before the agent ever looks at the page. The sentence is a fact about
+# this engine, not about applying, which is why it is a parameter: the cloud
+# engine drives a browser on someone else's machine, cannot reach into the DOM
+# beforehand, and has to be told the opposite -- that attaching the file is its
+# own job. Telling an agent a file is already attached when it is not is the
+# one lie that reliably produces an application with no CV on it.
+LOCAL_RESUME_NOTE = """RESUME FILE:
+- Badreddine_Barki_CV.pdf is already attached programmatically into the resume/CV slot on this page.
+- Do NOT click "Browse" or "Upload" file buttons."""
+
+
+def local_resume_note(filename: str = "") -> str:
+    """
+    The same note, naming the file this run is actually carrying.
+
+    Runs no longer all send the same PDF: a CV cut for this one advert is
+    attached when there is one. The agent sees the filename in its brief and
+    sometimes repeats it back into a "which file did you attach" field, so the
+    name in the brief has to be the name on the disk.
+    """
+    if not filename or filename == os.path.basename(CV_PDF_PATH):
+        return LOCAL_RESUME_NOTE
+    return f"""RESUME FILE:
+- {filename} -- the candidate's CV, written for this vacancy -- is already attached
+  programmatically into the resume/CV slot on this page.
+- Do NOT click "Browse" or "Upload" file buttons."""
+
+
 def build_agent_prompt(job_title: str, company: str, candidate: dict, submit: bool = False,
-                       page_note: str = "") -> str:
+                       page_note: str = "", resume_note: str = "") -> str:
     """The agent's brief. `submit=False` is a rehearsal and is the default.
 
     A rehearsal fills the form and stops in front of the Submit button, so the
@@ -244,9 +274,7 @@ CANDIDATE WORK EXPERIENCE HISTORY:
 2. Title: R&D Mechanical Engineer Intern | Company: Sigma | Location: Clermont-Ferrand, France | Dates: 03/2021 - 09/2021
 3. Title: Mechanical Engineering Intern | Company: OCP Group | Location: Morocco | Dates: 06/2017 - 08/2017
 
-RESUME FILE:
-- Badreddine_Barki_CV.pdf is already attached programmatically into the resume/CV slot on this page.
-- Do NOT click "Browse" or "Upload" file buttons.
+{resume_note or LOCAL_RESUME_NOTE}
 
 NON-NEGOTIABLE RULES:
 1. NAVIGATE FREELY WITHIN THIS APPLICATION. Click whatever is needed to move forward: the
@@ -443,6 +471,9 @@ class PageAgentManager:
         self.driver = driver
         self.log_callback = log_callback or (lambda msg, step=0, status="running", done=False, success=False: None)
         self.page_agent_script = load_page_agent_script()
+        # The file this run will put on the form. The standard CV until the run
+        # is handed one cut for the advert it is about to answer.
+        self.cv_path = CV_PDF_PATH
         self.cv_data_url = load_cv_data_url()
         self.latest_screenshot = None
         # Bumped on every captured frame, so a viewer can tell a new picture
@@ -887,13 +918,27 @@ class PageAgentManager:
         except Exception:
             return []
 
+    def use_cv(self, path: str) -> bool:
+        """
+        Send this file instead of the standard CV for the rest of the run.
+
+        Refuses a path that is not on disk rather than quietly leaving the form
+        empty: an application with no CV on it is usually a wasted one, and the
+        caller can fall back to the standard CV knowing this said no.
+        """
+        if not path or not os.path.exists(path):
+            return False
+        self.cv_path = os.path.abspath(path)
+        self.cv_data_url = load_cv_data_url(self.cv_path)
+        return bool(self.cv_data_url)
+
     def inject_cv_file(self) -> bool:
         """
-        Attaches Badreddine_Barki_CV.pdf into resume file inputs.
+        Attaches this run's CV into resume file inputs.
         Uses native Selenium CDP send_keys with unhidden input (which triggers real XHR upload in Phenom, Workday, etc.),
         and falls back to synthetic DataTransfer.
         """
-        cv_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "Badreddine_Barki_CV.pdf"))
+        cv_path = self.cv_path or CV_PDF_PATH
         if not os.path.exists(cv_path):
             return False
 
@@ -965,6 +1010,7 @@ class PageAgentManager:
             try:
                 injector_script = """
                 const dataUrl = arguments[0];
+                const fileName = arguments[1] || "Badreddine_Barki_CV.pdf";
                 try {
                     const fileInputs = Array.from(document.querySelectorAll('input[type="file"]'));
                     if (!fileInputs.length) return false;
@@ -982,7 +1028,7 @@ class PageAgentManager:
                     let n = bstr.length;
                     const u8arr = new Uint8Array(n);
                     while (n--) u8arr[n] = bstr.charCodeAt(n);
-                    const file = new File([u8arr], "Badreddine_Barki_CV.pdf", { type: mime });
+                    const file = new File([u8arr], fileName, { type: mime });
                     const dt = new DataTransfer();
                     dt.items.add(file);
 
@@ -1001,7 +1047,8 @@ class PageAgentManager:
                     return false;
                 }
                 """
-                res = bool(self.driver.execute_script(injector_script, self.cv_data_url))
+                res = bool(self.driver.execute_script(injector_script, self.cv_data_url,
+                                                      os.path.basename(cv_path)))
                 if res:
                     attached = True
             except Exception:
@@ -2280,7 +2327,7 @@ class PageAgentManager:
         # on the wrong field.
         attached = self.inject_cv_file()
         if attached:
-            self.log_callback("Attached resume: Badreddine_Barki_CV.pdf", step=4)
+            self.log_callback("Attached resume: " + os.path.basename(self.cv_path), step=4)
 
         self.capture_screenshot()
 
@@ -2289,7 +2336,8 @@ class PageAgentManager:
         # front of the agent, and it crosses several of them on the way to a
         # submitted application.
         self.prompt_factory = lambda: build_agent_prompt(
-            job_title, company, candidate, submit=submit, page_note=self.page_note(candidate))
+            job_title, company, candidate, submit=submit, page_note=self.page_note(candidate),
+            resume_note=local_resume_note(os.path.basename(self.cv_path)))
         self.start_agent_task(self.refresh_application_brief(),
                               f"Starting autonomous page control for {job_title}")
 

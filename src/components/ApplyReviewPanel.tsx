@@ -100,7 +100,7 @@ const TechnicalDetail: React.FC<{ trace: string }> = ({ trace }) => (
       <ChevronRight className="w-3 h-3 transition-transform duration-200 group-open:rotate-90" />
       Technical detail
     </summary>
-    <pre className="mt-2 max-h-40 overflow-auto custom-scrollbar rounded-xl bg-black/30 p-3 text-[11px] leading-relaxed text-[rgba(235,235,245,0.42)] whitespace-pre-wrap break-words font-mono">
+    <pre className="mt-2 max-h-40 overflow-auto custom-scrollbar rounded-xl bg-white/[0.05] p-3 text-[11px] leading-relaxed text-[rgba(235,235,245,0.42)] whitespace-pre-wrap break-words font-mono">
       {trace}
     </pre>
   </details>
@@ -174,15 +174,47 @@ function useLiveFrame(src: string): string {
   return shown;
 }
 
-/** The stage the frame is shown on. Given the frame; it fetches nothing. */
-const LiveView: React.FC<{ frame: string; live: boolean; caption: string; placeholder: string }> = ({
-  frame, live, caption, placeholder,
-}) => {
+/**
+ * The stage the browser is shown on. Given what to show; it fetches nothing.
+ *
+ * Two engines, two kinds of picture. The one on this machine owns the window
+ * and screenshots it, so it sends stills and they are drawn as an image. The
+ * cloud engine's browser is on someone else's hardware and there is nothing
+ * here to screenshot; it publishes a live view page instead, which is embedded.
+ * The choice is made on which of the two arrived, not on the engine's name, so
+ * an engine that one day sends both -- or neither yet -- still renders sensibly.
+ */
+const LiveView: React.FC<{
+  frame: string;
+  embed: string;
+  live: boolean;
+  caption: string;
+  placeholder: string;
+}> = ({ frame, embed, live, caption, placeholder }) => {
   const shown = frame;
   return (
     <figure className="space-y-2.5">
-      <div className="relative rounded-2xl overflow-hidden bg-black/35 shadow-[inset_0_0_0_0.5px_rgba(255,255,255,0.1)]">
-        {shown ? (
+      {/* Not black. A stage with nothing on it yet used to be a black
+          rectangle in the middle of a glass panel -- the one thing on screen
+          that the wallpaper did not show through. */}
+      <div className="relative rounded-2xl overflow-hidden bg-white/[0.045] shadow-[inset_0_0_0_0.5px_rgba(255,255,255,0.1)]">
+        {embed ? (
+          <iframe
+            src={embed}
+            title="The employer's application form, in the cloud browser"
+            /* 2:1, because that is the shape of what the cloud publishes: its
+               own toolbar above the browser's screen. At 16/10 the frame was
+               taller than the picture inside it and the surplus came back as a
+               black band under the page, which looked like the view had
+               broken. */
+            className="w-full aspect-[2/1] block border-0"
+            /* The frame shows a browser driving someone else's site: it gets
+               nothing from this origin, and it cannot navigate the app away. */
+            sandbox="allow-scripts allow-same-origin"
+            allow="clipboard-read; clipboard-write"
+            referrerPolicy="no-referrer"
+          />
+        ) : shown ? (
           <img
             src={shown}
             alt="The employer's application form, as it stands in the browser right now"
@@ -208,8 +240,8 @@ const LiveView: React.FC<{ frame: string; live: boolean; caption: string; placeh
           </div>
         )}
 
-        {/* The broadcast tally. Only while frames are actually arriving. */}
-        {live && shown && (
+        {/* The broadcast tally. Only while something is actually arriving. */}
+        {live && (shown || embed) && (
           <span className="absolute top-3 left-3 inline-flex items-center gap-1.5 rounded-full bg-black/55 backdrop-blur-md px-2.5 py-1 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-white">
             <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse" />
             Live
@@ -219,7 +251,7 @@ const LiveView: React.FC<{ frame: string; live: boolean; caption: string; placeh
       {/* Only when there is something to caption. "The form as it stands in
           the browser right now" under an empty stage is a caption for a
           picture that does not exist. */}
-      {shown && (
+      {(shown || embed) && (
         <figcaption className="text-[12.5px] text-[rgba(235,235,245,0.42)]">{caption}</figcaption>
       )}
     </figure>
@@ -236,6 +268,13 @@ export const ApplyReviewPanel: React.FC<ApplyReviewPanelProps> = ({
 }) => {
   const shot = browserApplyScreenshotUrl(run);
   const frame = useLiveFrame(shot);
+
+  // The cloud engine's own live view, when there is one. A finished run's view
+  // is a dead socket -- the session is torn down with the run -- so it is
+  // dropped at the end rather than left showing a frozen or blank page that
+  // looks like a browser still sitting there.
+  const isCloud = run.engine === 'cloud';
+  const embed = !run.done && isCloud ? run.live_url || '' : '';
   const tone = TONE[run.status] || NEUTRAL_TONE;
   const missing = run.missing_required || [];
   const steps = run.steps || [];
@@ -299,18 +338,45 @@ export const ApplyReviewPanel: React.FC<ApplyReviewPanelProps> = ({
   if (minimized) {
     return (
       <div
-        className="fixed bottom-4 right-4 z-[6000] w-[292px] ic-popover rounded-[20px] overflow-hidden shadow-panel animate-in slide-in-from-bottom-3 fade-in duration-200"
+        className="fixed bottom-4 right-4 z-[6000] w-[292px] ic-popover ic-popover-sheer rounded-[20px] overflow-hidden shadow-panel animate-in slide-in-from-bottom-3 fade-in duration-200"
         role="dialog"
         aria-label={`Application to ${run.company}, minimised`}
       >
         <button
           type="button"
           onClick={() => setMinimized(false)}
-          className="relative block w-full aspect-video bg-black/45 cursor-pointer group"
+          className="relative block w-full aspect-video bg-white/[0.05] cursor-pointer group"
           title="Back to the full panel"
           aria-label="Back to the full panel"
         >
-          {frame ? (
+          {embed ? (
+            /* The cloud engine has no stills to shrink -- it publishes a page,
+               and a page is what has to come down here too, or minimising a
+               cloud run hands you a black rectangle with a dot in it.
+               Rendered at panel size and scaled, rather than laid out at 292px:
+               a browser told it has a phone-width viewport reflows the
+               employer's site into a column, which is not what is happening on
+               the other end. So this is the same picture, smaller.
+               It reconnects when you fold it away and again when you open it
+               out -- the frame moves in the tree, so the browser reloads it --
+               which costs a second of theirs and shows the run either way. */
+            <span
+              className="absolute inset-0 overflow-hidden"
+              style={{ pointerEvents: 'none' }}
+            >
+              <iframe
+                src={embed}
+                title="The employer's application form, in the cloud browser"
+                className="border-0 origin-top-left"
+                style={{ width: 900, height: 506, transform: 'scale(0.3244)' }}
+                sandbox="allow-scripts allow-same-origin"
+                referrerPolicy="no-referrer"
+                scrolling="no"
+                tabIndex={-1}
+                aria-hidden="true"
+              />
+            </span>
+          ) : frame ? (
             <img
               src={frame}
               alt="The employer's application form, as it stands in the browser right now"
@@ -331,7 +397,7 @@ export const ApplyReviewPanel: React.FC<ApplyReviewPanelProps> = ({
             </span>
           )}
 
-          {stoppable && frame && (
+          {stoppable && (frame || embed) && (
             <span className="absolute top-2 left-2 inline-flex items-center gap-1.5 rounded-full bg-black/55 backdrop-blur-md px-2 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.08em] text-white">
               <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse" />
               Live
@@ -388,11 +454,14 @@ export const ApplyReviewPanel: React.FC<ApplyReviewPanelProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-[6000] flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 animate-in fade-in duration-150"
+      /* The scrim sets this panel apart from the page; it does not need to
+         hide it. At black/50 over a dark wallpaper the whole screen went to
+         slate and the panel had nothing to stand out from. */
+      className="fixed inset-0 z-[6000] flex items-center justify-center bg-[rgba(6,10,20,0.34)] backdrop-blur-sm p-4 animate-in fade-in duration-150"
       onClick={stoppable ? () => setMinimized(true) : onClose}
     >
       <div
-        className="ic-popover w-full max-w-3xl max-h-[92vh] flex flex-col rounded-[26px] overflow-hidden animate-in zoom-in-95 duration-200"
+        className="ic-popover ic-popover-sheer w-full max-w-3xl max-h-[92vh] flex flex-col rounded-[26px] overflow-hidden animate-in zoom-in-95 duration-200"
         role="dialog"
         aria-modal="true"
         aria-label={`Application to ${run.company}`}
@@ -502,7 +571,7 @@ export const ApplyReviewPanel: React.FC<ApplyReviewPanelProps> = ({
             or three words, consecutive repeats collapse, and only the last
             few are kept: enough to see it moving, which is the whole job. */}
         {trail.length > 0 && (
-          <div className="mx-6 mt-3 shrink-0 rounded-2xl bg-black/20 shadow-[inset_0_0_0_0.5px_rgba(255,255,255,0.08)] px-4 py-3">
+          <div className="mx-6 mt-3 shrink-0 rounded-2xl bg-white/[0.05] shadow-[inset_0_0_0_0.5px_rgba(255,255,255,0.08)] px-4 py-3">
             <ol className="space-y-1.5">
               {trail.map((phrase, i) => {
                 const isTip = i === trail.length - 1;
@@ -537,16 +606,21 @@ export const ApplyReviewPanel: React.FC<ApplyReviewPanelProps> = ({
         <div className="flex-1 overflow-y-auto custom-scrollbar px-6 py-4">
           <LiveView
             frame={frame}
+            embed={embed}
             live={!run.done}
             caption={
-              run.done
-                ? 'The form as it stands in the browser right now. Read it before you send it.'
-                : 'Live from the browser window, updating as the form is filled.'
+              embed
+                ? 'Live from the cloud browser. Scroll it, and take over if it gets stuck.'
+                : run.done
+                  ? 'The form as it stands in the browser right now. Read it before you send it.'
+                  : 'Live from the browser window, updating as the form is filled.'
             }
             placeholder={
               run.done
                 ? 'The run ended before there was anything to show.'
-                : 'Warming up the live view...'
+                : isCloud
+                  ? 'Waiting for a cloud browser...'
+                  : 'Warming up the live view...'
             }
           />
         </div>

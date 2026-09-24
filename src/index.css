@@ -98,28 +98,29 @@
    * tinting them to match would make each card look like a coloured panel
    * rather than a hole of shade the content sits in.
    *
-   * The default is teal, so its values live here rather than only in a
-   * `[data-wallpaper='teal']` block: an unset attribute has to land on the
+   * The default is violet, so its values live here rather than only in a
+   * `[data-wallpaper='violet']` block: an unset attribute has to land on the
    * same canvas the app normally wears, not on whichever theme happened to be
-   * written first. The teal block further down repeats them, because an
-   * explicit choice of teal has to win over any theme that comes after it in
+   * written first. The violet block further down repeats them, because an
+   * explicit choice of violet has to win over any theme that comes after it in
    * the cascade. */
 
-  /* Teal. Deep sea-green silk, the lightest of the dark set (mean luminance
-   * ~37%), which keeps the crest legible without the canvas ever competing
-   * with the tiles floating on it. Stops sampled from the JPEG. */
-  --wallpaper: url('/wallpaper-teal.jpg');
-  --canvas-base: #2b645e;
+  /* Violet. Deep purple silk, mean luminance around 22%: darker than teal, so
+   * the tiles read as shade over it rather than as panels, and white type sits
+   * on a near-black mid tone everywhere on the fold. Stops sampled from the
+   * JPEG. */
+  --wallpaper: url('/wallpaper-violet.jpg');
+  --canvas-base: #3a1c66;
   --canvas-scrim: linear-gradient(
     168deg,
-    rgba(3, 20, 20, 0.2) 0%,
-    rgba(3, 17, 17, 0.32) 55%,
-    rgba(2, 12, 12, 0.46) 100%
+    rgba(12, 6, 28, 0.18) 0%,
+    rgba(10, 5, 24, 0.3) 55%,
+    rgba(6, 3, 16, 0.44) 100%
   );
-  --canvas-under: radial-gradient(130% 100% at 10% 0%, #123f3a 0%, rgba(18, 63, 58, 0) 54%),
-    radial-gradient(110% 120% at 64% 46%, #74bab1 0%, rgba(116, 186, 177, 0) 58%),
-    radial-gradient(140% 120% at 38% 112%, #05191a 0%, rgba(5, 25, 26, 0) 68%),
-    linear-gradient(150deg, #3a7970 0%, #2b645e 46%, #032121 100%);
+  --canvas-under: radial-gradient(130% 100% at 12% 0%, #2a1153 0%, rgba(42, 17, 83, 0) 56%),
+    radial-gradient(110% 120% at 62% 46%, #8a5ebf 0%, rgba(138, 94, 191, 0) 58%),
+    radial-gradient(140% 120% at 40% 112%, #090520 0%, rgba(9, 5, 32, 0) 68%),
+    linear-gradient(150deg, #4c2c7f 0%, #3a1c66 46%, #0e062b 100%);
 
   /* Tile materials. */
   /* At 0.5 alpha over a saturated blue the tile just tints the wallpaper and
@@ -931,6 +932,26 @@ html[data-wallpaper='teal'] {
 }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .ic-popover {
+    background: #161c33;
+  }
+}
+
+/* A popover you sit and watch rather than read.
+ *
+ * 0.9 alpha is right for a menu: it is on screen for a second and the words in
+ * it have to be legible over whatever they land on. The apply panel is the
+ * opposite case -- it stands open for minutes over the map, mostly showing a
+ * picture of a browser -- and at 0.9 it reads as a grey slab dropped on the
+ * page. More wallpaper through it, more blur to keep the text off the detail
+ * behind it.
+ */
+.ic-popover-sheer {
+  background: rgba(22, 27, 48, 0.68);
+  -webkit-backdrop-filter: saturate(180%) blur(40px);
+  backdrop-filter: saturate(180%) blur(40px);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .ic-popover-sheer {
     background: #161c33;
   }
 }

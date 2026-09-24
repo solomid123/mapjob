@@ -61,6 +61,7 @@ def record_outcome(
     dry_run: bool = False,
     started_at: Optional[float] = None,
     extra: Optional[Dict[str, Any]] = None,
+    user: str = "",
 ) -> Dict[str, Any]:
     """
     Writes one line for one finished run, and returns what it wrote.
@@ -83,6 +84,10 @@ def record_outcome(
         "evidence": (evidence or "").strip()[:200],
         "dry_run": bool(dry_run),
         "seconds": round(time.time() - started_at, 1) if started_at else None,
+        # Whose application. Two people share this file and neither should see
+        # the other's history: a line written before there were accounts has no
+        # name on it and belongs to the account there was then.
+        "user": _owner(user),
     }
     if extra:
         record.update(extra)
@@ -94,8 +99,21 @@ def record_outcome(
     return record
 
 
-def read_outcomes(limit: int = 100, job_id: str = "") -> List[Dict[str, Any]]:
-    """The most recent runs, newest first. A broken line is skipped, not fatal."""
+def _owner(user: str = "") -> str:
+    from services.automation import people
+    return people.resolve(user)
+
+
+def read_outcomes(limit: int = 100, job_id: str = "",
+                  user: str = "") -> List[Dict[str, Any]]:
+    """This account's most recent runs, newest first. A broken line is skipped.
+
+    Scoped by account, and old lines -- written when this app had one -- answer
+    for the account it had. There is no way to ask for everybody's: "did I
+    already apply to this" is a question about one person."""
+    from services.automation import people
+
+    who = _owner(user)
     try:
         with open(LEDGER_PATH, "r", encoding="utf-8") as f:
             lines = f.readlines()
@@ -115,13 +133,15 @@ def read_outcomes(limit: int = 100, job_id: str = "") -> List[Dict[str, Any]]:
             continue
         if job_id and record.get("job_id") != job_id:
             continue
+        if (str(record.get("user") or people.DEFAULT)) != who:
+            continue
         out.append(record)
         if len(out) >= limit:
             break
     return out
 
 
-def outcome_for_job(job_id: str) -> Optional[Dict[str, Any]]:
+def outcome_for_job(job_id: str, user: str = "") -> Optional[Dict[str, Any]]:
     """The latest attempt at one job, for "you already applied to this" checks."""
-    found = read_outcomes(limit=1, job_id=job_id)
+    found = read_outcomes(limit=1, job_id=job_id, user=user)
     return found[0] if found else None

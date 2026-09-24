@@ -40,6 +40,16 @@ const RULES: Array<[RegExp, string]> = [
   [/navigating to employer portal/i, 'Loading the page'],
   [/new page loaded/i, 'New page'],
 
+  // Writing the CV for this advert, which happens before the browser opens and
+  // is the longest silent stretch of a run if it is not narrated.
+  [/read the (en|fr) master/i, 'Reading your CV'],
+  [/^kept \d+ bullets/i, 'Choosing what to show'],
+  [/^cv printed/i, 'Printing your CV'],
+  [/^letter printed/i, 'Writing your letter'],
+  [/cv tailored for this advert/i, 'CV written for this job'],
+  [/tailoring skipped|sending the standard cv|sending the standard one|sending the master as it is/i,
+    'Using your standard CV'],
+
   // Getting to the form
   [/mounting pageagent core/i, 'Waking the agent'],
   [/clicked application button/i, 'Opening the form'],
@@ -73,6 +83,20 @@ const RULES: Array<[RegExp, string]> = [
   // The form itself
   [/attached resume|attached cv/i, 'CV attached'],
   [/^left .* empty/i, 'Question skipped'],
+  // The cloud engine narrates its own steps, in the model's words rather than
+  // the backend's, so there is no fixed vocabulary to match on. These read the
+  // verb out of the sentence and stop before it, which is all the rail has room
+  // for anyway -- and they sit above the catch-all below, which is what a line
+  // falls to when none of them fit.
+  [/waiting for a cloud browser/i, 'Waiting for a browser'],
+  [/^agent[:.].*\b(captcha|robot check)/i, 'CAPTCHA in the way'],
+  [/^agent[:.].*\b(cannot apply|no application|not a job|not an application)/i, 'Nothing to apply to'],
+  [/^agent[:.].*\b(sign|log)\s?(in|ging in)|^agent[:.].*\bconnexion/i, 'Signing in'],
+  [/^agent[:.].*\b(upload|attach)/i, 'Attaching your CV'],
+  [/^agent[:.].*\b(submit|send|envoy)/i, 'Sending it'],
+  [/^agent[:.].*\b(fill|answer|complete|type)/i, 'Filling the form'],
+  [/^agent[:.].*\b(inspect|read|review|check)/i, 'Reading the form'],
+  [/^agent[:.].*\b(open|load|navigat|go to)/i, 'Loading the page'],
   [/^agent[:.]/i, 'Filling the form'],
   [/agent note/i, 'Filling the form'],
   [/stopped to ask/i, 'Needs your answer'],

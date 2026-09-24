@@ -7,6 +7,8 @@ import {
 } from '../utils/postedRange';
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { WallpaperPicker } from './WallpaperPicker';
+import type { ApplyEngineId } from './ApplyEngineChooser';
+import type { ApplyEngine } from '../services/directAtsApi';
 import { ProfileMenu } from './ProfileMenu';
 import {
   Search,
@@ -14,7 +16,6 @@ import {
   Briefcase,
   Mail,
   Sparkles,
-  PlusCircle,
   X,
   ChevronLeft,
   ChevronRight,
@@ -38,9 +39,13 @@ interface NavbarProps {
   appliedCount: number;
   showSavedOnly: boolean;
   setShowSavedOnly: (saved: boolean) => void;
-  onOpenPostJob: () => void;
-  activeTopTab: 'jobs' | 'emails' | 'interview';
-  setActiveTopTab: (tab: 'jobs' | 'emails' | 'interview') => void;
+  /** Passed straight through to the profile card, which is where the choice of
+   *  apply engine lives. The ribbon itself has no opinion about it. */
+  applyEngine: ApplyEngineId;
+  applyEngines: ApplyEngine[];
+  onChooseApplyEngine: (id: ApplyEngineId) => void;
+  activeTopTab: 'jobs' | 'emails' | 'interview' | 'profile';
+  setActiveTopTab: (tab: 'jobs' | 'emails' | 'interview' | 'profile') => void;
   /** The result count and the filter glyph, to sit level with the search
    *  field on wide windows. Passed in rather than computed here because the
    *  count is the list's business, not the chrome's. */
@@ -65,7 +70,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   appliedCount,
   showSavedOnly,
   setShowSavedOnly,
-  onOpenPostJob,
+  applyEngine,
+  applyEngines,
+  onChooseApplyEngine,
   activeTopTab,
   setActiveTopTab,
   resultsSummary,
@@ -228,15 +235,12 @@ export const Navbar: React.FC<NavbarProps> = ({
 
               <span className="ic-ribbon-sep mx-1.5" />
 
-              <button
-                type="button"
-                onClick={onOpenPostJob}
-                title="Post a job"
-                aria-label="Post a job"
-                className="ic-fill w-8 h-8 rounded-full hidden sm:flex items-center justify-center cursor-pointer text-[rgba(235,235,245,0.62)] hover:text-[#f5f5f7]"
-              >
-                <PlusCircle className="w-[17px] h-[17px] stroke-[1.8]" />
-              </button>
+              {/* No "post a job" here. This ribbon is a candidate's: search,
+                * mail, saved, wallpaper, account. Posting a vacancy is the one
+                * employer-side thing in the app, and it kept a permanent seat
+                * in the bar for a button neither of the two people using this
+                * has pressed. It lives on the mobile bar and nowhere else
+                * until there is a real employer side to put it in. */}
 
               <button
                 type="button"
@@ -262,7 +266,10 @@ export const Navbar: React.FC<NavbarProps> = ({
                 savedCount={savedCount}
                 appliedCount={appliedCount}
                 onShowSaved={() => setShowSavedOnly(true)}
-                onOpenPostJob={onOpenPostJob}
+                onOpenProfile={() => setActiveTopTab('profile')}
+                applyEngine={applyEngine}
+                applyEngines={applyEngines}
+                onChooseApplyEngine={onChooseApplyEngine}
               />
             </div>
 

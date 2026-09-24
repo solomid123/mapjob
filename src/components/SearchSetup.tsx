@@ -3,6 +3,7 @@ import {
   ArrowLeft, ArrowRight, Briefcase, CalendarClock, Check, Laptop, MapPin, Search, X,
 } from 'lucide-react';
 import { CITIES } from '../data/mockJobs';
+import { userKey } from '../services/account';
 
 /**
  * What a search is looking for, asked once rather than guessed.
@@ -47,7 +48,7 @@ const STORAGE_KEY = 'mapjob.search.brief';
  */
 export function readSearchBrief(): SearchBrief | null {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(userKey(STORAGE_KEY));
     if (!raw) return null;
     const b = JSON.parse(raw) as SearchBrief;
     return b && typeof b.where === 'string' ? b : null;
@@ -58,7 +59,7 @@ export function readSearchBrief(): SearchBrief | null {
 
 export function writeSearchBrief(b: SearchBrief) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(b));
+    localStorage.setItem(userKey(STORAGE_KEY), JSON.stringify(b));
   } catch {
     // Private mode. The search still runs; it just gets asked again next time.
   }
@@ -66,7 +67,7 @@ export function writeSearchBrief(b: SearchBrief) {
 
 export function clearSearchBrief() {
   try {
-    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(userKey(STORAGE_KEY));
   } catch {
     // Nothing to clear.
   }

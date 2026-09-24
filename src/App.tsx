@@ -19,6 +19,7 @@ import { JobMap } from './components/JobMap';
 import { JobPage } from './components/JobPage';
 import { PostJobModal } from './components/PostJobModal';
 import { OutreachPage } from './components/OutreachPage';
+import { ProfilePage } from './components/ProfilePage';
 import { InterviewHelperModal } from './components/InterviewHelperModal';
 import {
   SearchSetup,
@@ -29,8 +30,12 @@ import {
   type SearchBrief,
 } from './components/SearchSetup';
 import { CITIES } from './data/mockJobs';
+import { takeFreshSignIn, userKey } from './services/account';
 import { resolveLocationFromCoords, getVisibleHubsInBounds } from './services/adzuna';
 import { matchTitle, terms } from './services/relevance';
+import { useApplyEngine } from './components/ApplyEngineChooser';
+import { useAttachmentChooser } from './components/AttachmentChooser';
+import { NO_ATTACHMENTS, type AttachmentChoice } from './services/documentsApi';
 import {
   fetchDirectAtsJobs,
   fetchJobFeed,
@@ -44,6 +49,9 @@ import {
   type FetchJobsOptions,
 } from './services/directAtsApi';
 import { ApplyReviewPanel } from './components/ApplyReviewPanel';
+import { WorkspaceRail, type Workspace } from './components/WorkspaceRail';
+import { TailorPane } from './components/TailorPane';
+import { HistoryPane } from './components/HistoryPane';
 import { BottomTabBar, type BottomTabType } from './components/BottomTabBar';
 import { BulkApplyBar } from './components/BulkApplyBar';
 import {
@@ -133,7 +141,7 @@ async function loadFeedWithRefill(
 import type { Job } from './types/job';
 import {
   saveJobToSupabase,
-  fetchSavedJobsFromSupabase,
+  fetchSavedJobIds,
   updateJobStatusInSupabase,
 } from './services/supabase';
 
@@ -178,11 +186,25 @@ function inViewOf(bounds: L.LatLngBounds): (job: Job) => boolean {
 }
 
 export function App() {
+  /**
+   * Whether this mount is somebody arriving, rather than somebody reloading.
+   *
+   * Signing in always lands on the new search, whatever the last visit left
+   * behind: a saved brief, an open job page, a `?tab=` in the address bar from
+   * a link that was clicked yesterday. Opening a session on the other person's
+   * last question is the wrong way round -- you sign in to start something, and
+   * the first screen should be the one that asks what.
+   *
+   * A reload is not an arrival and keeps its place. The door leaves the note
+   * this reads, and reading it takes it away, so it lasts exactly one mount.
+   */
+  const [freshLogin] = useState(takeFreshSignIn);
+
   // Live ATS listings; API submission is a separate capability.
   const [jobs, setJobs] = useState<Job[]>([]);
 
   const [savedJobIds, setSavedJobIds] = useState<Set<string>>(() => {
-    const saved = localStorage.getItem('mapjob_saved_ids');
+    const saved = localStorage.getItem(userKey('mapjob_saved_ids'));
     if (saved) {
       try {
         return new Set(JSON.parse(saved));
@@ -193,15 +215,12 @@ export function App() {
     return new Set();
   });
 
-  // Hydrate bookmarked jobs from Supabase on mount
+  // Hydrate this account's bookmarks from Supabase on mount. Asked for by
+  // name: the table holds both people's shortlists, and the one thing worse
+  // than an empty wishlist is somebody else's.
   useEffect(() => {
-    fetchSavedJobsFromSupabase().then((dbJobs) => {
-      if (dbJobs && dbJobs.length > 0) {
-        const ids = dbJobs
-          .filter((j) => j.status === 'saved' || j.status === 'applied')
-          .map((j) => j.id);
-        setSavedJobIds((prev) => new Set([...prev, ...ids]));
-      }
+    fetchSavedJobIds().then((ids) => {
+      if (ids.length) setSavedJobIds((prev) => new Set([...prev, ...ids]));
     }).catch(() => {});
   }, []);
 
@@ -214,9 +233,12 @@ export function App() {
    * during, a call. `?tab=` also makes the helper linkable and survives the
    * browser's back button.
    */
-  const [activeTopTab, setActiveTopTab] = useState<'jobs' | 'emails' | 'interview'>(() => {
+  const [activeTopTab, setActiveTopTab] = useState<'jobs' | 'emails' | 'interview' | 'profile'>(() => {
+    // Signing in is an arrival, so it lands on the map's own tab whatever the
+    // address bar still says. The effect below then tidies `?tab=` away.
+    if (freshLogin) return 'jobs';
     const t = new URLSearchParams(window.location.search).get('tab');
-    return t === 'interview' || t === 'emails' ? t : 'jobs';
+    return t === 'interview' || t === 'emails' || t === 'profile' ? t : 'jobs';
   });
 
   useEffect(() => {
@@ -229,6 +251,34 @@ export function App() {
     window.history.pushState({ tab: activeTopTab }, '', url.toString());
   }, [activeTopTab]);
 
+  /*
+   * A sign-in starts on a clean address.
+   *
+   * The state above already ignores what the URL says, but leaving `?job=` or
+   * `?view=` sitting in the bar would put it all back on the next reload -- and
+   * an advert cached under `mapjob_job_<id>` is not filed by account, so the
+   * one that came back could be the other person's.
+   */
+  useEffect(() => {
+    if (!freshLogin) return;
+    const url = new URL(window.location.href);
+    const stale = ['job', 'tab', 'view'].filter((k) => url.searchParams.has(k));
+    if (!stale.length) return;
+    stale.forEach((k) => url.searchParams.delete(k));
+    // Replace: the session before this one is not somewhere Back should go.
+    window.history.replaceState({}, '', url.toString());
+  }, [freshLogin]);
+
+  /**
+   * Which of the canvas's three faces is showing: the map, the tailoring bench,
+   * or what has already been sent.
+   *
+   * Session state rather than a URL: unlike the top tabs these are three views
+   * of one search, and a reload that dropped you on an empty tailoring list
+   * because of a stale link would be worse than starting on the map.
+   */
+  const [workspace, setWorkspace] = useState<Workspace>('map');
+
   /**
    * What this search is for, asked on arrival instead of assumed.
    *
@@ -237,7 +287,12 @@ export function App() {
    * the same reason: a good search is worth fifteen seconds, and the
    * alternative was opening on a city and a discipline nobody picked.
    */
-  const [searchBrief, setSearchBrief] = useState<SearchBrief | null>(() => readSearchBrief());
+  const [searchBrief, setSearchBrief] = useState<SearchBrief | null>(
+    // The questions come first on a fresh sign-in. The stored brief is left
+    // where it is rather than cleared: answering overwrites it, and backing out
+    // with "Browse everything instead" should not have thrown it away.
+    () => (freshLogin ? null : readSearchBrief()),
+  );
 
   // Filter state
   // Every filter below opens on the answers given to the questionnaire, so a
@@ -297,7 +352,7 @@ export function App() {
   useEffect(() => {
     // Purge any stale legacy mock jobs from browser storage
     try {
-      localStorage.removeItem('mapjob_custom_jobs');
+      localStorage.removeItem(userKey('mapjob_custom_jobs'));
     } catch {
       // ignore
     }
@@ -511,7 +566,6 @@ export function App() {
     fetchedRegionRef.current = null;
     setSearchError('');
     const cleanDest = destination.trim();
-    setActiveJobPage(null);
     setIsLoadingJobs(true);
 
     // 1. Direct match with configured European hubs
@@ -679,6 +733,18 @@ export function App() {
     const isHub = CITIES.some((c) => c.id === brief.where);
     pendingDestinationRef.current = isHub ? null : brief.where;
 
+    /*
+     * Asking for a new search means going back to the map, so an open job page
+     * closes here -- at the click, not inside handleSearchDestination, which is
+     * also what the mount restore calls. Clearing it in there is what broke
+     * opening a job in a new tab: the tab starts on the job (the ?job= param
+     * plus the cached copy), then the restore geocodes the town from the saved
+     * brief and wiped the page out from under it, leaving the map. Only towns
+     * were affected, because a hub restores through the feed effect instead,
+     * which never touched the job page.
+     */
+    setActiveJobPage(null);
+
     writeSearchBrief(brief);
     setSearchBrief(brief);
     setSearchQuery(brief.query);
@@ -792,11 +858,15 @@ export function App() {
   }, [setHoveredJobId, setHoveredListJobId]);
   // Check if URL has ?job= parameter on initial load (e.g. opened in a new tab)
   const [activeJobPage, setActiveJobPage] = useState<Job | null>(() => {
+    // Except straight after a sign-in, where the advert left open in this tab
+    // belongs to the session that has just ended -- and may belong to the other
+    // account entirely.
+    if (freshLogin) return null;
     try {
       const params = new URLSearchParams(window.location.search);
       const jobId = params.get('job');
       if (jobId) {
-        const stored = localStorage.getItem(`mapjob_job_${jobId}`) || localStorage.getItem('mapjob_latest_opened_job');
+        const stored = localStorage.getItem(`mapjob_job_${jobId}`) || localStorage.getItem(userKey('mapjob_latest_opened_job'));
         if (stored) {
           const parsed = JSON.parse(stored);
           if (parsed && (parsed.id === jobId || !jobId)) {
@@ -812,7 +882,7 @@ export function App() {
   const [applyingJobId, setApplyingJobId] = useState<string | null>(null);
   const [appliedJobIds, setAppliedJobIds] = useState<Set<string>>(() => {
     try {
-      const saved = localStorage.getItem('mapjob_applied_ids');
+      const saved = localStorage.getItem(userKey('mapjob_applied_ids'));
       return saved ? new Set(JSON.parse(saved)) : new Set();
     } catch {
       return new Set();
@@ -842,7 +912,7 @@ export function App() {
    */
   const [applyOutcomes, setApplyOutcomes] = useState<Record<string, ApplyOutcome>>(() => {
     try {
-      const saved = localStorage.getItem('mapjob_apply_outcomes');
+      const saved = localStorage.getItem(userKey('mapjob_apply_outcomes'));
       return saved ? JSON.parse(saved) : {};
     } catch {
       return {};
@@ -853,7 +923,7 @@ export function App() {
     setApplyOutcomes((prev) => {
       const next = { ...prev, [job.id]: outcome };
       try {
-        localStorage.setItem('mapjob_apply_outcomes', JSON.stringify(next));
+        localStorage.setItem(userKey('mapjob_apply_outcomes'), JSON.stringify(next));
       } catch {
         // A full quota is not worth losing the run over.
       }
@@ -866,7 +936,7 @@ export function App() {
       const next = new Set(prev);
       next.delete(id);
       try {
-        localStorage.setItem('mapjob_applied_ids', JSON.stringify(Array.from(next)));
+        localStorage.setItem(userKey('mapjob_applied_ids'), JSON.stringify(Array.from(next)));
       } catch {}
       return next;
     });
@@ -879,7 +949,7 @@ export function App() {
       const next = new Set(prev);
       next.add(job.id);
       try {
-        localStorage.setItem('mapjob_applied_ids', JSON.stringify(Array.from(next)));
+        localStorage.setItem(userKey('mapjob_applied_ids'), JSON.stringify(Array.from(next)));
       } catch {
         // ignore
       }
@@ -919,6 +989,23 @@ export function App() {
   useEffect(() => {
     appliedJobIdsRef.current = appliedJobIds;
   }, [appliedJobIds]);
+
+  /* Which browser applications run in. Mirrored into a ref for the same reason
+   * the applied set is: a bulk run is one long async loop, and the value it
+   * closed over at the first job must not be the one still in force at the
+   * twentieth if the choice changed in between. */
+  const { engine: applyEngine, setEngine: setApplyEngine, engines: applyEngines } = useApplyEngine();
+  const applyEngineRef = useRef(applyEngine);
+  useEffect(() => {
+    applyEngineRef.current = applyEngine;
+  }, [applyEngine]);
+
+  /* Which held documents ride along with an application, asked once and held in
+   * a ref for the length of the run. A bulk queue asks before the first job and
+   * then sends the same set with all twenty: the alternative is a modal between
+   * every application, which is not a choice, it is an interruption. */
+  const { ask: askAttachments, chooser: attachmentChooser } = useAttachmentChooser();
+  const attachmentsRef = useRef<AttachmentChoice>(NO_ATTACHMENTS);
 
   const toggleSelected = (id: string) => {
     setSelectedIds((prev) => {
@@ -987,7 +1074,8 @@ export function App() {
     applyJobRef.current = job;
     setApplyingJobId(job.id);
     try {
-      const started = await startBrowserApply(job);
+      const started = await startBrowserApply(
+        job, false, applyEngineRef.current, attachmentsRef.current);
       setApplyRun(started);
       const final = await pollBrowserApply(started.id, setApplyRun);
       setApplyRun(final);
@@ -1007,6 +1095,17 @@ export function App() {
       showToast('An application is already running.');
       return;
     }
+
+    // Asked before anything opens, and skipped entirely for someone who holds
+    // no documents. Cancelling the question cancels the application: it is the
+    // last moment before a real form starts being filled in.
+    const choice = await askAttachments({
+      context: 'apply',
+      target: job.company,
+      engine: applyEngineRef.current,
+    });
+    if (!choice) return;
+    attachmentsRef.current = choice;
 
     try {
       await runOneApplication(job);
@@ -1036,6 +1135,17 @@ export function App() {
       showToast('An application is already running.');
       return;
     }
+
+    // One answer for the whole queue. Asked here rather than inside
+    // runOneApplication so twenty applications are twenty applications, not
+    // twenty modals.
+    const choice = await askAttachments({
+      context: 'apply',
+      count: chosen.length,
+      engine: applyEngineRef.current,
+    });
+    if (!choice) return;
+    attachmentsRef.current = choice;
 
     bulkControlRef.current = { stopRequested: false };
     exitSelectMode();
@@ -1131,7 +1241,7 @@ export function App() {
     // 1. Cache the complete job object in localStorage so the new tab has instant access
     try {
       localStorage.setItem(`mapjob_job_${job.id}`, JSON.stringify(job));
-      localStorage.setItem('mapjob_latest_opened_job', JSON.stringify(job));
+      localStorage.setItem(userKey('mapjob_latest_opened_job'), JSON.stringify(job));
     } catch {
       // ignore
     }
@@ -1216,7 +1326,7 @@ export function App() {
           });
         }
       }
-      localStorage.setItem('mapjob_saved_ids', JSON.stringify(Array.from(next)));
+      localStorage.setItem(userKey('mapjob_saved_ids'), JSON.stringify(Array.from(next)));
       return next;
     });
   };
@@ -1226,7 +1336,7 @@ export function App() {
     setJobs((prev) => {
       const updated = [newJob, ...prev];
       const customJobs = updated;
-      localStorage.setItem('mapjob_custom_jobs', JSON.stringify(customJobs));
+      localStorage.setItem(userKey('mapjob_custom_jobs'), JSON.stringify(customJobs));
       return updated;
     });
     void saveJobToSupabase({
@@ -1543,6 +1653,10 @@ export function App() {
         </div>
       )}
 
+      {/* "Which of your documents go with this?" -- rendered above everything
+          because it stands between a click and a real employer's form. */}
+      {attachmentChooser}
+
       {/* The live application: what the browser is doing, the filled form, and
           the only button that sends it. */}
       {applyRun && (
@@ -1608,7 +1722,9 @@ export function App() {
           appliedCount={appliedJobIds.size}
           showSavedOnly={showSavedOnly}
           setShowSavedOnly={setShowSavedOnly}
-          onOpenPostJob={() => setIsPostJobOpen(true)}
+          applyEngine={applyEngine}
+          applyEngines={applyEngines}
+          onChooseApplyEngine={setApplyEngine}
           activeTopTab={activeTopTab}
           setActiveTopTab={setActiveTopTab}
           /* The results island carries its own count now. */
@@ -1635,6 +1751,12 @@ export function App() {
           isOpen={true}
           onClose={() => setActiveTopTab('jobs')}
         />
+      ) : activeTopTab === 'profile' ? (
+        /* The record behind every form the agent fills, every answer the
+           interview helper gives and every letter that goes out. A page for
+           the same reason outreach is one: it has sections, it is worked in,
+           and it is linkable as ?tab=profile. */
+        <ProfilePage onClose={() => setActiveTopTab('jobs')} />
       ) : activeTopTab === 'emails' ? (
         /* Outreach is a page, not a dialog: it is worked in for an hour at a
            time, it has four sections of its own, and a modal that covers the
@@ -1654,8 +1776,21 @@ export function App() {
             * different one -- and a card whose cover was 61% of its height so
             * that two jobs filled a screen. One surface has no edges to
             * reconcile, and the list can lie down. */}
+          {/* Three things, one canvas: find the work, prepare the documents for
+            * it, read back what was sent. Switching does not unmount the map --
+            * Leaflet would rebuild its tiles and the search would run again for
+            * a view you are coming straight back to. */}
+          <WorkspaceRail
+            active={workspace}
+            onChange={setWorkspace}
+            jobCount={filteredJobs.length}
+            appliedCount={appliedJobIds.size}
+          />
+
           <main className="flex-1 min-h-0 w-full px-4 sm:px-6 lg:px-8 pt-2 pb-3 overflow-hidden">
-            <div className="relative h-full w-full max-w-[1760px] mx-auto">
+            <div className={`relative h-full w-full max-w-[1760px] mx-auto ${
+              workspace === 'map' ? '' : 'hidden'
+            }`}>
 
               {/*
                 `isolate` is load-bearing: Leaflet gives its internal panes
@@ -1896,6 +2031,24 @@ export function App() {
               )}
 
             </div>
+
+            {/* Mounted only while they are being looked at: both read from the
+              * API when they appear, and neither should be polling behind the
+              * map. */}
+            {workspace === 'tailor' && (
+              <div className="h-full w-full max-w-[1760px] mx-auto">
+                <TailorPane
+                  jobs={filteredJobs}
+                  appliedJobIds={appliedJobIds}
+                  onOpenJob={handleOpenJobPage}
+                />
+              </div>
+            )}
+            {workspace === 'history' && (
+              <div className="h-full w-full max-w-[1760px] mx-auto">
+                <HistoryPane />
+              </div>
+            )}
           </main>
 
       {/* Floating Toggle for Mobile Screens (Map vs List) - Airbnb floating pill */}

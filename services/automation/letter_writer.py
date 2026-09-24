@@ -57,15 +57,54 @@ GERMAN_CITIES = {
     "wien", "vienna", "graz", "salzburg", "zuerich", "zürich", "basel", "bern",
 }
 
-# What the letter is called where it is going. The German word is not a
-# translation of the French one -- an Initiativbewerbung is a recognised genre
-# with an expected shape, and naming it correctly in the subject line is the
-# difference between being read and being filed as circular mail.
+# What the subject line calls it, and it does not call it anything.
+#
+# "Speculative application", "candidature spontanée", "Initiativbewerbung": each
+# one announces, before a word of the letter is read, that nobody asked for this
+# and that the same text has probably gone to forty other companies. The reader
+# files it accordingly. A letter that simply says what the writer does reads as
+# a person writing to them, which is what it is -- the fact that no advert
+# exists is obvious from the letter and needs no label on top of it.
 SUBJECTS = {
-    "de": "Initiativbewerbung",
-    "fr": "Candidature spontanée",
-    "en": "Speculative application",
+    "de": "Bewerbung",
+    "fr": "Candidature",
+    "en": "Application",
 }
+
+# The labels, in every form they turn up in, so nothing puts one back. The model
+# reaches for them by habit -- "I am writing speculatively to enquire" -- and a
+# rule in the prompt is a request, not a guarantee.
+LABELS = [
+    (r"\bon a (purely )?speculative basis\b", ""),
+    (r"\bspeculative(ly)?\b,?\s*", ""),
+    (r"\bunsolicited\b,?\s*", ""),
+    (r"\bcandidature\s+spontan[ée]e?\b", "candidature"),
+    (r"\bde\s+mani[èe]re\s+spontan[ée]e\b", ""),
+    (r"\bspontan[ée]ment\b,?\s*", ""),
+    (r"\bInitiativbewerbung\b", "Bewerbung"),
+    (r"\binitiativ\b,?\s*", ""),
+]
+
+
+def unlabelled(text: str) -> str:
+    """
+    The letter with the genre word taken back out, however it got in.
+
+    Only ever removes: no sentence is rewritten, nothing is added. What is left
+    is the same letter without the announcement -- "I am writing to enquire"
+    instead of "I am writing speculatively to enquire".
+    """
+    out = text
+    for pattern, replacement in LABELS:
+        out = re.sub(pattern, replacement, out, flags=re.IGNORECASE)
+    # Tidy what the removals left behind: doubled spaces, a space before a
+    # comma, a paragraph that now opens on the comma the word used to precede.
+    # The case of the first word is left alone -- a German letter continues in
+    # lower case after the greeting, and "correcting" that would be an error.
+    out = re.sub(r"[ \t]{2,}", " ", out)
+    out = re.sub(r"\s+([,.;:])", r"\1", out)
+    out = re.sub(r"(^|\n)[ \t]*[,;:]\s*", r"\1", out)
+    return out.strip()
 
 SIGN_OFF = {
     "de": "Mit freundlichen Grüßen",
@@ -81,10 +120,28 @@ GREETING = {
 }
 
 
-def safe_profile() -> Dict[str, object]:
-    """The candidate, minus everything that is not the model's business."""
-    return {key: CANDIDATE_PROFILE.get(key) for key in PROFILE_FIELDS
-            if CANDIDATE_PROFILE.get(key) not in (None, "", [], {})}
+def safe_profile(user: Optional[str] = None) -> Dict[str, object]:
+    """
+    The candidate, minus everything that is not the model's business.
+
+    Which candidate is now a question: two people use this app, and the one
+    whose name goes at the bottom of the letter is the one whose profile the
+    model is shown. Named accounts are read from the store; the bare call still
+    answers with the account this app was written for, so the nine callers that
+    have not learned to say who they mean keep working.
+
+    The allow-list is unchanged and is still an allow-list. `password` and
+    `passwords` sit in the same dict as the address and the CV, and a filter
+    that named what to drop would leak the next secret somebody adds.
+    """
+    source: Dict[str, object]
+    if user:
+        from services.automation import profile_store
+        source = profile_store.profile_for(user)
+    else:
+        source = CANDIDATE_PROFILE
+    return {key: source.get(key) for key in PROFILE_FIELDS
+            if source.get(key) not in (None, "", [], {})}
 
 
 def _domains(prospect: Dict[str, object]) -> str:
@@ -100,8 +157,14 @@ def _domains(prospect: Dict[str, object]) -> str:
     return host + " " + site
 
 
-def language_for(prospect: Dict[str, object]) -> str:
-    """Where the employer is, not what the operator prefers."""
+def language_for(prospect: Dict[str, object], fallback: str = "en") -> str:
+    """
+    Where the employer is, not what the operator prefers.
+
+    The fallback is the one thing the operator does decide, and only when the
+    evidence runs out: an address with no country in it, written on behalf of
+    someone applying for an Ausbildung, is German rather than English.
+    """
     hosts = [h for h in _domains(prospect).split() if h]
     if any(h.endswith(GERMAN_TLDS) for h in hosts):
         return "de"
@@ -112,7 +175,7 @@ def language_for(prospect: Dict[str, object]) -> str:
     # A .com firm found on the German federal job board is a German firm.
     if str(prospect.get("source") or "") == "arbeitsagentur":
         return "de"
-    return "en"
+    return fallback or "en"
 
 
 def _honorific(contact_name: str, language: str) -> Dict[str, str]:
@@ -155,8 +218,9 @@ SYSTEM = ("You write job application letters that sound like one person wrote "
           "them to one employer.")
 
 
-def _prompt(prospect: Dict[str, object], language: str, role: str) -> str:
-    profile = safe_profile()
+def _prompt(prospect: Dict[str, object], language: str, role: str,
+            user: Optional[str] = None) -> str:
+    profile = safe_profile(user)
     facts = [
         "Company: " + str(prospect.get("company") or ""),
         "City: " + str(prospect.get("city") or ""),
@@ -165,8 +229,14 @@ def _prompt(prospect: Dict[str, object], language: str, role: str) -> str:
         "Named contact: " + (str(prospect.get("contact_name")) or "(nobody named)"),
     ]
     rules = (
-        "Write the body of a speculative job application -- the employer has not "
-        "advertised this role.\n"
+        "Write the body of a job application to an employer who has not advertised "
+        "anything.\n"
+        "Never say so. Do not write 'speculative', 'speculatively', 'unsolicited', "
+        "'candidature spontanee', 'spontanement', 'Initiativbewerbung' or 'initiativ', "
+        "and do not describe the letter at all. Someone writing to a company they "
+        "would like to work for does not open by classifying their own letter; they "
+        "say what they do and what they are asking for. Keep it warm and direct, the "
+        "way a competent person writes to another, not the way a form is filled in.\n"
         "Language: " + {"de": "German", "fr": "French", "en": "English"}[language] + ".\n"
         "Length: three or four short paragraphs, under 220 words. It will be read "
         "on a phone by somebody who did not ask for it.\n"
@@ -231,7 +301,8 @@ def _strip_frame(body: str, full_name: str) -> str:
     return body
 
 
-def _fallback_body(prospect: Dict[str, object], language: str, role: str) -> str:
+def _fallback_body(prospect: Dict[str, object], language: str, role: str,
+                   user: Optional[str] = None) -> str:
     """
     What goes out when there is no model.
 
@@ -240,17 +311,17 @@ def _fallback_body(prospect: Dict[str, object], language: str, role: str) -> str
     outcome worse than a template.
     """
     company = str(prospect.get("company") or "")
-    profile = safe_profile()
+    profile = safe_profile(user)
     name = str(profile.get("full_name") or "")
     title = role or str(profile.get("current_title") or "")
     if language == "de":
-        return (f"mit großem Interesse wende ich mich initiativ an {company}. "
+        return (f"mit großem Interesse wende ich mich an {company}. "
                 f"Ich bin {name} und suche eine Position als {title}.\n\n"
                 "Gerne stelle ich mich Ihnen persönlich vor. Meinen Lebenslauf "
                 "finden Sie im Anhang.\n\n"
                 "Über eine Rückmeldung würde ich mich sehr freuen.")
     if language == "fr":
-        return (f"je me permets de vous adresser une candidature spontanée pour "
+        return (f"je me permets de vous adresser ma candidature pour "
                 f"un poste de {title} au sein de {company}.\n\n"
                 "Vous trouverez mon curriculum vitae en pièce jointe, et je reste "
                 "à votre disposition pour un entretien.\n\n"
@@ -261,7 +332,8 @@ def _fallback_body(prospect: Dict[str, object], language: str, role: str) -> str
 
 
 def write(prospect: Dict[str, object], role: str = "",
-          language: Optional[str] = None) -> Dict[str, str]:
+          language: Optional[str] = None,
+          user: Optional[str] = None) -> Dict[str, str]:
     """
     One letter. Returns {language, subject, greeting, body, sign_off}.
 
@@ -269,7 +341,9 @@ def write(prospect: Dict[str, object], role: str = "",
     plain one, because the alternative is a campaign that stops halfway with
     half its prospects marked sent.
     """
-    language = language or language_for(prospect)
+    if not language:
+        from services.automation import people
+        language = language_for(prospect, people.letter_language(user))
     company = str(prospect.get("company") or "")
     subject = SUBJECTS[language] + (" als " + role if role and language == "de"
                                     else (" - " + role if role else ""))
@@ -279,21 +353,25 @@ def write(prospect: Dict[str, object], role: str = "",
         client = FuelixClient()
         if client.has_credentials():
             written = client.chat_text(
-                SYSTEM, _prompt(prospect, language, role), task="writer",
+                SYSTEM, _prompt(prospect, language, role, user), task="writer",
                 temperature=0.7, max_tokens=700, timeout=45)
             body = _strip_frame((written or "").strip(),
-                                str(safe_profile().get("full_name") or ""))
+                                str(safe_profile(user).get("full_name") or ""))
     except Exception:  # noqa: BLE001 - a letter is worth having even unpolished
         body = ""
 
     if len(body) < 120 or "[" in body[:400]:
         # Too short to be a letter, or full of bracketed placeholders the model
         # expected somebody to fill in. Either way it must not go out.
-        body = _fallback_body(prospect, language, role)
+        body = _fallback_body(prospect, language, role, user)
+
+    # Last thing before it leaves: the letter does not say what kind of letter
+    # it is, whatever the model decided about that.
+    body = unlabelled(body)
 
     return {
         "language": language,
-        "subject": subject + (" - " + company if company and language != "de" else ""),
+        "subject": unlabelled(subject + (" - " + company if company and language != "de" else "")),
         "greeting": greeting_for(prospect, language),
         "body": body,
         "sign_off": SIGN_OFF[language],

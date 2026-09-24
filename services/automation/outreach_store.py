@@ -14,6 +14,7 @@ touches a network, which is what makes it testable and what keeps a failed
 API call from losing the record of what was already done.
 """
 
+import contextvars
 import json
 import os
 import queue
@@ -117,6 +118,7 @@ def init_db() -> None:
             """
         )
         _add_columns(conn)
+        _add_event_columns(conn)
         _add_document_columns(conn)
         _backfill_sends(conn)
         _backfill_job_titles(conn)
@@ -240,7 +242,38 @@ LATER_COLUMNS = (
     # that a company has nothing to do with what was asked is to open the
     # listing, and the cheapest moment to notice is before writing to them.
     ("job_title", "TEXT DEFAULT ''"),
+    # Whose prospect. Two people use this app for opposite searches -- French
+    # engineering offices and German Handwerksbetriebe -- and one pile of
+    # companies is not a shared address book, it is her writing to his
+    # employers. Rows written before there were accounts have '' and belong to
+    # the account there was then, which is what `_owner` answers with.
+    ("user", "TEXT DEFAULT ''"),
 )
+
+
+# Whose ledger a call is about, when the call itself does not say.
+#
+# A prospecting run is one long thread -- search, verify, write, send -- making
+# dozens of calls in here, and threading an account name through every one of
+# them is how one gets missed. So the run says once who it is for and the
+# context carries it. An explicit `user` argument always wins; a caller that
+# says nothing, in a thread that said nothing, gets the default account, which
+# is what this app did when it had one.
+_ACTING: "contextvars.ContextVar[str]" = contextvars.ContextVar(
+    "outreach_account", default="")
+
+
+def acting_as(user: str = "") -> None:
+    """Declare whose run this thread is. Called once, at the top of a run."""
+    from services.automation import people
+
+    _ACTING.set(people.resolve(user))
+
+
+def _owner(user: str = "") -> str:
+    from services.automation import people
+
+    return people.resolve(user or _ACTING.get(""))
 
 
 def _add_columns(conn: sqlite3.Connection) -> None:
@@ -263,6 +296,16 @@ DOCUMENT_COLUMNS = (
 )
 
 
+EVENT_COLUMNS = (("user", "TEXT DEFAULT ''"),)
+
+
+def _add_event_columns(conn: sqlite3.Connection) -> None:
+    have = {row["name"] for row in conn.execute("PRAGMA table_info(events)").fetchall()}
+    for name, spec in EVENT_COLUMNS:
+        if name not in have:
+            conn.execute(f"ALTER TABLE events ADD COLUMN {name} {spec}")
+
+
 def _add_document_columns(conn: sqlite3.Connection) -> None:
     have = {row["name"] for row in conn.execute("PRAGMA table_info(documents)").fetchall()}
     for name, spec in DOCUMENT_COLUMNS:
@@ -270,13 +313,26 @@ def _add_document_columns(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE documents ADD COLUMN {name} {spec}")
 
 
-def _dedupe_key(company: str, ident: str) -> str:
-    """One prospect is one person at one company; `ident` names the person."""
-    return f"{company.strip().lower()}|{(ident or '').strip().lower()}"
+def _dedupe_key(company: str, ident: str, user: str = "") -> str:
+    """
+    One prospect is one person at one company, for one account.
+
+    The account is part of the key because the same employer can legitimately
+    be on both lists: a company in Casablanca may advertise an Ausbildung and
+    an engineering post, and the second account to find it must get its own
+    row rather than silently adopt the first one's contact, stage and sent
+    history. The default account's keys are left in the old shape so that
+    everything already on file is still found by it.
+    """
+    who = _owner(user)
+    from services.automation import people
+
+    head = "" if who == people.DEFAULT else who + "::"
+    return f"{head}{company.strip().lower()}|{(ident or '').strip().lower()}"
 
 
 def _find_existing(conn: sqlite3.Connection, company: str, email: str,
-                   contact: str) -> Optional[sqlite3.Row]:
+                   contact: str, user: str = "") -> Optional[sqlite3.Row]:
     """
     Match on the address first, then on the contact name.
 
@@ -286,18 +342,28 @@ def _find_existing(conn: sqlite3.Connection, company: str, email: str,
     second copy of the same person. Discovery almost always arrives in that
     order, so the duplicate was the normal case rather than the edge one.
     """
+    who = _owner(user)
     candidates = []
     if email:
-        candidates.append(_dedupe_key(company, email))
+        candidates.append(_dedupe_key(company, email, who))
     if contact:
-        candidates.append(_dedupe_key(company, contact))
+        candidates.append(_dedupe_key(company, contact, who))
     if not candidates:
-        candidates.append(_dedupe_key(company, ""))
+        candidates.append(_dedupe_key(company, "", who))
     for key in candidates:
-        row = conn.execute("SELECT * FROM prospects WHERE dedupe_key=?", (key,)).fetchone()
+        row = conn.execute(
+            "SELECT * FROM prospects WHERE dedupe_key=?"
+            " AND COALESCE(NULLIF(user,''), ?) = ?",
+            (key, _DEFAULT_OWNER(), who),
+        ).fetchone()
         if row is not None:
             return row
     return None
+
+
+def _DEFAULT_OWNER() -> str:
+    from services.automation import people
+    return people.DEFAULT
 
 
 def publish(event: Dict[str, Any]) -> None:
@@ -326,14 +392,15 @@ def unsubscribe(q: "queue.Queue[str]") -> None:
 
 
 def log_event(message: str, phase: str = "pipeline", level: str = "info",
-              prospect_id: Optional[int] = None) -> Dict[str, Any]:
+              prospect_id: Optional[int] = None, user: str = "") -> Dict[str, Any]:
     """Write one line of the pipeline log and push it to anyone watching."""
     created = _now()
+    who = _owner(user)
     with connect() as conn:
         cur = conn.execute(
-            "INSERT INTO events (prospect_id, level, phase, message, created_at)"
-            " VALUES (?,?,?,?,?)",
-            (prospect_id, level, phase, message, created),
+            "INSERT INTO events (prospect_id, level, phase, message, created_at, user)"
+            " VALUES (?,?,?,?,?,?)",
+            (prospect_id, level, phase, message, created, who),
         )
         event_id = cur.lastrowid
     event = {
@@ -343,20 +410,27 @@ def log_event(message: str, phase: str = "pipeline", level: str = "info",
         "phase": phase,
         "message": message,
         "created_at": created,
+        # The live log is one stream; the line says whose run wrote it so a
+        # page watching it can drop what is not theirs.
+        "user": who,
     }
     publish(event)
     return event
 
 
-def list_events(limit: int = 200) -> List[Dict[str, Any]]:
+def list_events(limit: int = 200, user: str = "") -> List[Dict[str, Any]]:
+    who = _owner(user)
     with connect() as conn:
         rows = conn.execute(
-            "SELECT * FROM events ORDER BY id DESC LIMIT ?", (limit,)
+            "SELECT * FROM events WHERE COALESCE(NULLIF(user,''), ?) = ?"
+            " ORDER BY id DESC LIMIT ?",
+            (_DEFAULT_OWNER(), who, limit),
         ).fetchall()
     return [dict(r) for r in reversed(rows)]
 
 
-def upsert_prospect(data: Dict[str, Any], source: str = "manual") -> Tuple[Dict[str, Any], bool]:
+def upsert_prospect(data: Dict[str, Any], source: str = "manual",
+                    user: str = "") -> Tuple[Dict[str, Any], bool]:
     """
     Add a prospect, or fill in the one already on file. Returns (row, created).
 
@@ -370,18 +444,19 @@ def upsert_prospect(data: Dict[str, Any], source: str = "manual") -> Tuple[Dict[
         raise ValueError("A prospect needs a company name.")
     email = (data.get("email") or "").strip()
     contact = (data.get("contact_name") or "").strip()
-    key = _dedupe_key(company, email or contact)
+    who = _owner(user)
+    key = _dedupe_key(company, email or contact, who)
     now = _now()
 
     with connect() as conn:
-        existing = _find_existing(conn, company, email, contact)
+        existing = _find_existing(conn, company, email, contact, who)
         if existing is None:
             conn.execute(
                 "INSERT INTO prospects (dedupe_key, company, contact_name, role, email,"
                 " email_status, website, city, source, stage, notes, email_kind,"
                 " source_url, phone, street, postcode, ref, posted_at, job_title,"
-                " created_at, updated_at)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " user, created_at, updated_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     key, company, contact, (data.get("role") or "").strip(), email,
                     (data.get("email_status") or ("guessed" if email else "unknown")),
@@ -395,6 +470,7 @@ def upsert_prospect(data: Dict[str, Any], source: str = "manual") -> Tuple[Dict[
                     (data.get("ref") or "").strip(),
                     (data.get("posted_at") or "").strip(),
                     (data.get("job_title") or "").strip(),
+                    who,
                     now, now,
                 ),
             )
@@ -418,7 +494,7 @@ def upsert_prospect(data: Dict[str, Any], source: str = "manual") -> Tuple[Dict[
                 merged["stage"] = data["stage"]
             # Re-key onto the address once one is known, so the row this pass
             # found by name is the row the next pass finds by address.
-            new_key = _dedupe_key(company, merged["email"] or merged["contact_name"])
+            new_key = _dedupe_key(company, merged["email"] or merged["contact_name"], who)
             if new_key != merged["dedupe_key"]:
                 clash = conn.execute(
                     "SELECT id FROM prospects WHERE dedupe_key=? AND id<>?",
@@ -454,7 +530,8 @@ def upsert_prospect(data: Dict[str, Any], source: str = "manual") -> Tuple[Dict[
     return dict(row), created
 
 
-def update_prospect(prospect_id: int, fields: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def update_prospect(prospect_id: int, fields: Dict[str, Any],
+                    user: str = "") -> Optional[Dict[str, Any]]:
     allowed = ("company", "contact_name", "role", "email", "email_status",
                "website", "city", "stage", "notes", "email_kind", "source_url",
                "verify_reason", "verify_score", "verified_at",
@@ -465,32 +542,52 @@ def update_prospect(prospect_id: int, fields: Dict[str, Any]) -> Optional[Dict[s
             sets.append(f"{name}=?")
             values.append(fields[name])
     if not sets:
-        return get_prospect(prospect_id)
+        return get_prospect(prospect_id, user)
+    if get_prospect(prospect_id, user) is None:
+        # Not this account's row. Nothing is said about whether it exists.
+        return None
     sets.append("updated_at=?")
     values.extend([_now(), prospect_id])
     with connect() as conn:
         conn.execute(f"UPDATE prospects SET {', '.join(sets)} WHERE id=?", values)
-    return get_prospect(prospect_id)
+    return get_prospect(prospect_id, user)
 
 
-def get_prospect(prospect_id: int) -> Optional[Dict[str, Any]]:
+def get_prospect(prospect_id: int, user: str = "") -> Optional[Dict[str, Any]]:
+    """One row, if it belongs to this account. Otherwise nothing at all."""
     with connect() as conn:
-        row = conn.execute("SELECT * FROM prospects WHERE id=?", (prospect_id,)).fetchone()
+        row = conn.execute(
+            "SELECT * FROM prospects WHERE id=?"
+            " AND COALESCE(NULLIF(user,''), ?) = ?",
+            (prospect_id, _DEFAULT_OWNER(), _owner(user)),
+        ).fetchone()
     return dict(row) if row else None
 
 
-def delete_prospect(prospect_id: int) -> bool:
+def delete_prospect(prospect_id: int, user: str = "") -> bool:
     with connect() as conn:
-        cur = conn.execute("DELETE FROM prospects WHERE id=?", (prospect_id,))
+        cur = conn.execute(
+            "DELETE FROM prospects WHERE id=?"
+            " AND COALESCE(NULLIF(user,''), ?) = ?",
+            (prospect_id, _DEFAULT_OWNER(), _owner(user)),
+        )
     return cur.rowcount > 0
 
 
 def list_prospects(query: str = "", stage: str = "", page: int = 1,
-                   page_size: int = 20) -> Dict[str, Any]:
-    """Newest first, because the ones just found are the ones being worked on."""
+                   page_size: int = 20, user: str = "") -> Dict[str, Any]:
+    """
+    This account's prospects, newest first: the ones just found are the ones
+    being worked on.
+
+    Never both accounts'. The prospecting table is a list of strangers this
+    person intends to write to, and the other account's list is somebody
+    else's correspondence.
+    """
     page = max(1, int(page or 1))
     page_size = min(100, max(1, int(page_size or 20)))
-    where, params = [], []
+    where = ["COALESCE(NULLIF(user,''), ?) = ?"]
+    params: List[Any] = [_DEFAULT_OWNER(), _owner(user)]
     if query:
         like = f"%{query.strip().lower()}%"
         # The vacancy is in here too: with a ledger built from several searches,
@@ -563,7 +660,24 @@ def clear_drafts(prospect_id: int) -> int:
     return int(cur.rowcount or 0)
 
 
-def delete_documents(ids: List[int]) -> Dict[str, Any]:
+def get_document(document_id: int, user: str = "") -> Optional[Dict[str, Any]]:
+    """
+    One application, if it is this account's.
+
+    A document belongs to whoever its prospect belongs to. Asking by number is
+    how the previewer opens a PDF, and a number is easy to guess, so the answer
+    for somebody else's application is the same as for one that never existed.
+    """
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT d.* FROM documents d JOIN prospects p ON p.id = d.prospect_id"
+            " WHERE d.id = ? AND COALESCE(NULLIF(p.user,''), ?) = ?",
+            (int(document_id), _DEFAULT_OWNER(), _owner(user)),
+        ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def delete_documents(ids: List[int], user: str = "") -> Dict[str, Any]:
     """
     Remove records, and report which files they were holding.
 
@@ -579,10 +693,18 @@ def delete_documents(ids: List[int]) -> Dict[str, Any]:
     if not wanted:
         return {"removed": 0, "paths": [], "sent_removed": 0}
     marks = ",".join("?" * len(wanted))
+    # Only this account's applications, whichever numbers were asked for. The
+    # ids come off a page as plain integers, and the other account's letters
+    # are not this page's to delete -- nor its PDFs to unlink from disk.
+    mine = (" AND id IN (SELECT d.id FROM documents d"
+            " JOIN prospects p ON p.id = d.prospect_id"
+            " WHERE COALESCE(NULLIF(p.user,''), ?) = ?)")
+    who = [_DEFAULT_OWNER(), _owner(user)]
     with connect() as conn:
         rows = conn.execute(
             f"SELECT id, pdf_path, letter_path, cv_path, dry_run, sent_at"
-            f" FROM documents WHERE id IN ({marks})", wanted).fetchall()
+            f" FROM documents WHERE id IN ({marks})" + mine,
+            wanted + who).fetchall()
         paths, sent_removed = [], 0
         for row in rows:
             for key in ("pdf_path", "letter_path", "cv_path"):
@@ -591,32 +713,59 @@ def delete_documents(ids: List[int]) -> Dict[str, Any]:
                     paths.append(value)
             if not row["dry_run"] and row["sent_at"]:
                 sent_removed += 1
-        cur = conn.execute(f"DELETE FROM documents WHERE id IN ({marks})", wanted)
+        cur = conn.execute(
+            f"DELETE FROM documents WHERE id IN ({marks})" + mine,
+            wanted + who)
     return {"removed": int(cur.rowcount or 0), "paths": sorted(set(paths)),
             "sent_removed": sent_removed}
 
 
-def draft_document_ids() -> List[int]:
-    """Every rehearsal still on file. Real sends are not drafts and not here."""
+def draft_document_ids(user: str = "") -> List[int]:
+    """
+    This account's rehearsals. Real sends are not drafts and not here.
+
+    "Clear the drafts" is a button on one person's page, and it clears that
+    person's drafts: the other account's unsent letters are not rubbish just
+    because somebody else tidied up.
+    """
     with connect() as conn:
         rows = conn.execute(
-            "SELECT id FROM documents WHERE dry_run=1 AND sent_at IS NULL"
+            "SELECT d.id FROM documents d JOIN prospects p ON p.id = d.prospect_id"
+            " WHERE d.dry_run=1 AND d.sent_at IS NULL"
+            " AND COALESCE(NULLIF(p.user,''), ?) = ?",
+            (_DEFAULT_OWNER(), _owner(user)),
         ).fetchall()
     return [int(r["id"]) for r in rows]
 
 
-def list_documents(limit: int = 100) -> List[Dict[str, Any]]:
+def list_documents(limit: int = 100, user: str = "") -> List[Dict[str, Any]]:
+    """
+    The letters this account has written.
+
+    A document belongs to whoever its prospect belongs to. One whose prospect
+    has been deleted belongs to nobody and is shown to neither of them, which
+    is why this joins rather than left-joins.
+    """
     with connect() as conn:
         rows = conn.execute(
             "SELECT d.*, p.company, p.contact_name, p.email FROM documents d"
-            " LEFT JOIN prospects p ON p.id = d.prospect_id"
+            " JOIN prospects p ON p.id = d.prospect_id"
+            " WHERE COALESCE(NULLIF(p.user,''), ?) = ?"
             " ORDER BY d.id DESC LIMIT ?",
-            (limit,),
+            (_DEFAULT_OWNER(), _owner(user), limit),
         ).fetchall()
     return [dict(r) for r in rows]
 
 
-def stats() -> Dict[str, int]:
+def stats(user: str = "") -> Dict[str, int]:
+    """
+    The dashboard numbers, for one account.
+
+    Counting both people's rows under one heading is how a page that had never
+    run a search opened on somebody else's fourteen prospects.
+    """
+    mine = " COALESCE(NULLIF(p.user,''), ?) = ? "
+    who: Tuple = (_DEFAULT_OWNER(), _owner(user))
     with connect() as conn:
         def one(sql: str, params: Tuple = ()) -> int:
             return int(conn.execute(sql, params).fetchone()[0] or 0)
@@ -624,18 +773,23 @@ def stats() -> Dict[str, int]:
         by_stage = {
             row["stage"]: row["n"]
             for row in conn.execute(
-                "SELECT stage, COUNT(*) AS n FROM prospects GROUP BY stage"
+                "SELECT p.stage AS stage, COUNT(*) AS n FROM prospects p"
+                " WHERE" + mine + "GROUP BY p.stage", who
             ).fetchall()
         }
+        docs = ("SELECT COUNT(*) FROM documents d JOIN prospects p"
+                " ON p.id = d.prospect_id WHERE" + mine + "AND ")
         return {
-            "prospects": one("SELECT COUNT(*) FROM prospects"),
-            "emails_sent": one("SELECT COUNT(*) FROM documents WHERE dry_run=0 AND sent_at IS NOT NULL"),
-            "dry_runs": one("SELECT COUNT(*) FROM documents WHERE dry_run=1"),
-            "dossiers": one("SELECT COUNT(*) FROM documents WHERE pdf_path <> ''"),
-            "verified_addresses": one("SELECT COUNT(*) FROM prospects WHERE email_status='valid'"),
+            "prospects": one("SELECT COUNT(*) FROM prospects p WHERE" + mine, who),
+            "emails_sent": one(docs + "d.dry_run=0 AND d.sent_at IS NOT NULL", who),
+            "dry_runs": one(docs + "d.dry_run=1", who),
+            "dossiers": one(docs + "d.pdf_path <> ''", who),
+            "verified_addresses": one(
+                "SELECT COUNT(*) FROM prospects p WHERE" + mine
+                + "AND p.email_status='valid'", who),
             "pending": one(
-                "SELECT COUNT(*) FROM prospects WHERE stage IN ('new','verified','letter','dossier')"
-            ),
+                "SELECT COUNT(*) FROM prospects p WHERE" + mine
+                + "AND p.stage IN ('new','verified','letter','dossier')", who),
             **{f"stage_{name}": by_stage.get(name, 0) for name in STAGES},
         }
 

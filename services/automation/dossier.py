@@ -43,7 +43,6 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas as pdfcanvas
 
-from services.automation.candidate_profile import CANDIDATE_PROFILE
 from services.automation.letter_writer import safe_profile
 
 OUT_DIR = Path(__file__).with_name("dossiers")
@@ -158,9 +157,16 @@ def _recipient_block(prospect: Dict[str, object]) -> list:
 
 
 def render_letter(prospect: Dict[str, object], letter: Dict[str, str],
-                  path: Path) -> Path:
-    """One page, DIN 5008 geometry, no decoration."""
-    profile = safe_profile()
+                  path: Path, user: str = "") -> Path:
+    """
+    One page, DIN 5008 geometry, no decoration.
+
+    `user` is whose letter it is, and it is not optional in spirit: this
+    function prints the sender line above the window, the date-line city and
+    the signature. Called without one it printed the first account's name over
+    the second account's German letter.
+    """
+    profile = safe_profile(user or None)
     language = letter.get("language", "en")
     canvas = pdfcanvas.Canvas(str(path), pagesize=A4)
     canvas.setTitle(_safe_text(letter.get("subject", "")))
@@ -236,16 +242,20 @@ def render_letter(prospect: Dict[str, object], letter: Dict[str, str],
     return path
 
 
-def cv_path(language: str) -> str:
+def cv_path(language: str, user: str = "") -> str:
     """
-    The CV to send.
+    The CV to send, this account's.
 
-    There is no German CV in the profile -- only `fr` and `en` -- so a German
-    letter travels with the English one rather than with nothing. That is a gap
-    worth filling, and it is better to know about it than to have the campaign
-    quietly attach a French CV to a Berlin application.
+    There is no German CV in the first account's profile -- only `fr` and `en`
+    -- so a German letter travels with the English one rather than with
+    nothing. That is a gap worth filling, and it is better to know about it
+    than to have the campaign quietly attach a French CV to a Berlin
+    application. An account with no resumes of its own gets "" and the caller
+    sends what it was handed, rather than being lent somebody else's CV.
     """
-    resumes = CANDIDATE_PROFILE.get("resumes") or {}
+    from services.automation import profile_store
+
+    resumes = profile_store.profile_for(user or None).get("resumes") or {}
     for key in (language, "en", "fr"):
         found = resumes.get(key)
         if found and Path(found).exists():
@@ -256,34 +266,66 @@ def cv_path(language: str) -> str:
     return ""
 
 
-def merge(letter_pdf: Path, cv_pdf: str, out: Path) -> Optional[Path]:
-    """Letter first, CV after. Returns None if the merge is not possible."""
+def bind(paths, out: Path) -> Optional[Path]:
+    """
+    Several PDFs into one, in the order given, or nothing.
+
+    The order is the caller's and is never sorted here: a German dossier opens
+    on the Deckblatt and an English application opens on the letter, and both
+    are wrong the other way round.
+
+    Nothing rather than an exception, because every caller has somewhere to
+    fall back to -- separate attachments -- and none of them should lose an
+    application over one file pypdf cannot read.
+    """
     try:
         from pypdf import PdfWriter
     except ImportError:
         return None
+    wanted = [Path(p) for p in paths if p and Path(p).exists()]
+    if not wanted:
+        return None
+    writer = PdfWriter()
     try:
-        writer = PdfWriter()
-        writer.append(str(letter_pdf))
-        if cv_pdf and Path(cv_pdf).exists():
-            writer.append(cv_pdf)
+        for path in wanted:
+            writer.append(str(path))
+        out.parent.mkdir(parents=True, exist_ok=True)
         with open(out, "wb") as handle:
             writer.write(handle)
-        writer.close()
         return out
-    except Exception:  # noqa: BLE001 - a broken CV file must not stop the letter
+    except Exception:  # noqa: BLE001 - a broken file must not stop the letter
         return None
+    finally:
+        try:
+            writer.close()
+        except Exception:
+            pass
+
+
+def merge(letter_pdf: Path, cv_pdf: str, out: Path) -> Optional[Path]:
+    """Letter first, CV after. Returns None if the merge is not possible."""
+    return bind([letter_pdf, cv_pdf], out)
 
 
 def build(prospect: Dict[str, object], letter: Dict[str, str],
-          out_dir: Optional[Path] = None) -> Dict[str, str]:
+          out_dir: Optional[Path] = None, cv: str = "",
+          user: str = "") -> Dict[str, str]:
     """
     Everything on disk for one application.
 
     Returns {letter_pdf, cv_pdf, pack_pdf}. `pack_pdf` may be empty; the other
     two are what the message attaches.
+
+    `cv` is the CV this particular employer should get -- the tailored one,
+    when the caller managed to cut one. Left empty, the standard CV from the
+    profile goes, which is what every letter used to carry.
     """
-    directory = Path(out_dir or OUT_DIR)
+    # A folder per account. The stem is a date and a company name, and two
+    # accounts writing to one folder means whoever applies second to the same
+    # employer overwrites the first one's letter.
+    from services.automation import people
+
+    directory = Path(out_dir or (OUT_DIR / people.resolve(user)))
     directory.mkdir(parents=True, exist_ok=True)
     stem = f"{date.today():%Y%m%d}_{_slug(str(prospect.get('company') or ''))}"
     language = letter.get("language", "en")
@@ -291,9 +333,9 @@ def build(prospect: Dict[str, object], letter: Dict[str, str],
     name = {"de": "Anschreiben", "fr": "Lettre_de_motivation",
             "en": "Cover_letter"}[language]
     letter_pdf = directory / f"{stem}_{name}.pdf"
-    render_letter(prospect, letter, letter_pdf)
+    render_letter(prospect, letter, letter_pdf, user)
 
-    cv = cv_path(language)
+    cv = cv if cv and Path(cv).exists() else cv_path(language, user)
     pack = merge(letter_pdf, cv, directory / f"{stem}_Bewerbung.pdf")
 
     return {"letter_pdf": str(letter_pdf), "cv_pdf": cv,

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { usePerson } from '../services/account';
 import {
   ArrowLeft, ArrowRight, Briefcase, Building2, Check, FileText, Languages,
   Loader2, NotebookPen, Paperclip, Sparkles, Trash2, X,
@@ -11,12 +12,21 @@ import {
  * field, but a session should never be blocked behind a form when the call is
  * about to start.
  */
+/**
+ * The languages an interview can be held in here.
+ *
+ * German is not a nicety: one of the two people using this app is interviewing
+ * for an Ausbildung in Germany, and a helper that transcribes her interviewer
+ * as French produces words in no language at all.
+ */
+export type InterviewLang = 'fr' | 'en' | 'de';
+
 export interface InterviewContext {
   jobTitle: string;
   company: string;
   jobDescription: string;
   notes: string;
-  lang: 'fr' | 'en';
+  lang: InterviewLang;
   docs: ParsedDoc[];
 }
 
@@ -29,12 +39,12 @@ export interface ParsedDoc {
   text: string;
 }
 
-export const emptyInterviewContext = (): InterviewContext => ({
+export const emptyInterviewContext = (lang: InterviewLang = 'fr'): InterviewContext => ({
   jobTitle: '',
   company: '',
   jobDescription: '',
   notes: '',
-  lang: 'fr',
+  lang,
   docs: [],
 });
 
@@ -103,7 +113,17 @@ const STEPS: {
 
 export const InterviewSetup: React.FC<InterviewSetupProps> = ({ backend, onStart, onCancel }) => {
   const [step, setStep] = useState(0);
-  const [ctx, setCtx] = useState<InterviewContext>(emptyInterviewContext);
+  // The language starts where this person's interviews actually happen -- his
+  // in English, hers in German -- and is still a question with three visible
+  // answers, because a default is a guess and this one is asked before a call.
+  const person = usePerson();
+  const [ctx, setCtx] = useState<InterviewContext>(() => emptyInterviewContext());
+  const chosenLang = React.useRef(false);
+  React.useEffect(() => {
+    const preferred = person?.interview_language as InterviewLang | undefined;
+    if (!preferred || chosenLang.current) return;
+    setCtx((c) => (c.lang === preferred ? c : { ...c, lang: preferred }));
+  }, [person]);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');
   const [dragging, setDragging] = useState(false);
@@ -269,15 +289,16 @@ export const InterviewSetup: React.FC<InterviewSetupProps> = ({ backend, onStart
               )}
 
               {current.id === 'lang' && (
-                <div className="grid grid-cols-2 gap-3 max-w-[420px]">
+                <div className="grid grid-cols-3 gap-3 max-w-[560px]">
                   {([
                     { id: 'fr' as const, name: 'Français', sub: 'fr-FR' },
                     { id: 'en' as const, name: 'English', sub: 'en-US' },
+                    { id: 'de' as const, name: 'Deutsch', sub: 'de-DE' },
                   ]).map((l) => (
                     <button
                       key={l.id}
                       type="button"
-                      onClick={() => setCtx((c) => ({ ...c, lang: l.id }))}
+                      onClick={() => { chosenLang.current = true; setCtx((c) => ({ ...c, lang: l.id })); }}
                       className={`ic-tile ${ctx.lang === l.id ? 'is-selected' : ''} rounded-2xl px-4 py-4 text-left cursor-pointer`}
                     >
                       <span className="block ic-title text-[17px] text-[#f5f5f7]">{l.name}</span>
@@ -380,7 +401,7 @@ export const InterviewSetup: React.FC<InterviewSetupProps> = ({ backend, onStart
                     ctx.jobDescription && `Job description — ${ctx.jobDescription.trim().length.toLocaleString()} characters`,
                     ctx.notes && `Your notes — ${ctx.notes.trim().length.toLocaleString()} characters`,
                     ctx.docs.length > 0 && `${ctx.docs.length} document${ctx.docs.length > 1 ? 's' : ''} — ${ctx.docs.reduce((n, d) => n + d.chars, 0).toLocaleString()} characters`,
-                    `Interview in ${ctx.lang === 'fr' ? 'French' : 'English'}`,
+                    `Interview in ${{ fr: 'French', en: 'English', de: 'German' }[ctx.lang]}`,
                   ].filter(Boolean).map((line) => (
                     <li key={String(line)} className="ic-body text-[14px] text-[#f5f5f7] flex items-start gap-2">
                       <Check className="w-3.5 h-3.5 mt-[3px] text-[#0a84ff] shrink-0 stroke-[2.5]" />

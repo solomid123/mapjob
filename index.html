@@ -15,7 +15,7 @@
       Restore the chosen wallpaper before anything paints. This has to be
       inline and synchronous in <head>'s shadow rather than a React effect:
       by the time React mounts, the browser has already painted <body> with
-      the default mist canvas, and a saved crimson would land as a pale
+      the default violet canvas, and a saved mist would land as a dark
       flash. Wrapped because localStorage throws outright in some privacy
       modes, and a background preference is not worth a blank page.
 

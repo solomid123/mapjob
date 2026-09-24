@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { currentUser } from './account';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://mnknepjrpoetfoagzisp.supabase.co';
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1ua25lcGpycG9ldGZvYWd6aXNwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg3OTg0ODAsImV4cCI6MjEwNDM3NDQ4MH0.eJubTsCW_cKB74hgrGV-ZLMTxJVbunKIuY7VHZzB90Q';
@@ -76,7 +77,19 @@ export interface DbInterviewQA {
 // Jobs Database Operations
 // ----------------------------------------------------
 
-export async function saveJobToSupabase(job: DbJob): Promise<DbJob | null> {
+/**
+ * A job advert is the same advert for everybody, so `jobs` is a catalogue with
+ * one row per posting. A shortlist is not: it belongs to whoever made it, and
+ * when the bookmark lived as a status on the advert the two accounts read one
+ * pile -- her wishlist opened full of his mechanical engineering jobs.
+ *
+ * So the bookmark is a row in `saved_jobs`, keyed on the person and the
+ * advert. The catalogue is still written, because the map needs the posting's
+ * details either way; what is personal is only the fact of wanting it.
+ */
+const SAVED = 'saved_jobs';
+
+export async function saveJobToSupabase(job: DbJob, user?: string): Promise<DbJob | null> {
   try {
     const { data, error } = await supabase
       .from('jobs')
@@ -108,6 +121,22 @@ export async function saveJobToSupabase(job: DbJob): Promise<DbJob | null> {
       console.warn('Supabase saveJob error:', error.message);
       return null;
     }
+
+    // The bookmark itself, under the account that made it. Written after the
+    // advert so a shortlist never points at a posting the map cannot show.
+    const { error: mine } = await supabase
+      .from(SAVED)
+      .upsert(
+        {
+          user_id: user || currentUser(),
+          job_id: job.id,
+          status: job.status || 'saved',
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'user_id,job_id' }
+      );
+    if (mine) console.warn('Supabase saveJob (mine) error:', mine.message);
+
     return data;
   } catch (err) {
     console.warn('Supabase saveJob exception:', err);
@@ -115,33 +144,58 @@ export async function saveJobToSupabase(job: DbJob): Promise<DbJob | null> {
   }
 }
 
-export async function fetchSavedJobsFromSupabase(): Promise<DbJob[]> {
+/**
+ * The ids one person has bookmarked, newest first.
+ *
+ * Scoped by account, and scoped in the query rather than after it: a filter
+ * applied to a list that has already crossed the wire is a list that was on
+ * the wire. Nothing here falls back to the whole table -- an empty shortlist
+ * is right, and somebody else's shortlist is not.
+ */
+export async function fetchSavedJobIds(user?: string): Promise<string[]> {
   try {
     const { data, error } = await supabase
-      .from('jobs')
-      .select('*')
+      .from(SAVED)
+      .select('job_id,status')
+      .eq('user_id', user || currentUser())
+      .in('status', ['saved', 'applied'])
       .order('updated_at', { ascending: false });
 
     if (error) {
-      console.warn('Supabase fetchSavedJobs error:', error.message);
+      console.warn('Supabase fetchSavedJobIds error:', error.message);
       return [];
     }
-    return data || [];
+    return (data || []).map((row) => String(row.job_id));
   } catch (err) {
-    console.warn('Supabase fetchSavedJobs exception:', err);
+    console.warn('Supabase fetchSavedJobIds exception:', err);
     return [];
   }
 }
 
+/**
+ * What this person's bookmark on that advert has become.
+ *
+ * The catalogue row is left alone on purpose: archiving a job here means "take
+ * it off my list", and writing that onto the shared advert would take it off
+ * the other account's list too.
+ */
 export async function updateJobStatusInSupabase(
   jobId: string,
-  status: DbJob['status']
+  status: DbJob['status'],
+  user?: string
 ): Promise<boolean> {
   try {
     const { error } = await supabase
-      .from('jobs')
-      .update({ status, updated_at: new Date().toISOString() })
-      .eq('id', jobId);
+      .from(SAVED)
+      .upsert(
+        {
+          user_id: user || currentUser(),
+          job_id: jobId,
+          status: status || 'saved',
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'user_id,job_id' }
+      );
 
     if (error) {
       console.warn('Supabase updateJobStatus error:', error.message);

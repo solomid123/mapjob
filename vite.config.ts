@@ -113,6 +113,8 @@ function jobDetailsFetcher(): Plugin {
 export default defineConfig({
   plugins: [react(), jobDetailsFetcher()],
   server: {
+    host: true,
+    port: 5173,
     proxy: {
       '/api/adzuna': {
         target: 'https://api.adzuna.com',

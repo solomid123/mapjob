@@ -1,0 +1,92 @@
+{
+  "city": "Oued Zem",
+  "email": "chaimaabarki28@gmail.com",
+  "gender": "female",
+  "address": "90 Wohnsiedlung El Haj Taghi",
+  "country": "Marokko",
+  "summary": "Motivierte und zuverlässige Bewerberin mit kaufmännischem Hintergrund sowie praktischer Erfahrung im Kundenkontakt und in administrativen Tätigkeiten. Ich arbeite strukturiert, lerne schnell und übernehme Verantwortung. Freundliches Auftreten, Teamfähigkeit und gute Kommunikationsfähigkeiten gehören zu meinen Stärken. Ich freue mich darauf, meine Kenntnisse in einem neuen Arbeitsumfeld einzubringen und mich beruflich weiterzuentwickeln.",
+  "headline": "Kauffrau für Groß- und Außenhandelsmanagement (Fachrichtung Außenhandel)",
+  "education": [
+    {
+      "note": "Allgemeine Buchführung und kaufmännische Berechnungen Grundlegendes Marketing und Vertrieb Beschaffung, Merchandising und Verkaufs- & Verhandlungstechniken Unternehmensführung, Verwaltung und Rechnungswesen Statistik und Soft Skills Büroorganisation und Kommunikation (schriftlich & mündlich) Kundenbeziehungsmanagement Internationale Handelstechniken und E-Commerce Business English & Französisch In",
+      "degree": "Diplom als Fachtechnikerin im Handel",
+      "period": "Sep 2020 – Jun 2022",
+      "location": "Oued Zem",
+      "institution": "Fachinstitut für angewandte Technologie"
+    },
+    {
+      "note": "Naturwissenschaftliche Grundlagen und Mathematik Einführung in wissenschaftliches Arbeiten",
+      "degree": "Studium der Naturwissenschaften (erstes Studienjahr)",
+      "period": "Sep 2017 – Jun 2020",
+      "location": "Beni Mellal",
+      "institution": "Universität Sultan Moulay Sliman"
+    },
+    {
+      "note": "Physik & Chemie, Mathematik, Naturwissenschaften",
+      "degree": "Abitur – Schwerpunkt Physik (Experimentelle Wissenschaften)",
+      "period": "Sep 2016 – Jun 2017",
+      "location": "Oued Zem",
+      "institution": "Gymnasium Ibn Tofail"
+    },
+    {
+      "note": "",
+      "degree": "Deutsch B2 Kurs",
+      "period": "Jan 2025 – Apr 2025",
+      "location": "",
+      "institution": "Akademie für Bildung & Fachkräftevermittlung"
+    },
+    {
+      "note": "",
+      "degree": "Deutsch B1 Kurs",
+      "period": "Nov 2023 – Jun 2024",
+      "location": "Casablanca",
+      "institution": "Eclipse Sprachschule"
+    }
+  ],
+  "full_name": "Chaimaa BARKI",
+  "languages": {
+    "Deutsch": "gute Mittelstufe",
+    "Arabisch": "Muttersprache",
+    "Englisch": "Mittelstufe",
+    "Spanisch": "Anfänger",
+    "Französisch": "Mittelstufe"
+  },
+  "last_name": "BARKI",
+  "first_name": "Chaimaa",
+  "experiences": [
+    {
+      "role": "Kaufmännische Assistentin",
+      "period": "Jan 2024 – Apr 2024",
+      "company": "Airad-Casa",
+      "location": "Casablanca, Marokko",
+      "highlights": [
+        "Telefonische und schriftliche Bearbeitung von Kundenanfragen",
+        "Unterstützung bei der Organisation von Arbeitsabläufen im Büro",
+        "Pflege und Verwaltung von Kundendaten und Unterlagen",
+        "Allgemeine administrative Aufgaben"
+      ]
+    }
+  ],
+  "soft_skills": [
+    "teamfähig",
+    "zuverlässig",
+    "lernbereit",
+    "verantwortungsbewusst",
+    "organisiert"
+  ],
+  "full_address": "90 Wohnsiedlung El Haj Taghi, Oued Zem, Marokko",
+  "current_title": "Kaufmännische Assistentin",
+  "certifications": [
+    "IHK-FOSA anerkannt (Nov 2025)",
+    "Anerkannt als Fachfrau für Groß- und Außenhandelsmanagement – Außenhandel"
+  ],
+  "phone_formatted": "+212 675 411 915",
+  "technical_skills": [
+    "Kundenbetreuung & Kommunikation",
+    "Büroorganisation & Dokumentenverwaltung",
+    "Buchhaltung",
+    "Verkauf & Beratung",
+    "Logistische Abläufe",
+    "MS Office (Word, Excel, PowerPoint)"
+  ]
+}

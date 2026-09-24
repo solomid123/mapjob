@@ -1,0 +1,191 @@
+/* ============================================================
+   The CV's stylesheet, on its own.
+
+   It used to live inside master_fr.html, which is one person's CV.
+   A CV generated from somebody else's profile cannot take its design
+   out of a document that belongs to a particular man, so the design
+   lives here and the documents use it.
+   ============================================================ */
+/* ============================================================
+     Badreddine Barki — Curriculum Vitae (EN)
+     Mirrors the portfolio/site: Century Gothic, monochrome light
+     palette, hairline borders, uppercase letter-spaced headings.
+     ============================================================ */
+
+  :root {
+    --bg: #ffffff;
+    --bg-alt: #f0f0ec;
+    --surface: #f7f7f5;
+    --border: #cfcfc9;
+    --border-strong: #b7b7b0;
+    --text: #000000;
+    --text-dim: #1a1a1a;
+    --text-muted: #5a5a54;
+    --font: "Century Gothic", CenturyGothic, AppleGothic, "Futura", "Trebuchet MS", "Segoe UI", sans-serif;
+  }
+
+  @page { size: A4; margin: 13mm 14mm; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+  body {
+    font-family: var(--font);
+    color: var(--text);
+    background: var(--bg);
+    line-height: 1.5;
+    font-size: 9.5pt;
+    letter-spacing: 0.01em;
+  }
+  h1, h2, h3, h4 { font-weight: 400; }
+  strong { font-weight: 700; }
+  a { color: var(--text); text-decoration: none; }
+  ul { list-style: none; }
+
+  /* ---------- Header ---------- */
+  .head {
+    border-bottom: 1px solid var(--text);
+    padding-bottom: 5mm;
+    margin-bottom: 6mm;
+  }
+  .head__name {
+    font-size: 30pt;
+    line-height: 1.02;
+    letter-spacing: -0.01em;
+  }
+  .head__name span { font-weight: 700; }
+  .head__role {
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    font-size: 9pt;
+    color: var(--text-dim);
+    margin: 3mm 0 4mm;
+  }
+  .head__contact {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5mm 4mm;
+    font-size: 8.5pt;
+    color: var(--text-muted);
+  }
+  .head__contact span:not(:last-child)::after {
+    content: "\00b7";
+    margin-left: 4mm;
+    color: var(--border-strong);
+  }
+
+  /* ---------- Two-column body ---------- */
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 62mm;
+    gap: 9mm;
+    align-items: start;
+  }
+
+  .block { margin-bottom: 6mm; }
+  .block:last-child { margin-bottom: 0; }
+  .block__title {
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-size: 9pt;
+    color: var(--text);
+    padding-bottom: 1.5mm;
+    margin-bottom: 3.5mm;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* ---------- Summary ---------- */
+  .summary { color: var(--text-dim); font-size: 9.5pt; line-height: 1.6; }
+
+  /* ---------- Experience ---------- */
+  .job { margin-bottom: 5mm; page-break-inside: avoid; }
+  .job:last-child { margin-bottom: 0; }
+  .job__head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 4mm;
+    margin-bottom: 0.5mm;
+  }
+  .job__company { font-weight: 700; font-size: 10pt; }
+  .job__years {
+    font-size: 8pt;
+    color: var(--text-muted);
+    white-space: nowrap;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .job__role {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 8.5pt;
+    color: var(--text-dim);
+    margin-bottom: 2mm;
+  }
+  .job__place { font-size: 8pt; color: var(--text-muted); font-weight: 400; }
+  .job ul li {
+    position: relative;
+    padding: 0.8mm 0 0.8mm 4mm;
+    font-size: 8.7pt;
+    color: var(--text-dim);
+    line-height: 1.45;
+  }
+  .job ul li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 3mm;
+    width: 1.4mm;
+    height: 1.4mm;
+    background: var(--text);
+  }
+  .job ul li strong { font-weight: 700; }
+
+  /* ---------- Education ---------- */
+  .edu { margin-bottom: 4mm; }
+  .edu:last-child { margin-bottom: 0; }
+  .edu__deg { font-weight: 700; font-size: 9.2pt; }
+  .edu__org { font-size: 8.5pt; color: var(--text-dim); margin: 0.5mm 0; }
+  .edu__meta { font-size: 8pt; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .edu__note { font-size: 8.3pt; color: var(--text-dim); margin-top: 1mm; }
+
+  /* ---------- Sidebar ---------- */
+  .side .block__title { border-bottom-color: var(--border-strong); }
+  .skillgroup { margin-bottom: 3.5mm; }
+  .skillgroup h4 {
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 7.5pt;
+    color: var(--text-muted);
+    margin-bottom: 1.5mm;
+  }
+  .tags { display: flex; flex-wrap: wrap; gap: 1.3mm; }
+  .tags span {
+    font-size: 7.4pt;
+    border: 1px solid var(--border-strong);
+    background: var(--bg-alt);
+    padding: 0.8mm 2mm;
+    line-height: 1.3;
+  }
+  .kv { display: flex; flex-direction: column; gap: 2mm; }
+  .kv li {
+    display: flex;
+    justify-content: space-between;
+    gap: 3mm;
+    font-size: 8.5pt;
+    padding-bottom: 2mm;
+    border-bottom: 1px solid var(--border);
+  }
+  .kv li:last-child { border-bottom: none; padding-bottom: 0; }
+  .kv li span { color: var(--text-muted); }
+  .kv li strong { font-weight: 400; text-align: right; }
+  .certs li {
+    font-size: 8.4pt;
+    color: var(--text-dim);
+    padding: 1.4mm 0;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    gap: 3mm;
+  }
+  .certs li:last-child { border-bottom: none; }
+  .certs li em { font-style: normal; color: var(--text-muted); font-size: 7.8pt; }

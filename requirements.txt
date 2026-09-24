@@ -10,6 +10,7 @@
 #   python -m playwright install --with-deps chromium
 
 # --- the API itself -------------------------------------------------------
+setuptools>=68.0.0
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 pydantic==2.13.3

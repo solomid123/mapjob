@@ -185,6 +185,20 @@ def save_meta(job_id: str, meta: Dict, user: str = "") -> Dict:
     meta["files"] = files_present(job_id, user)
     _write_atomic(folder(job_id, user) / "meta.json",
                   json.dumps(meta, ensure_ascii=False, indent=2).encode("utf-8"))
+
+    # Also persist to Supabase Storage if configured so PDFs are kept permanently
+    try:
+        from services.automation import cloud
+        if cloud.enabled():
+            doc_folder = folder(job_id, user)
+            for f in doc_folder.iterdir():
+                if f.is_file() and f.suffix in (".pdf", ".html", ".json"):
+                    mime = "application/pdf" if f.suffix == ".pdf" else "text/html; charset=utf-8" if f.suffix == ".html" else "application/json"
+                    cloud_path = f"shelf/{owner(user)}/{slug(job_id)}/{f.name}"
+                    cloud.upload(cloud_path, f.read_bytes(), mime=mime)
+    except Exception:
+        pass
+
     return meta
 
 
@@ -206,6 +220,17 @@ def files_present(job_id: str, user: str = "") -> Dict[str, str]:
 
 def read_meta(job_id: str, user: str = "") -> Optional[Dict]:
     path = folder(job_id, user) / "meta.json"
+    if not path.exists():
+        try:
+            from services.automation import cloud
+            if cloud.enabled():
+                cloud_path = f"shelf/{owner(user)}/{slug(job_id)}/meta.json"
+                data = cloud.download(cloud_path)
+                if data:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(data)
+        except Exception:
+            pass
     if not path.exists():
         return None
     try:
@@ -251,4 +276,18 @@ def resolve(job_slug: str, filename: str, user: str = "") -> Optional[Path]:
     if filename not in {f"{k}.{e}" for k in KINDS for e in ("html", "pdf")}:
         return None
     path = shelf(user) / slug(job_slug) / filename
-    return path if path.exists() else None
+    if path.exists():
+        return path
+    # If not on local disk, restore from Supabase Storage
+    try:
+        from services.automation import cloud
+        if cloud.enabled():
+            cloud_path = f"shelf/{owner(user)}/{slug(job_slug)}/{filename}"
+            data = cloud.download(cloud_path)
+            if data and len(data) > 100:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(data)
+                return path
+    except Exception:
+        pass
+    return None

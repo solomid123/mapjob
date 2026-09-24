@@ -138,12 +138,14 @@ export function TailorPane({ jobs, appliedJobIds, onOpenJob }: TailorPaneProps) 
     }
   };
 
+  const [viewFormat, setViewFormat] = useState<'pdf' | 'html'>('pdf');
+
   // The PDF, because that is the artefact. The HTML it was printed from stands
   // in only for a browser that downloads PDFs instead of showing them -- there,
   // the frame would be white and a file would appear in Downloads unasked.
   const pdfUrl = documentUrl(kind === 'cv' ? doc?.files?.cv_pdf : doc?.files?.letter_pdf);
   const htmlUrl = documentUrl(kind === 'cv' ? doc?.files?.cv_html : doc?.files?.letter_html);
-  const previewUrl = htmlUrl || pdfUrl || '';
+  const previewUrl = viewFormat === 'pdf' ? (pdfUrl || htmlUrl || '') : (htmlUrl || pdfUrl || '');
 
   const invented = doc?.report?.invented || [];
   const reverted = doc?.report?.reverted || [];
@@ -307,17 +309,41 @@ export function TailorPane({ jobs, appliedJobIds, onOpenJob }: TailorPaneProps) 
                         : `${doc.letter_subject || ''}${doc.letter_fallback ? ' · plain version' : ''}`}
                     </span>
                   </div>
-                  {previewUrl && (
-                    <a
-                      href={previewUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="px-2.5 h-7 rounded-full text-[11.5px] font-medium text-[rgba(235,235,245,0.65)] hover:text-[#f5f5f7] hover:bg-white/[0.08] transition-colors duration-200 flex items-center gap-1.5 shrink-0"
-                      title="Open document in a new tab to view or print (Ctrl+P)"
-                    >
-                      <ExternalLink className="w-3 h-3" /> Open / Print
-                    </a>
-                  )}
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {pdfUrl && htmlUrl && (
+                      <div className="flex items-center bg-white/[0.06] rounded-full p-0.5 border border-white/[0.08]">
+                        <button
+                          type="button"
+                          onClick={() => setViewFormat('pdf')}
+                          className={`px-2 h-5 rounded-full text-[10.5px] font-medium transition-colors ${
+                            viewFormat === 'pdf' ? 'bg-white/[0.16] text-[#f5f5f7]' : 'text-[rgba(235,235,245,0.4)] hover:text-[#f5f5f7]'
+                          }`}
+                        >
+                          PDF
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setViewFormat('html')}
+                          className={`px-2 h-5 rounded-full text-[10.5px] font-medium transition-colors ${
+                            viewFormat === 'html' ? 'bg-white/[0.16] text-[#f5f5f7]' : 'text-[rgba(235,235,245,0.4)] hover:text-[#f5f5f7]'
+                          }`}
+                        >
+                          HTML
+                        </button>
+                      </div>
+                    )}
+                    {previewUrl && (
+                      <a
+                        href={pdfUrl || htmlUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-2.5 h-7 rounded-full text-[11.5px] font-medium text-[rgba(235,235,245,0.65)] hover:text-[#f5f5f7] hover:bg-white/[0.08] transition-colors duration-200 flex items-center gap-1.5 shrink-0"
+                        title="Open document in a new tab"
+                      >
+                        <ExternalLink className="w-3 h-3" /> {pdfUrl ? 'Open PDF' : 'Open / Print'}
+                      </a>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

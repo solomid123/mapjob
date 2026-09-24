@@ -1,6 +1,6 @@
-requirements.txt
-.python-version
-services/
-scripts/
-*.py
-tests/
+/requirements.txt
+/.python-version
+/services/
+/scripts/
+/*.py
+/tests/

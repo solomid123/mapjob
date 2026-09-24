@@ -5,6 +5,14 @@
   "outputDirectory": "dist",
   "rewrites": [
     {
+      "source": "/api/:match*",
+      "destination": "https://mapjob-backend.onrender.com/api/:match*"
+    },
+    {
+      "source": "/Badreddine_Barki_CV.pdf",
+      "destination": "https://mapjob-backend.onrender.com/Badreddine_Barki_CV.pdf"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

@@ -889,156 +889,65 @@ def write_letter(job: Dict, language: str, log=None, user: str = "") -> Dict[str
 # a date, a line saying what it is about, and the writing; the only ornament
 # kept is the black hairline under the letterhead, because the CV has it too.
 LETTER_CSS = """
-  :root {
-    --font: "Century Gothic", CenturyGothic, AppleGothic, "Trebuchet MS", "Segoe UI", sans-serif;
-    --text: #000000;
-    --text-muted: #333333;
-    --bg: #ffffff;
-    --border: #d0d0cc;
-  }
-  @page {
-    size: A4;
-    margin: 14mm 15mm;
-  }
-  * {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-  }
-  html {
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-    background-color: #f5f5f7;
-  }
-  body {
-    font-family: var(--font);
-    color: var(--text);
-    background: var(--bg);
-    line-height: 1.5;
-    font-size: 9.2pt;
-    padding: 14mm 15mm;
-    max-width: 210mm;
-    margin: 0 auto;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
-  }
+  :root { --bg:#ffffff; --border:#cfcfc9; --border-strong:#b7b7b0;
+          --text:#000000; --text-dim:#1a1a1a; --muted:#5a5a54;
+          --font:"Century Gothic", CenturyGothic, AppleGothic, "Futura",
+                 "Trebuchet MS", "Segoe UI", sans-serif; }
+  @page { size: A4; margin: 16mm 14mm; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html { -webkit-print-color-adjust:exact; print-color-adjust:exact; background-color: #f5f5f7; }
+  body { font-family:var(--font); color:var(--text); background:var(--bg);
+         font-size:9.8pt; line-height:1.62; letter-spacing:0.01em;
+         padding: 16mm 14mm; max-width: 210mm; margin: 0 auto;
+         box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08); }
   @media print {
-    body {
-      padding: 0;
-      margin: 0;
-      max-width: none;
-      box-shadow: none;
-    }
+    body { padding: 0; margin: 0; max-width: none; box-shadow: none; }
   }
+  strong { font-weight:700; }
 
-  /* ---------- Header: Exactly matches the CV header ---------- */
-  .head {
-    text-align: center;
-    margin-bottom: 7mm;
-  }
-  .head__name {
-    font-size: 26pt;
-    font-weight: 700;
-    letter-spacing: -0.01em;
-    line-height: 1.1;
-    margin-bottom: 1.5mm;
-  }
-  .head__address {
-    font-size: 9.5pt;
-    color: var(--text);
-    margin-bottom: 1mm;
-  }
-  .head__contact {
-    font-size: 8.8pt;
-    color: var(--text);
-  }
-  .head__contact a {
-    color: var(--text);
-    text-decoration: none;
-  }
-  .head__role {
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-    font-size: 8.8pt;
-    font-weight: 700;
-    color: var(--text-muted);
-    margin-top: 2mm;
-  }
-  .head__role:empty {
-    display: none;
-  }
+  /* ---------- Letterhead: the CV's header, unchanged ---------- */
+  .head { border-bottom:1px solid var(--text); padding-bottom:5mm; }
+  .head__name { font-size:26pt; font-weight:400; line-height:1.02;
+                letter-spacing:-0.01em; }
+  .head__name span { font-weight:700; }
+  .head__role { text-transform:uppercase; letter-spacing:0.16em; font-size:8.5pt;
+                color:var(--text-dim); margin:3mm 0 4mm; }
+  /* A column, not a row. Four facts strung along one line with middots read as
+     a caption; stacked, each is a way of reaching him, which is what they are.
+     It is also how they are used -- a reader looking for the phone number scans
+     down a short list rather than across a sentence -- and it costs three lines
+     on a page that has room for them. The CV keeps its single row: there the
+     header sits over two columns and the width is the point. */
+  .head__contact { display:flex; flex-direction:column; gap:0; font-size:8.5pt;
+                   line-height:1.3; color:var(--muted); }
 
-  /* ---------- Recipient & Date ---------- */
-  .meta {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 8mm;
-    margin-top: 7mm;
-    margin-bottom: 5mm;
-  }
-  .meta__to {
-    border-left: 2px solid var(--text);
-    padding: 0.5mm 0 1mm 3.5mm;
-  }
-  .meta__company {
-    font-weight: 700;
-    font-size: 10pt;
-  }
-  .meta__place {
-    font-size: 8.8pt;
-    color: var(--text-muted);
-    margin-top: 0.8mm;
-  }
-  .meta__date {
-    font-size: 8.8pt;
-    color: var(--text-muted);
-    white-space: nowrap;
-    text-align: right;
-  }
+  /* ---------- Who it is to, and when. One line each, no labels ---------- */
+  .meta { display:flex; justify-content:space-between; align-items:flex-start;
+          gap:8mm; margin-top:9mm; }
+  /* The rule down the left is the only thing that says "this is the addressee".
+     A label would say it in words and cost a line; the CV already uses a plain
+     black hairline under the letterhead, so this is the same mark turned on its
+     side rather than a second idea. */
+  .meta__to { border-left:1.5pt solid var(--text); padding:0.4mm 0 0.8mm 3.2mm; }
+  .meta__company { font-weight:700; font-size:10pt; }
+  .meta__place { font-size:8.5pt; color:var(--muted); margin-top:0.8mm; }
+  .meta__date { font-size:8.5pt; color:var(--muted); white-space:nowrap;
+                text-align:right; }
 
-  /* ---------- Subject ---------- */
-  .subject {
-    margin-top: 6mm;
-    margin-bottom: 5mm;
-    font-weight: 700;
-    font-size: 10pt;
-    color: var(--text);
-    letter-spacing: 0.01em;
-  }
+  /* ---------- What it is about ---------- */
+  .subject { margin-top:8mm; padding-bottom:2mm; border-bottom:1px solid var(--border);
+             font-weight:700; font-size:10.5pt; }
 
-  /* ---------- Body ---------- */
-  .body {
-    margin-top: 4mm;
-    font-size: 9.2pt;
-    line-height: 1.55;
-  }
-  .body .greeting {
-    margin-bottom: 4mm;
-    font-size: 9.2pt;
-  }
-  .body p {
-    margin-bottom: 3.5mm;
-    text-align: justify;
-  }
-  .body p:last-child {
-    margin-bottom: 0;
-  }
-  strong {
-    font-weight: 700;
-  }
+  /* ---------- The writing ---------- */
+  .body { margin-top:6mm; }
+  .body .greeting { margin-bottom:4.5mm; }
+  .body p { margin-bottom:4mm; text-align:justify; }
+  .body p:last-child { margin-bottom:0; }
 
   /* ---------- Sign-off ---------- */
-  .sign {
-    margin-top: 7mm;
-  }
-  .sign__closing {
-    font-size: 9.2pt;
-    margin-bottom: 3mm;
-  }
-  .sign__name {
-    font-size: 10.5pt;
-    font-weight: 700;
-  }
+  .sign { margin-top:8mm; }
+  .sign__name { margin-top:5mm; font-size:11pt; font-weight:400; }
+  .sign__name span { font-weight:700; }
 """
 
 
@@ -1087,13 +996,13 @@ def _emphasise(escaped: str, names: List[str]) -> str:
 
 def letter_html(letter: Dict[str, str], job: Dict) -> str:
     profile = safe_profile(str(job.get("user") or "") or None)
-    full_name = _escape(str(profile.get("full_name") or "Badreddine Barki"))
-    address = _escape(str(profile.get("full_address") or profile.get("city") or "14 rue de la 2e DB, Amiens, France"))
-    email = _escape(str(profile.get("email") or "badreddinebarki@gmail.com"))
-    phone = _escape(str(profile.get("phone_formatted") or profile.get("phone") or "+33 7 45 76 80 10"))
-    linkedin = "linkedin.com/in/barki-badreddine-bb2328146"
-
-    contacts_line = f"<span>{email}</span> &bull; <span>{phone}</span> &bull; <span><a href=\"https://{linkedin}\">{linkedin}</a></span>"
+    website = re.sub(r"^https?://", "", str(profile.get("website") or "").strip()).rstrip("/")
+    contacts = "".join(
+        "<span>" + _escape(str(v)) + "</span>" for v in (
+            profile.get("full_address") or profile.get("city"),
+            profile.get("email"),
+            website,
+            profile.get("phone_formatted") or profile.get("phone")) if v)
 
     names = [str(job.get("company") or "")]
     names += [str(e.get("company") or "") for e in (profile.get("experiences") or [])]
@@ -1104,8 +1013,11 @@ def letter_html(letter: Dict[str, str], job: Dict) -> str:
         for p in re.split(r"\n\s*\n", letter["body"].strip()) if p.strip())
 
     today = time.strftime("%d %B %Y")
-    city = _escape(str(profile.get("city") or "Amiens"))
-    tagline = _tagline(job, profile)
+    city = _escape(str(profile.get("city") or ""))
+    full_name = _escape(str(profile.get("full_name") or ""))
+    parts = str(profile.get("full_name") or "").split()
+    name_mark = (_escape(" ".join(parts[:-1])) + " <span>" + _escape(parts[-1]) + "</span>"
+                 if len(parts) > 1 else full_name)
 
     return (
         "<!DOCTYPE html>\n<html lang=\"" + letter["language"] + "\">\n<head>\n"
@@ -1113,10 +1025,9 @@ def letter_html(letter: Dict[str, str], job: Dict) -> str:
         + full_name + " - " + _escape(letter["subject"])
         + "</title>\n<style>" + LETTER_CSS + "</style>\n</head>\n<body>\n"
         "  <header class=\"head\">\n"
-        "    <h1 class=\"head__name\">" + full_name + "</h1>\n"
-        "    <p class=\"head__address\">" + address + "</p>\n"
-        "    <div class=\"head__contact\">" + contacts_line + "</div>\n"
-        + (f"    <p class=\"head__role\">{tagline}</p>\n" if tagline else "") +
+        "    <h1 class=\"head__name\">" + name_mark + "</h1>\n"
+        "    <p class=\"head__role\">" + _tagline(job, profile) + "</p>\n"
+        "    <div class=\"head__contact\">" + contacts + "</div>\n"
         "  </header>\n"
         "  <section class=\"meta\">\n"
         "    <div class=\"meta__to\">\n"
@@ -1132,8 +1043,8 @@ def letter_html(letter: Dict[str, str], job: Dict) -> str:
         + _escape(letter["greeting"]) + "</p>\n    "
         + paragraphs + "\n  </div>\n"
         "  <div class=\"sign\">\n"
-        "    <div class=\"sign__closing\">" + _escape(letter["sign_off"]) + "</div>\n"
-        "    <div class=\"sign__name\">" + full_name + "</div>\n"
+        "    <div>" + _escape(letter["sign_off"]) + "</div>\n"
+        "    <div class=\"sign__name\">" + name_mark + "</div>\n"
         "  </div>\n"
         "</body>\n</html>\n"
     )

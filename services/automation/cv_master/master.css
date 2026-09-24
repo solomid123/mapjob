@@ -305,9 +305,3 @@ body {
   margin-bottom: 0.6mm;
 }
 
-.cv-footer {
-  text-align: right;
-  font-size: 7.8pt;
-  color: var(--text-muted);
-  margin-top: 5mm;
-}

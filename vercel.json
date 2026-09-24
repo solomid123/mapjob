@@ -9,6 +9,10 @@
       "destination": "https://mapjob-backend.onrender.com/api/:match*"
     },
     {
+      "source": "/cv.pdf",
+      "destination": "https://mapjob-backend.onrender.com/cv.pdf"
+    },
+    {
       "source": "/Badreddine_Barki_CV.pdf",
       "destination": "https://mapjob-backend.onrender.com/Badreddine_Barki_CV.pdf"
     },

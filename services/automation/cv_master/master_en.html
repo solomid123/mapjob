@@ -4,352 +4,557 @@
 <meta charset="UTF-8" />
 <title>Badreddine Barki — CV</title>
 <style>
-  /* ============================================================
-     Badreddine Barki — Curriculum Vitae (EN)
-     Mirrors the portfolio/site: Century Gothic, monochrome light
-     palette, hairline borders, uppercase letter-spaced headings.
-     ============================================================ */
+/* ============================================================
+   Badreddine Barki — Master CV Stylesheet
+   Matches Badreddine_Barki_CV.pdf layout:
+   - Clean Century Gothic font
+   - Centered header with name, contact & address
+   - Two-column section rows: Left section titles (uppercase, bold)
+     and right-side structured content with right-aligned dates
+   - Clean professional executive design
+   ============================================================ */
 
-  :root {
-    --bg: #ffffff;
-    --bg-alt: #f0f0ec;
-    --surface: #f7f7f5;
-    --border: #cfcfc9;
-    --border-strong: #b7b7b0;
-    --text: #000000;
-    --text-dim: #1a1a1a;
-    --text-muted: #5a5a54;
-    --font: "Century Gothic", CenturyGothic, AppleGothic, "Futura", "Trebuchet MS", "Segoe UI", sans-serif;
-  }
+:root {
+  --font: "Century Gothic", CenturyGothic, AppleGothic, "Trebuchet MS", "Segoe UI", sans-serif;
+  --text: #000000;
+  --text-muted: #333333;
+  --bg: #ffffff;
+}
 
-  @page { size: A4; margin: 13mm 14mm; }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+@page {
+  size: A4;
+  margin: 14mm 14mm;
+}
 
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+  background-color: #f5f5f7;
+}
+
+body {
+  font-family: var(--font);
+  color: var(--text);
+  background: var(--bg);
+  line-height: 1.45;
+  font-size: 8.8pt;
+  padding: 14mm 15mm;
+  max-width: 210mm;
+  margin: 0 auto;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+}
+
+@media print {
   body {
-    font-family: var(--font);
-    color: var(--text);
-    background: var(--bg);
-    line-height: 1.5;
-    font-size: 9.5pt;
-    letter-spacing: 0.01em;
+    padding: 0;
+    margin: 0;
+    max-width: none;
+    box-shadow: none;
   }
-  h1, h2, h3, h4 { font-weight: 400; }
-  strong { font-weight: 700; }
-  a { color: var(--text); text-decoration: none; }
-  ul { list-style: none; }
+}
 
-  /* ---------- Header ---------- */
-  .head {
-    border-bottom: 1px solid var(--text);
-    padding-bottom: 5mm;
-    margin-bottom: 6mm;
-  }
-  .head__name {
-    font-size: 30pt;
-    line-height: 1.02;
-    letter-spacing: -0.01em;
-  }
-  .head__name span { font-weight: 700; }
-  .head__role {
-    text-transform: uppercase;
-    letter-spacing: 0.16em;
-    font-size: 9pt;
-    color: var(--text-dim);
-    margin: 3mm 0 4mm;
-  }
-  .head__contact {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 1.5mm 4mm;
-    font-size: 8.5pt;
-    color: var(--text-muted);
-  }
-  .head__contact span:not(:last-child)::after {
-    content: "\00b7";
-    margin-left: 4mm;
-    color: var(--border-strong);
-  }
+/* ---------- Header ---------- */
+.head {
+  text-align: center;
+  margin-bottom: 7mm;
+}
 
-  /* ---------- Two-column body ---------- */
-  .grid {
-    display: grid;
-    grid-template-columns: 1fr 62mm;
-    gap: 9mm;
-    align-items: start;
-  }
+.head__name {
+  font-size: 26pt;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.1;
+  margin-bottom: 1.5mm;
+}
 
-  .block { margin-bottom: 6mm; }
-  .block:last-child { margin-bottom: 0; }
-  .block__title {
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-    font-size: 9pt;
-    color: var(--text);
-    padding-bottom: 1.5mm;
-    margin-bottom: 3.5mm;
-    border-bottom: 1px solid var(--border);
-  }
+.head__address {
+  font-size: 9.5pt;
+  color: var(--text);
+  margin-bottom: 1mm;
+}
 
-  /* ---------- Summary ---------- */
-  .summary { color: var(--text-dim); font-size: 9.5pt; line-height: 1.6; }
+.head__contact {
+  font-size: 8.8pt;
+  color: var(--text);
+}
 
-  /* ---------- Experience ---------- */
-  .job { margin-bottom: 5mm; page-break-inside: avoid; }
-  .job:last-child { margin-bottom: 0; }
-  .job__head {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: 4mm;
-    margin-bottom: 0.5mm;
-  }
-  .job__company { font-weight: 700; font-size: 10pt; }
-  .job__years {
-    font-size: 8pt;
-    color: var(--text-muted);
-    white-space: nowrap;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-  .job__role {
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    font-size: 8.5pt;
-    color: var(--text-dim);
-    margin-bottom: 2mm;
-  }
-  .job__place { font-size: 8pt; color: var(--text-muted); font-weight: 400; }
-  .job ul li {
-    position: relative;
-    padding: 0.8mm 0 0.8mm 4mm;
-    font-size: 8.7pt;
-    color: var(--text-dim);
-    line-height: 1.45;
-  }
-  .job ul li::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    top: 3mm;
-    width: 1.4mm;
-    height: 1.4mm;
-    background: var(--text);
-  }
-  .job ul li strong { font-weight: 700; }
+.head__contact a {
+  color: var(--text);
+  text-decoration: none;
+}
 
-  /* ---------- Education ---------- */
-  .edu { margin-bottom: 4mm; }
-  .edu:last-child { margin-bottom: 0; }
-  .edu__deg { font-weight: 700; font-size: 9.2pt; }
-  .edu__org { font-size: 8.5pt; color: var(--text-dim); margin: 0.5mm 0; }
-  .edu__meta { font-size: 8pt; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
-  .edu__note { font-size: 8.3pt; color: var(--text-dim); margin-top: 1mm; }
+.head__role {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 9pt;
+  font-weight: 700;
+  color: var(--text-muted);
+  margin-top: 2mm;
+}
 
-  /* ---------- Sidebar ---------- */
-  .side .block__title { border-bottom-color: var(--border-strong); }
-  .skillgroup { margin-bottom: 3.5mm; }
-  .skillgroup h4 {
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-    font-size: 7.5pt;
-    color: var(--text-muted);
-    margin-bottom: 1.5mm;
-  }
-  .tags { display: flex; flex-wrap: wrap; gap: 1.3mm; }
-  .tags span {
-    font-size: 7.4pt;
-    border: 1px solid var(--border-strong);
-    background: var(--bg-alt);
-    padding: 0.8mm 2mm;
-    line-height: 1.3;
-  }
-  .kv { display: flex; flex-direction: column; gap: 2mm; }
-  .kv li {
-    display: flex;
-    justify-content: space-between;
-    gap: 3mm;
-    font-size: 8.5pt;
-    padding-bottom: 2mm;
-    border-bottom: 1px solid var(--border);
-  }
-  .kv li:last-child { border-bottom: none; padding-bottom: 0; }
-  .kv li span { color: var(--text-muted); }
-  .kv li strong { font-weight: 400; text-align: right; }
-  .certs li {
-    font-size: 8.4pt;
-    color: var(--text-dim);
-    padding: 1.4mm 0;
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    justify-content: space-between;
-    gap: 3mm;
-  }
-  .certs li:last-child { border-bottom: none; }
-  .certs li em { font-style: normal; color: var(--text-muted); font-size: 7.8pt; }
+.head__role:empty {
+  display: none;
+}
+
+/* ---------- Section Rows (Left Title, Right Content) ---------- */
+.section-row {
+  display: grid;
+  grid-template-columns: 31mm 1fr;
+  column-gap: 5mm;
+  margin-bottom: 4.5mm;
+  align-items: start;
+}
+
+.section-title {
+  font-size: 8.5pt;
+  font-weight: 700;
+  text-transform: uppercase;
+  line-height: 1.25;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+
+.section-content {
+  min-width: 0;
+}
+
+/* ---------- Summary ---------- */
+.summary {
+  font-size: 8.8pt;
+  line-height: 1.48;
+  color: var(--text);
+  text-align: justify;
+}
+
+/* ---------- Jobs & Experience ---------- */
+.job {
+  margin-bottom: 3.5mm;
+  page-break-inside: avoid;
+}
+
+.job:last-child {
+  margin-bottom: 0;
+}
+
+.job__company-line {
+  font-size: 8.8pt;
+  margin-bottom: 0.5mm;
+}
+
+.job__company {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.job__place {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.job__title-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 1mm;
+}
+
+.job__role {
+  font-weight: 600;
+  font-size: 8.8pt;
+  color: var(--text);
+}
+
+.bullet-sq {
+  font-size: 7pt;
+  margin-right: 3px;
+  vertical-align: 0.5px;
+}
+
+.job__years {
+  font-size: 8.5pt;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.job ul {
+  list-style: none;
+  padding-left: 3.5mm;
+}
+
+.job ul li {
+  position: relative;
+  font-size: 8.5pt;
+  line-height: 1.38;
+  margin-bottom: 0.8mm;
+  color: var(--text);
+  text-align: justify;
+}
+
+.job ul li::before {
+  content: "● ";
+  position: absolute;
+  left: -3.5mm;
+  top: 0;
+  font-size: 6pt;
+  color: var(--text);
+}
+
+.job ul li strong {
+  font-weight: 700;
+}
+
+/* ---------- Education ---------- */
+.edu-item {
+  margin-bottom: 3mm;
+}
+
+.edu-item:last-child {
+  margin-bottom: 0;
+}
+
+.edu-school {
+  font-weight: 700;
+  font-size: 8.8pt;
+  margin-bottom: 0.5mm;
+}
+
+.edu-title-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 1mm;
+}
+
+.edu-deg {
+  font-weight: 600;
+  font-size: 8.8pt;
+}
+
+.edu-years {
+  font-size: 8.5pt;
+  white-space: nowrap;
+}
+
+.edu-bullets {
+  list-style: none;
+  padding-left: 3.5mm;
+}
+
+.edu-bullets li {
+  position: relative;
+  font-size: 8.5pt;
+  line-height: 1.35;
+  margin-bottom: 0.6mm;
+  color: var(--text);
+}
+
+.edu-bullets li::before {
+  content: "● ";
+  position: absolute;
+  left: -3.5mm;
+  font-size: 6pt;
+}
+
+/* ---------- Skills ---------- */
+.skillgroup {
+  margin-bottom: 2.5mm;
+}
+
+.skillgroup:last-child {
+  margin-bottom: 0;
+}
+
+.skillgroup h4 {
+  font-size: 8.5pt;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text);
+  margin-bottom: 0.5mm;
+}
+
+.skilldesc {
+  font-size: 8.5pt;
+  line-height: 1.35;
+  color: var(--text);
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 8.5pt;
+  line-height: 1.35;
+  color: var(--text);
+}
+
+.tags span:not(:last-child)::after {
+  content: ", ";
+  margin-right: 4px;
+}
+
+/* ---------- Languages & Certifications ---------- */
+.inline-list {
+  list-style: none;
+}
+
+.inline-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 8.5pt;
+  line-height: 1.45;
+  margin-bottom: 0.6mm;
+}
+
+.cv-footer {
+  text-align: right;
+  font-size: 7.8pt;
+  color: var(--text-muted);
+  margin-top: 5mm;
+}
 </style>
 </head>
 <body>
 
   <header class="head">
-    <h1 class="head__name">Badreddine <span>Barki</span></h1>
-    <p class="head__role">R&amp;D Mechanical Engineer &middot; FEA &middot; Composites &middot; CAD</p>
+    <h1 class="head__name">Badreddine Barki</h1>
+    <p class="head__address">14 rue de la 2e DB, Amiens, France</p>
     <div class="head__contact">
-      <span>14 rue de la 2e DB, Amiens, France</span>
-      <span>badreddinebarki@gmail.com</span>
-      <span>+33 7 45 76 80 10</span>
-      <span><a href="https://barkibadreddine.com">barkibadreddine.com</a></span>
-      <span>linkedin.com/in/barki-badreddine-bb2328146</span>
+      <span>badreddinebarki@gmail.com</span> &bull; <span>+33 7 45 76 80 10</span> &bull; <span><a href="https://linkedin.com/in/barki-badreddine-bb2328146">linkedin.com/in/barki-badreddine-bb2328146</a></span>
     </div>
+    <p class="head__role"></p>
   </header>
 
-  <div class="grid">
-    <!-- MAIN COLUMN -->
-    <main>
-      <section class="block">
-        <h2 class="block__title">Professional summary</h2>
-        <p class="summary">
-          Mechanical Engineer with comprehensive experience in CAD modeling, finite element analysis,
-          and developing innovative solutions for complex projects. Passionate about enhancing product
-          quality and operational efficiency, with a strong track record of implementing successful
-          design strategies and optimizing processes.
-        </p>
-      </section>
+  <div class="section-row">
+    <div class="section-title">
+      PROFESSIONAL<br>SUMMARY
+    </div>
+    <div class="section-content">
+      <p class="summary">
+        Mechanical Engineer with comprehensive experience in CAD modeling, finite element analysis, and developing innovative solutions for complex projects. Passionate about enhancing product quality and operational efficiency, with a strong track record of implementing successful design strategies and optimizing processes.
+      </p>
+    </div>
+  </div>
 
-      <section class="block">
-        <h2 class="block__title">Work experience</h2>
-
-
-        <article class="job">
-          <div class="job__head">
-            <span class="job__company">SLB Group <span class="job__place">— Abbeville, France</span></span>
-            <span class="job__years">Mar 2022 — Jul 2025</span>
-          </div>
-          <p class="job__role">Research &amp; Development Mechanical Engineer</p>
-          <ul>
-            <li><strong>CAD design (SolidWorks/Creo):</strong> designed and modeled 50+ complex special-machinery assemblies under welding and manufacturing constraints.</li>
-            <li><strong>FEA simulation (Ansys/Abaqus):</strong> ran structural, vibration and fatigue simulations — &minus;15% mass, +25% structural strength.</li>
-            <li><strong>Testing &amp; prototyping:</strong> supervised workshop assembly and physical testing, cutting non-conformity costs by 18% through early defect correction.</li>
-            <li><strong>Project management:</strong> authored functional specifications and detailed CDC requirements, cutting design cycles by 20%.</li>
-            <li><strong>Mechatronics integration:</strong> selected components, actuators and sensors with automation engineers (+10% system precision).</li>
-            <li><strong>Regulatory &amp; PLM:</strong> wrote compliance dossiers (Machinery Directive, CE marking) and managed product lifecycle in Windchill.</li>
-            <li><strong>Procurement &amp; negotiation:</strong> qualified suppliers and negotiated pricing, securing €80k savings on a major project.</li>
-            <li><strong>Continuous improvement:</strong> applied DFMEA/RCA methods and qualified critical components, cutting procurement costs by 15%.</li>
-          </ul>
-        </article>
-
-        <article class="job">
-          <div class="job__head">
-            <span class="job__company">Sigma <span class="job__place">— Clermont-Ferrand, France</span></span>
-            <span class="job__years">Mar 2021 — Sep 2021</span>
-          </div>
-          <p class="job__role">R&amp;D Mechanical Engineer — Intern</p>
-          <ul>
-            <li><strong>SHM project:</strong> predictive-maintenance solutions using embedded sensors (+25% system monitoring, &minus;15% maintenance costs).</li>
-            <li><strong>Signal processing:</strong> developed vibration-analysis scripts (MATLAB/Python), speeding up engineering studies by 30%.</li>
-            <li><strong>Multiphysics FEA:</strong> structural and sensor-placement simulation in COMSOL/Ansys to optimize sensor performance under load.</li>
-          </ul>
-        </article>
-
-        <article class="job">
-          <div class="job__head">
-            <span class="job__company">OCP Group <span class="job__place">— Morocco</span></span>
-            <span class="job__years">Jun 2017 — Aug 2017</span>
-          </div>
-          <p class="job__role">Mechanical Engineering Intern</p>
-          <ul>
-            <li><strong>Reliability engineering:</strong> analyzed conveyor-belt wear dynamics to optimize preventive-maintenance cycles and reduce downtime.</li>
-            <li><strong>Quality control:</strong> validated geometric tolerance specs and audited supplier parts, reducing defect rates by 20%.</li>
-            <li><strong>Root-cause analysis:</strong> applied AMDEC/FMEA methods and drafted standardized corrective-maintenance instructions.</li>
-          </ul>
-        </article>
-      </section>
-
-      <section class="block">
-        <h2 class="block__title">Education</h2>
-        <div class="edu">
-          <p class="edu__deg">Master's in Mechanical Engineering</p>
-          <p class="edu__org">University School of Physics and Engineering — Clermont-Ferrand, France</p>
-          <p class="edu__meta">Sep 2020 — Jun 2022</p>
-          <p class="edu__note">Specialization: Materials, Structures, Reliability and Machinery. Thesis: FEA model for a carbon/epoxy composite wireline cable.</p>
+  <div class="section-row">
+    <div class="section-title">
+      WORK<br>EXPERIENCE
+    </div>
+    <div class="section-content">
+      <article class="job">
+        <div class="job__company-line">
+          <span class="job__company">SLB Group, <span class="job__place">Abbeville, France</span></span>
         </div>
-        <div class="edu">
-          <p class="edu__deg">Engineering degree — Product &amp; Process Industrialization</p>
-          <p class="edu__org">National Higher School of Arts and Trades (ENSAM) — Meknes, Morocco</p>
-          <p class="edu__meta">Sep 2015 — Jun 2020</p>
-          <p class="edu__note">Industrial and mechanical engineering, manufacturing processes, automation and industrial management.</p>
+        <div class="job__title-line">
+          <p class="job__role"><span class="bullet-sq">■</span> Research &amp; Development Mechanical Engineer</p>
+          <span class="job__years">Mar 2022 — Jul 2025</span>
         </div>
-      </section>
-    </main>
-
-    <!-- SIDEBAR -->
-    <aside class="side">
-      <section class="block">
-        <h2 class="block__title">Technical skills</h2>
-        <div class="skillgroup">
-          <h4>Software &amp; simulation</h4>
-          <div class="tags">
-            <span>SolidWorks</span><span>Creo / PTC</span><span>CATIA V5</span><span>Siemens NX</span>
-            <span>Inventor</span><span>AutoCAD</span><span>Abaqus</span><span>Ansys</span><span>COMSOL</span><span>RDM6</span>
-          </div>
-        </div>
-        <div class="skillgroup">
-          <h4>Mechanical engineering</h4>
-          <div class="tags">
-            <span>Mechanical design</span><span>FEA</span><span>Structural analysis</span><span>CAD/CAM</span>
-            <span>3D modeling</span><span>Machining</span><span>CNC</span><span>Additive mfg.</span>
-            <span>Metrology</span><span>Windchill PLM</span><span>FMEA/DFMEA/RCA</span>
-          </div>
-        </div>
-        <div class="skillgroup">
-          <h4>Materials &amp; processes</h4>
-          <div class="tags">
-            <span>Composites</span><span>Materials science</span><span>Polymers</span><span>Rheology</span>
-            <span>Foundry</span><span>Forming</span><span>Design of Experiments</span>
-          </div>
-        </div>
-        <div class="skillgroup">
-          <h4>Electrical &amp; sensing</h4>
-          <div class="tags">
-            <span>Fiber-optic sensors</span><span>Sensor design</span><span>Analog/digital electronics</span>
-            <span>Power electronics</span><span>Automation</span>
-          </div>
-        </div>
-        <div class="skillgroup">
-          <h4>Programming</h4>
-          <div class="tags">
-            <span>Python</span><span>MATLAB</span><span>C/C++</span><span>Java</span><span>Machine Learning</span>
-          </div>
-        </div>
-      </section>
-
-      <section class="block">
-        <h2 class="block__title">Languages</h2>
-        <ul class="kv">
-          <li><span>French</span><strong>Professional (C2)</strong></li>
-          <li><span>English</span><strong>Professional (C2)</strong></li>
-          <li><span>Arabic</span><strong>Native</strong></li>
+        <ul>
+          <li><strong>CAD design (SolidWorks/Creo):</strong> designed and modeled 50+ complex special-machinery assemblies under welding and manufacturing constraints.</li>
+          <li><strong>FEA simulation (Ansys/Abaqus):</strong> ran structural, vibration and fatigue simulations — &minus;15% mass, +25% structural strength.</li>
+          <li><strong>Testing &amp; prototyping:</strong> supervised workshop assembly and physical testing, cutting non-conformity costs by 18% through early defect correction.</li>
+          <li><strong>Project management:</strong> authored functional specifications and detailed CDC requirements, cutting design cycles by 20%.</li>
+          <li><strong>Mechatronics integration:</strong> selected components, actuators and sensors with automation engineers (+10% system precision).</li>
+          <li><strong>Regulatory &amp; PLM:</strong> wrote compliance dossiers (Machinery Directive, CE marking) and managed product lifecycle in Windchill.</li>
+          <li><strong>Procurement &amp; negotiation:</strong> qualified suppliers and negotiated pricing, securing €80k savings on a major project.</li>
+          <li><strong>Continuous improvement:</strong> applied DFMEA/RCA methods and qualified critical components, cutting procurement costs by 15%.</li>
         </ul>
-      </section>
+      </article>
 
-      <section class="block">
-        <h2 class="block__title">Certifications</h2>
-        <ul class="certs">
-          <li><span>Agile Project Management</span><em>2023</em></li>
-          <li><span>Data Science &amp; Analytics</span><em>2022</em></li>
-          <li><span>Fiber Optic Sensors</span><em>2021</em></li>
-          <li><span>FEA Abaqus — Composites</span><em>2021</em></li>
+      <article class="job">
+        <div class="job__company-line">
+          <span class="job__company">Sigma, <span class="job__place">Clermont-Ferrand, France</span></span>
+        </div>
+        <div class="job__title-line">
+          <p class="job__role"><span class="bullet-sq">■</span> R&amp;D Mechanical Engineer — Intern</p>
+          <span class="job__years">Mar 2021 — Sep 2021</span>
+        </div>
+        <ul>
+          <li><strong>SHM project:</strong> predictive-maintenance solutions using embedded sensors (+25% system monitoring, &minus;15% maintenance costs).</li>
+          <li><strong>Signal processing:</strong> developed vibration-analysis scripts (MATLAB/Python), speeding up engineering studies by 30%.</li>
+          <li><strong>Multiphysics FEA:</strong> structural and sensor-placement simulation in COMSOL/Ansys to optimize sensor performance under load.</li>
         </ul>
-      </section>
+      </article>
 
-      <section class="block">
-        <h2 class="block__title">Soft skills</h2>
+      <article class="job">
+        <div class="job__company-line">
+          <span class="job__company">OCP Group, <span class="job__place">Morocco</span></span>
+        </div>
+        <div class="job__title-line">
+          <p class="job__role"><span class="bullet-sq">■</span> Mechanical Engineering Intern</p>
+          <span class="job__years">Jun 2017 — Aug 2017</span>
+        </div>
+        <ul>
+          <li><strong>Reliability engineering:</strong> analyzed conveyor-belt wear dynamics to optimize preventive-maintenance cycles and reduce downtime.</li>
+          <li><strong>Quality control:</strong> validated geometric tolerance specs and audited supplier parts, reducing defect rates by 20%.</li>
+          <li><strong>Root-cause analysis:</strong> applied AMDEC/FMEA methods and drafted standardized corrective-maintenance instructions.</li>
+        </ul>
+      </article>
+    </div>
+  </div>
+
+  <div class="section-row">
+    <div class="section-title">
+      EDUCATION
+    </div>
+    <div class="section-content">
+      <div class="edu-item">
+        <div class="edu-school">University School of Physics and Engineering, Clermont-Ferrand, France</div>
+        <div class="edu-title-line">
+          <span class="edu-deg"><span class="bullet-sq">■</span> Master's in Mechanical Engineering</span>
+          <span class="edu-years">Sep 2020 — Jun 2022</span>
+        </div>
+        <ul class="edu-bullets">
+          <li><strong>Specialization:</strong> Materials, Structures, Reliability and Machinery.</li>
+          <li><strong>Thesis:</strong> FEA model for a carbon/epoxy composite wireline cable.</li>
+        </ul>
+      </div>
+
+      <div class="edu-item">
+        <div class="edu-school">National Higher School of Arts and Trades (ENSAM), Meknes, Morocco</div>
+        <div class="edu-title-line">
+          <span class="edu-deg"><span class="bullet-sq">■</span> Engineering degree — Product &amp; Process Industrialization</span>
+          <span class="edu-years">Sep 2015 — Jun 2020</span>
+        </div>
+        <ul class="edu-bullets">
+          <li>Industrial and mechanical engineering, manufacturing processes, automation and industrial management.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-row">
+    <div class="section-title">
+      KEY<br>SKILLS
+    </div>
+    <div class="section-content">
+      <div class="skillgroup">
+        <h4>Mechanical Engineering</h4>
         <div class="tags">
-          <span>Analytical thinking</span><span>Problem-solving</span><span>Communication</span>
-          <span>Teamwork</span><span>Time management</span><span>Cross-functional leadership</span>
+          <span>Mechanical design</span>
+          <span>FEA</span>
+          <span>Structural analysis</span>
+          <span>CAD/CAM</span>
+          <span>3D modeling</span>
+          <span>Machining</span>
+          <span>CNC</span>
+          <span>Additive manufacturing</span>
+          <span>Metrology</span>
+          <span>Windchill PLM</span>
+          <span>FMEA/DFMEA/RCA</span>
         </div>
-      </section>
-    </aside>
+      </div>
+
+      <div class="skillgroup">
+        <h4>Software &amp; Simulation</h4>
+        <div class="tags">
+          <span>SolidWorks</span>
+          <span>Creo / PTC</span>
+          <span>CATIA V5</span>
+          <span>Siemens NX</span>
+          <span>Inventor</span>
+          <span>AutoCAD</span>
+          <span>Abaqus</span>
+          <span>Ansys</span>
+          <span>COMSOL</span>
+          <span>RDM6</span>
+        </div>
+      </div>
+
+      <div class="skillgroup">
+        <h4>Materials &amp; Processes</h4>
+        <div class="tags">
+          <span>Composites</span>
+          <span>Materials science</span>
+          <span>Polymers</span>
+          <span>Rheology</span>
+          <span>Foundry</span>
+          <span>Forming</span>
+          <span>Design of Experiments</span>
+        </div>
+      </div>
+
+      <div class="skillgroup">
+        <h4>Electrical &amp; Sensing</h4>
+        <div class="tags">
+          <span>Fiber-optic sensors</span>
+          <span>Sensor design</span>
+          <span>Analog/digital electronics</span>
+          <span>Power electronics</span>
+          <span>Automation</span>
+        </div>
+      </div>
+
+      <div class="skillgroup">
+        <h4>Programming</h4>
+        <div class="tags">
+          <span>Python</span>
+          <span>MATLAB</span>
+          <span>C/C++</span>
+          <span>Java</span>
+          <span>Machine Learning</span>
+        </div>
+      </div>
+
+      <div class="skillgroup">
+        <h4>Professional Skills</h4>
+        <div class="tags">
+          <span>Requirements analysis</span>
+          <span>Technical specifications (CDC)</span>
+          <span>Planning &amp; budget management</span>
+          <span>Cross-functional coordination</span>
+          <span>Vendor &amp; contractor management</span>
+        </div>
+      </div>
+
+      <div class="skillgroup">
+        <h4>Soft Skills</h4>
+        <div class="tags">
+          <span>Analytical thinking</span>
+          <span>Problem-solving</span>
+          <span>Communication</span>
+          <span>Teamwork</span>
+          <span>Time management</span>
+          <span>Cross-functional leadership</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-row">
+    <div class="section-title">
+      LANGUAGES
+    </div>
+    <div class="section-content">
+      <ul class="inline-list">
+        <li><span><span class="bullet-sq">■</span> <strong>French:</strong> Professional proficiency (C2)</span></li>
+        <li><span><span class="bullet-sq">■</span> <strong>English:</strong> Professional proficiency (C2)</span></li>
+        <li><span><span class="bullet-sq">■</span> <strong>Arabic:</strong> Native</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="section-row">
+    <div class="section-title">
+      CERTIFICATIONS
+    </div>
+    <div class="section-content">
+      <ul class="inline-list">
+        <li><span><span class="bullet-sq">■</span> Agile Project Management</span> <span>2023</span></li>
+        <li><span><span class="bullet-sq">■</span> Data Science &amp; Analytics</span> <span>2022</span></li>
+        <li><span><span class="bullet-sq">■</span> Fiber Optic Sensors Training</span> <span>2021</span></li>
+        <li><span><span class="bullet-sq">■</span> FEA Abaqus — Composite Materials</span> <span>2021</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="cv-footer">
+    [CV updated 2026-05-24]
   </div>
 
 </body>

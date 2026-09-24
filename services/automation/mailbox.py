@@ -68,14 +68,16 @@ def configured() -> bool:
     return bool(c["id"] and c["secret"])
 
 
-def redirect_uri() -> str:
+def redirect_uri(custom: str = "") -> str:
     """
     Where Google sends the person back to. Must match a URI registered on the
     OAuth client, character for character, or Google refuses before the user
     sees anything.
     """
+    if custom:
+        return custom
     return (_env("GOOGLE_OAUTH_REDIRECT_URI")
-            or "http://localhost:8000/api/mailbox/callback")
+            or "https://billions.eu.cc/api/mailbox/callback")
 
 
 # --- the local mirror ------------------------------------------------------
@@ -169,7 +171,7 @@ def refresh_token(user: str = "") -> str:
 
 # --- connecting ------------------------------------------------------------
 
-def auth_url(state: str) -> str:
+def auth_url(state: str, uri: str = "") -> str:
     """
     The consent screen. `access_type=offline` with `prompt=consent` because the
     thing worth having is the refresh token, and Google only returns one on a
@@ -178,9 +180,10 @@ def auth_url(state: str) -> str:
     """
     from urllib.parse import urlencode
 
+    target_uri = redirect_uri(uri)
     return AUTH_URL + "?" + urlencode({
         "client_id": client()["id"],
-        "redirect_uri": redirect_uri(),
+        "redirect_uri": target_uri,
         "response_type": "code",
         "scope": SCOPES,
         "access_type": "offline",
@@ -190,14 +193,15 @@ def auth_url(state: str) -> str:
     })
 
 
-def exchange(code: str) -> Dict[str, Any]:
+def exchange(code: str, uri: str = "") -> Dict[str, Any]:
     """Code for tokens, plus the address it belongs to. Raises with a reason."""
     import requests
 
     c = client()
+    target_uri = redirect_uri(uri)
     response = requests.post(TOKEN_URL, timeout=25, data={
         "code": code, "client_id": c["id"], "client_secret": c["secret"],
-        "redirect_uri": redirect_uri(), "grant_type": "authorization_code"})
+        "redirect_uri": target_uri, "grant_type": "authorization_code"})
     if response.status_code != 200:
         # Google's body here can contain the client secret's error context but
         # never the secret; still, only the error code is passed on.

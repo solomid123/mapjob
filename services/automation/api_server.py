@@ -1746,25 +1746,46 @@ _oauth_pending: Dict[str, Dict[str, Any]] = {}
 _OAUTH_TTL = 15 * 60
 
 
+def _determine_redirect_uri(request: Request) -> str:
+    from services.automation.config import load_env
+    load_env()
+    env_uri = os.getenv("GOOGLE_OAUTH_REDIRECT_URI", "").strip()
+    if env_uri:
+        return env_uri
+
+    origin = request.headers.get("origin") or request.headers.get("referer") or ""
+    if origin:
+        from urllib.parse import urlparse
+        parsed = urlparse(origin)
+        if parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}/api/mailbox/callback"
+
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
+    if host and "localhost" not in host and "127.0.0.1" not in host:
+        return f"{proto}://{host}/api/mailbox/callback"
+
+    return "https://billions.eu.cc/api/mailbox/callback"
+
+
 @app.get("/api/mailbox/status")
-def mailbox_status(user: str = ""):
+def mailbox_status(request: Request, user: str = ""):
     """Whose mailbox this account sends from, and whether Google still agrees."""
     from services.automation import gmail_send, mailbox
 
     who = people.resolve(user)
     state = mailbox.connected(who)
     live = gmail_send.check(who)
+    uri = _determine_redirect_uri(request)
     return {"user": who, **state, "ok": bool(live.get("ok")),
             "how": live.get("how") or state.get("how") or "",
             "reason": live.get("reason") or "",
-            # Whether the Connect button can do anything at all. Without a
-            # client there is no consent screen to send anybody to.
             "can_connect": mailbox.configured(),
-            "redirect_uri": mailbox.redirect_uri()}
+            "redirect_uri": uri}
 
 
 @app.post("/api/mailbox/connect")
-def mailbox_connect(user: str = ""):
+def mailbox_connect(request: Request, user: str = ""):
     """The consent URL to open. Google asks the person, not this server."""
     import secrets
 
@@ -1778,8 +1799,9 @@ def mailbox_connect(user: str = ""):
         if now - float(row.get("at") or 0) > _OAUTH_TTL:
             _oauth_pending.pop(key, None)
     state = secrets.token_urlsafe(24)
-    _oauth_pending[state] = {"user": people.resolve(user), "at": now}
-    return {"url": mailbox.auth_url(state), "redirect_uri": mailbox.redirect_uri()}
+    uri = _determine_redirect_uri(request)
+    _oauth_pending[state] = {"user": people.resolve(user), "redirect_uri": uri, "at": now}
+    return {"url": mailbox.auth_url(state, uri=uri), "redirect_uri": uri}
 
 
 def _closing_page(title: str, detail: str) -> HTMLResponse:
@@ -1788,13 +1810,17 @@ def _closing_page(title: str, detail: str) -> HTMLResponse:
         + "</title><style>body{font-family:'Segoe UI',system-ui,sans-serif;"
           "background:#14101f;color:#f5f5f7;display:flex;align-items:center;"
           "justify-content:center;height:100vh;margin:0}div{max-width:30rem;"
-          "text-align:center}p{color:#a9a6b6;line-height:1.6}</style></head>"
+          "text-align:center}p{color:#a9a6b6;line-height:1.6}"
+          "a.btn{display:inline-block;margin-top:1rem;padding:0.6rem 1.4rem;background:#8b5cf6;"
+          "color:#fff;text-decoration:none;border-radius:0.5rem;font-weight:600}"
+          "</style></head>"
           "<body><div><h2>" + title + "</h2><p>" + detail
-        + "</p><p>You can close this tab.</p></div></body></html>")
+        + "</p><p><a class=\"btn\" href=\"https://billions.eu.cc/?tab=emails\">Return to MapJob</a></p>"
+        + "<p style=\"font-size:0.85rem;color:#71717a\">You can also close this tab.</p></div></body></html>")
 
 
 @app.get("/api/mailbox/callback")
-def mailbox_callback(code: str = "", state: str = "", error: str = ""):
+def mailbox_callback(request: Request, code: str = "", state: str = "", error: str = ""):
     """
     Where Google sends the person back to.
 
@@ -1809,8 +1835,9 @@ def mailbox_callback(code: str = "", state: str = "", error: str = ""):
     if not pending or time.time() - float(pending.get("at") or 0) > _OAUTH_TTL:
         return _closing_page("Not connected",
                              "That link has expired. Start again from the app.")
+    uri = pending.get("redirect_uri") or _determine_redirect_uri(request)
     try:
-        got = mailbox.exchange(code)
+        got = mailbox.exchange(code, uri=uri)
     except Exception as exc:  # noqa: BLE001
         return _closing_page("Not connected", str(exc)[:200])
     saved = mailbox.save(pending["user"], got["address"], got["refresh_token"])

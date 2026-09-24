@@ -404,6 +404,15 @@ def build(job: Dict[str, Any], user: Optional[str] = None,
                                      sheet_html(job, user), user or "")
     pdf_path = documents.path_for(job_id, "deckblatt", "pdf", user or "")
     printed = tailor.html_to_pdf(html_path, pdf_path, log=log)
+    if not printed:
+        try:
+            from services.automation import deckblatt_pdf_writer
+            printed = deckblatt_pdf_writer.generate_deckblatt_pdf(job, pdf_path, user=user)
+            if printed and log:
+                log("Deckblatt printed via ReportLab fallback")
+        except Exception as e:
+            if log:
+                log(f"ReportLab Deckblatt fallback failed: {e}")
     if log and not printed:
         log("The Deckblatt was written but could not be printed")
 

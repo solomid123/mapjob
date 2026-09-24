@@ -445,6 +445,7 @@ def compose(row: Dict[str, Any], role: str = "",
                   "sign_off": pair["sign_off"]}
         files = {"letter_pdf": pair["letter"], "cv_pdf": pair["cv"],
                  "pack_pdf": pair.get("pack") or ""}
+    else:
         target_role = (str(row.get("job_title") or "").strip()
                        or str(role or "").strip()
                        or str(writer.safe_profile(user).get("current_title") or "").strip())

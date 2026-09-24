@@ -171,10 +171,10 @@ def html_to_reportlab_pdf(html_path: Path, pdf_path: Path) -> bool:
         story.append(contact_table)
         story.append(Spacer(1, 8))
 
-        # Middle horizontal separator rule (between sender and recipient, as drawn by user)
-        mid_rule = Table([[""]], colWidths=[519], rowHeights=[1])
+        # Middle horizontal separator rule (between sender and recipient, centered, not a full line)
+        mid_rule = Table([["", "", ""]], colWidths=[109, 301, 109], rowHeights=[1])
         mid_rule.setStyle(TableStyle([
-            ('LINEBELOW', (0,0), (-1,-1), 0.75, colors.HexColor('#cfcfc9')),
+            ('LINEBELOW', (1,0), (1,0), 0.75, colors.HexColor('#cfcfc9')),
             ('TOPPADDING', (0,0), (-1,-1), 0),
             ('BOTTOMPADDING', (0,0), (-1,-1), 0),
         ]))

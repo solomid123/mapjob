@@ -751,6 +751,18 @@ def html_to_pdf(html_path: Path, pdf_path: Path, log=None) -> bool:
             if log:
                 log(f"ReportLab fallback failed: {e}")
 
+    # Fallback for deckblatt: If headless browser fails, generate clean A4 Deckblatt via ReportLab
+    if "deckblatt" in pdf_path.name.lower():
+        try:
+            from services.automation import deckblatt_pdf_writer
+            if deckblatt_pdf_writer.html_to_reportlab_deckblatt_pdf(html_path, pdf_path):
+                if log:
+                    log("Deckblatt printed via ReportLab fallback")
+                return True
+        except Exception as e:
+            if log:
+                log(f"ReportLab Deckblatt fallback failed: {e}")
+
     return pdf_path.exists() and pdf_path.stat().st_size > 1000
 
 
@@ -926,7 +938,7 @@ LETTER_CSS = """
   .head__contact { display:flex; flex-direction:column; gap:0.5mm; font-size:8.5pt;
                    line-height:1.35; color:var(--muted);
                    border-left:1.5pt solid var(--text); padding-left:3.5mm; margin-top:3.5mm; }
-  .head__sep { border-bottom:1px solid var(--border); margin:5mm 0 6mm; }
+  .head__sep { width:58%; margin:5mm auto 6mm; border-bottom:1px solid var(--border); }
 
   /* ---------- Who it is to, and when. One line each, no labels ---------- */
   .meta { display:flex; justify-content:space-between; align-items:flex-start;

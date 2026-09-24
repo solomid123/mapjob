@@ -166,6 +166,27 @@ def render_letter(prospect: Dict[str, object], letter: Dict[str, str],
     the signature. Called without one it printed the first account's name over
     the second account's German letter.
     """
+    try:
+        from services.automation import tailor, letter_pdf_writer
+        import tempfile
+        job_mock = {
+            "company": prospect.get("company", ""),
+            "location": prospect.get("city", ""),
+            "user": user or "",
+            "title": prospect.get("job_title") or prospect.get("role") or "",
+        }
+        html_code = tailor.letter_html(letter, job_mock)
+        with tempfile.NamedTemporaryFile("w", suffix=".html", encoding="utf-8", delete=False) as tf:
+            tf.write(html_code)
+            tmp_html = Path(tf.name)
+        try:
+            if letter_pdf_writer.html_to_reportlab_pdf(tmp_html, path):
+                return path
+        finally:
+            tmp_html.unlink(missing_ok=True)
+    except Exception:
+        pass
+
     profile = safe_profile(user or None)
     language = letter.get("language", "en")
     canvas = pdfcanvas.Canvas(str(path), pagesize=A4)

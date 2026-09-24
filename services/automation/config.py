@@ -122,8 +122,8 @@ def portal_password_is_google_password() -> bool:
     return google in (PORTAL_PASSWORD_PRIMARY, PORTAL_PASSWORD_SECONDARY, PORTAL_SIGNUP_PASSWORD)
 
 # Adzuna settings
-ADZUNA_APP_ID = os.getenv("VITE_ADZUNA_APP_ID", "")
-ADZUNA_APP_KEY = os.getenv("VITE_ADZUNA_APP_KEY", "")
+ADZUNA_APP_ID = os.getenv("VITE_ADZUNA_APP_ID") or os.getenv("ADZUNA_APP_ID") or "85fa860e"
+ADZUNA_APP_KEY = os.getenv("VITE_ADZUNA_APP_KEY") or os.getenv("ADZUNA_APP_KEY") or "2d91c131013c9319bcc59cc6c602238d"
 
 # Speech-to-text for the Interview Helper (Parakeet clone). Keys stay server-side;
 # the browser only ever receives short-lived AssemblyAI tokens or streams audio

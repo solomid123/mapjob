@@ -906,7 +906,7 @@ def submit_pending_thread():
         time.sleep(4)
         close_pending_review("submission finished")
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 def root():
     return {
         "status": "online",
@@ -914,12 +914,18 @@ def root():
         "candidate": "Badreddine Barki",
         "endpoints": {
             "web_ui": "http://localhost:5173",
-            "api_status": "http://127.0.0.1:8000/api/status",
-            "api_state": "http://127.0.0.1:8000/api/apply/state",
-            "api_docs": "http://127.0.0.1:8000/docs",
-            "cv_download": "http://127.0.0.1:8000/Badreddine_Barki_CV.pdf"
+            "api_status": "/api/status",
+            "api_state": "/api/apply/state",
+            "api_docs": "/docs",
+            "cv_download": "/Badreddine_Barki_CV.pdf"
         }
     }
+
+@app.api_route("/healthz", methods=["GET", "HEAD"])
+@app.api_route("/health", methods=["GET", "HEAD"])
+@app.api_route("/api/health", methods=["GET", "HEAD"])
+def health_check():
+    return {"status": "ok"}
 
 @app.post("/api/cancel")
 def cancel_application():
@@ -3135,7 +3141,7 @@ async def ws_transcribe(websocket: WebSocket, lang: str = "fr", engine: str = "g
         except Exception:
             pass
 
-@app.get("/api/status")
+@app.api_route("/api/status", methods=["GET", "HEAD"])
 def get_status():
     return active_agent_status
 

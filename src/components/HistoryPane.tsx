@@ -125,7 +125,7 @@ export function HistoryPane() {
   const pdfUrl = doc
     ? documentUrl(kind === 'cv' ? doc.files?.cv_pdf : doc.files?.letter_pdf)
     : `${BACKEND_URL}/cv.pdf?inline=1`;
-  const previewUrl = showsPdf ? pdfUrl || htmlUrl : htmlUrl;
+  const previewUrl = htmlUrl || (showsPdf ? pdfUrl : undefined);
 
   return (
     <div className="h-full w-full flex gap-3 min-h-0">
@@ -242,29 +242,42 @@ export function HistoryPane() {
                 )}
               </div>
 
-              <div className="mt-2.5 flex items-center gap-1">
-                {(['cv', 'letter'] as const).map((which) => (
-                  <button
-                    key={which}
-                    type="button"
-                    disabled={!doc && which === 'letter'}
-                    onClick={() => setKind(which)}
-                    className={`px-3 h-7 rounded-full text-[12px] transition-colors duration-200 ${
-                      kind === which
-                        ? 'bg-white/[0.12] text-[#f5f5f7] cursor-pointer'
-                        : !doc && which === 'letter'
-                          ? 'text-[rgba(235,235,245,0.22)] cursor-not-allowed'
-                          : 'text-[rgba(235,235,245,0.48)] hover:text-[#f5f5f7] hover:bg-white/[0.06] cursor-pointer'
-                    }`}
+              <div className="mt-2.5 flex items-center justify-between gap-1">
+                <div className="flex items-center gap-1 min-w-0">
+                  {(['cv', 'letter'] as const).map((which) => (
+                    <button
+                      key={which}
+                      type="button"
+                      disabled={!doc && which === 'letter'}
+                      onClick={() => setKind(which)}
+                      className={`px-3 h-7 rounded-full text-[12px] transition-colors duration-200 ${
+                        kind === which
+                          ? 'bg-white/[0.12] text-[#f5f5f7] cursor-pointer'
+                          : !doc && which === 'letter'
+                            ? 'text-[rgba(235,235,245,0.22)] cursor-not-allowed'
+                            : 'text-[rgba(235,235,245,0.48)] hover:text-[#f5f5f7] hover:bg-white/[0.06] cursor-pointer'
+                      }`}
+                    >
+                      {which === 'cv' ? 'CV' : 'Cover letter'}
+                    </button>
+                  ))}
+                  <span className="ml-2 text-[11px] text-[rgba(235,235,245,0.38)] truncate">
+                    {doc
+                      ? `Tailored for this advert · ${doc.language?.toUpperCase()} · ${doc.bullets_kept} of ${doc.bullets_available} bullets`
+                      : 'Standard CV — this application was made before tailoring existed'}
+                  </span>
+                </div>
+                {previewUrl && (
+                  <a
+                    href={previewUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-2.5 h-7 rounded-full text-[11.5px] font-medium text-[rgba(235,235,245,0.65)] hover:text-[#f5f5f7] hover:bg-white/[0.08] transition-colors duration-200 flex items-center gap-1.5 shrink-0"
+                    title="Open document in a new tab to view or print (Ctrl+P)"
                   >
-                    {which === 'cv' ? 'CV' : 'Cover letter'}
-                  </button>
-                ))}
-                <span className="ml-2 text-[11px] text-[rgba(235,235,245,0.38)] truncate">
-                  {doc
-                    ? `Tailored for this advert · ${doc.language?.toUpperCase()} · ${doc.bullets_kept} of ${doc.bullets_available} bullets`
-                    : 'Standard CV — this application was made before tailoring existed'}
-                </span>
+                    <ExternalLink className="w-3 h-3" /> Open / Print
+                  </a>
+                )}
               </div>
             </div>
 

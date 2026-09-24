@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { FileText, Loader2, RefreshCw, Sparkles, ExternalLink, Search } from 'lucide-react';
 import type { Job } from '../types/job';
 import {
-  canDisplayPdfInline, documentUrl, fetchDocuments, tailorJob,
+  documentUrl, fetchDocuments, tailorJob,
   type TailoredDocument,
 } from '../services/tailorApi';
 
@@ -143,7 +143,7 @@ export function TailorPane({ jobs, appliedJobIds, onOpenJob }: TailorPaneProps) 
   // the frame would be white and a file would appear in Downloads unasked.
   const pdfUrl = documentUrl(kind === 'cv' ? doc?.files?.cv_pdf : doc?.files?.letter_pdf);
   const htmlUrl = documentUrl(kind === 'cv' ? doc?.files?.cv_html : doc?.files?.letter_html);
-  const previewUrl = canDisplayPdfInline() ? pdfUrl || htmlUrl : htmlUrl || '';
+  const previewUrl = htmlUrl || pdfUrl || '';
 
   const invented = doc?.report?.invented || [];
   const reverted = doc?.report?.reverted || [];
@@ -285,26 +285,39 @@ export function TailorPane({ jobs, appliedJobIds, onOpenJob }: TailorPaneProps) 
               </div>
 
               {doc && (
-                <div className="mt-2.5 flex items-center gap-1">
-                  {(['cv', 'letter'] as const).map((which) => (
-                    <button
-                      key={which}
-                      type="button"
-                      onClick={() => setKind(which)}
-                      className={`px-3 h-7 rounded-full text-[12px] transition-colors duration-200 cursor-pointer ${
-                        kind === which
-                          ? 'bg-white/[0.12] text-[#f5f5f7]'
-                          : 'text-[rgba(235,235,245,0.48)] hover:text-[#f5f5f7] hover:bg-white/[0.06]'
-                      }`}
+                <div className="mt-2.5 flex items-center justify-between gap-1">
+                  <div className="flex items-center gap-1 min-w-0">
+                    {(['cv', 'letter'] as const).map((which) => (
+                      <button
+                        key={which}
+                        type="button"
+                        onClick={() => setKind(which)}
+                        className={`px-3 h-7 rounded-full text-[12px] transition-colors duration-200 cursor-pointer ${
+                          kind === which
+                            ? 'bg-white/[0.12] text-[#f5f5f7]'
+                            : 'text-[rgba(235,235,245,0.48)] hover:text-[#f5f5f7] hover:bg-white/[0.06]'
+                        }`}
+                      >
+                        {which === 'cv' ? 'CV' : 'Cover letter'}
+                      </button>
+                    ))}
+                    <span className="ml-2 text-[11px] text-[rgba(235,235,245,0.38)] truncate">
+                      {kind === 'cv'
+                        ? doc.headline
+                        : `${doc.letter_subject || ''}${doc.letter_fallback ? ' · plain version' : ''}`}
+                    </span>
+                  </div>
+                  {previewUrl && (
+                    <a
+                      href={previewUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-2.5 h-7 rounded-full text-[11.5px] font-medium text-[rgba(235,235,245,0.65)] hover:text-[#f5f5f7] hover:bg-white/[0.08] transition-colors duration-200 flex items-center gap-1.5 shrink-0"
+                      title="Open document in a new tab to view or print (Ctrl+P)"
                     >
-                      {which === 'cv' ? 'CV' : 'Cover letter'}
-                    </button>
-                  ))}
-                  <span className="ml-2 text-[11px] text-[rgba(235,235,245,0.38)] truncate">
-                    {kind === 'cv'
-                      ? doc.headline
-                      : `${doc.letter_subject || ''}${doc.letter_fallback ? ' · plain version' : ''}`}
-                  </span>
+                      <ExternalLink className="w-3 h-3" /> Open / Print
+                    </a>
+                  )}
                 </div>
               )}
             </div>

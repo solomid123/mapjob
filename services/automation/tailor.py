@@ -690,21 +690,6 @@ def html_to_pdf(html_path: Path, pdf_path: Path, log=None) -> bool:
     except Exception:
         pass
 
-    # 3. Built-in engine fallback (PyMuPDF) - guaranteed to work in any cloud environment without Chrome/Chromium
-    try:
-        import fitz
-        doc = fitz.open(str(html_path))
-        pdf_bytes = doc.convert_to_pdf()
-        if pdf_bytes and len(pdf_bytes) > 500:
-            pdf_path.parent.mkdir(parents=True, exist_ok=True)
-            pdf_path.write_bytes(pdf_bytes)
-            if log:
-                log("PDF printed via built-in engine")
-            return True
-    except Exception as exc:
-        if log:
-            log("Built-in PDF conversion failed: " + exc.__class__.__name__)
-
     return pdf_path.exists() and pdf_path.stat().st_size > 1000
 
 

@@ -148,9 +148,15 @@ def html_to_reportlab_pdf(html_path: Path, pdf_path: Path) -> bool:
         if role:
             story.append(Spacer(1, 3))
             story.append(Paragraph(role, role_style))
-        story.append(Spacer(1, 4))
-        story.append(Paragraph(contact_text, contact_style))
-        story.append(Spacer(1, 10))
+        contact_table = Table([[Paragraph(contact_text, contact_style)]], colWidths=[519])
+        contact_table.setStyle(TableStyle([
+            ('LINELEFT', (0,0), (0,0), 1.5, colors.black),
+            ('LEFTPADDING', (0,0), (0,0), 8),
+            ('RIGHTPADDING', (0,0), (-1,-1), 0),
+            ('TOPPADDING', (0,0), (-1,-1), 0),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 0),
+        ]))
+        story.append(contact_table)
         
         # Horizontal hairline under header (matching .head { border-bottom: 1px solid var(--text) })
         header_rule = Table([[""]], colWidths=[519], rowHeights=[1])

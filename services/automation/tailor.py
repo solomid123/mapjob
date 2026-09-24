@@ -715,19 +715,29 @@ def html_to_pdf(html_path: Path, pdf_path: Path, log=None) -> bool:
         if log:
             log("Playwright PDF failed: " + exc.__class__.__name__)
 
-    # Fallback for CV: If headless browser fails, copy master CV so cv_pdf ALWAYS exists!
+    # Generator for CV: Converts tailored cv.html into an authentic A4 PDF via ReportLab
     if "cv" in pdf_path.name.lower():
+        try:
+            from services.automation import cv_pdf_writer
+            if cv_pdf_writer.html_to_reportlab_cv_pdf(html_path, pdf_path):
+                if log:
+                    log("Tailored CV printed via ReportLab engine")
+                return True
+        except Exception as e:
+            if log:
+                log(f"ReportLab CV engine failed: {e}")
+
         master_cv_file = Path(__file__).resolve().parent.parent.parent / "Badreddine_Barki_CV.pdf"
         if master_cv_file.exists():
             try:
                 pdf_path.parent.mkdir(parents=True, exist_ok=True)
                 pdf_path.write_bytes(master_cv_file.read_bytes())
                 if log:
-                    log("Master CV PDF attached as authentic fallback")
+                    log("Master CV PDF attached as emergency fallback")
                 return True
             except Exception as e:
                 if log:
-                    log(f"Master CV copy failed: {e}")
+                    log(f"Master CV emergency copy failed: {e}")
 
     # Fallback for letter: If headless browser fails, generate clean A4 letter via ReportLab
     if "letter" in pdf_path.name.lower():
@@ -919,7 +929,8 @@ LETTER_CSS = """
      on a page that has room for them. The CV keeps its single row: there the
      header sits over two columns and the width is the point. */
   .head__contact { display:flex; flex-direction:column; gap:0; font-size:8.5pt;
-                   line-height:1.3; color:var(--muted); }
+                   line-height:1.35; color:var(--muted);
+                   border-left:1.5pt solid var(--text); padding-left:3.2mm; margin-top:1mm; }
 
   /* ---------- Who it is to, and when. One line each, no labels ---------- */
   .meta { display:flex; justify-content:space-between; align-items:flex-start;

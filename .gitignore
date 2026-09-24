@@ -52,7 +52,7 @@ services/automation/cloud_account.json
 
 # Candidate documents (PII)
 *_CV.pdf
-Badreddine_Barki_CV.pdf
+!Badreddine_Barki_CV.pdf
 
 # Debug artefacts from agent runs: screenshots and captured page HTML
 *.png

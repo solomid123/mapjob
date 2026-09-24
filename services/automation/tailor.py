@@ -642,6 +642,14 @@ def chrome_binary() -> str:
         found = shutil.which(name)
         if found:
             return found
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            executable = p.chromium.executable_path
+            if executable and Path(executable).exists():
+                return str(executable)
+    except Exception:
+        pass
     return ""
 
 
@@ -651,25 +659,38 @@ def html_to_pdf(html_path: Path, pdf_path: Path, log=None) -> bool:
     page can still show it, and an application can still be made by hand.
     """
     chrome = chrome_binary()
-    if not chrome:
-        if log:
-            log("No Chrome found to print the PDF with")
-        return False
-    profile = tempfile.mkdtemp(prefix="mapjob_print_")
+    if chrome:
+        profile = tempfile.mkdtemp(prefix="mapjob_print_")
+        try:
+            subprocess.run(
+                [chrome, "--headless=new", "--disable-gpu", "--no-first-run",
+                 "--no-pdf-header-footer", "--disable-extensions",
+                 "--user-data-dir=" + profile,
+                 "--print-to-pdf=" + str(pdf_path), html_path.as_uri()],
+                timeout=90, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                check=False)
+            if pdf_path.exists() and pdf_path.stat().st_size > 1000:
+                return True
+        except Exception as exc:
+            if log:
+                log("PDF printing with chrome failed: " + exc.__class__.__name__)
+        finally:
+            shutil.rmtree(profile, ignore_errors=True)
+
     try:
-        subprocess.run(
-            [chrome, "--headless=new", "--disable-gpu", "--no-first-run",
-             "--no-pdf-header-footer", "--disable-extensions",
-             "--user-data-dir=" + profile,
-             "--print-to-pdf=" + str(pdf_path), html_path.as_uri()],
-            timeout=90, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            check=False)
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-setuid-sandbox"])
+            page = browser.new_page()
+            page.goto(html_path.as_uri(), wait_until="load")
+            page.pdf(path=str(pdf_path), print_background=True, prefer_css_page_size=True)
+            browser.close()
+            if pdf_path.exists() and pdf_path.stat().st_size > 1000:
+                return True
     except Exception as exc:
         if log:
-            log("PDF printing failed: " + exc.__class__.__name__)
-        return False
-    finally:
-        shutil.rmtree(profile, ignore_errors=True)
+            log("Playwright PDF printing failed: " + exc.__class__.__name__)
+
     return pdf_path.exists() and pdf_path.stat().st_size > 1000
 
 

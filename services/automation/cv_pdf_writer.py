@@ -3,7 +3,8 @@
 ReportLab PDF generator for tailored CVs.
 Converts tailored cv.html into an authentic, pixel-perfect A4 PDF matching
 Badreddine Barki's CV geometry (centered header, 2-column section rows,
-right-aligned dates, elegant small bullet points) with ZERO external browser dependencies.
+right-aligned dates, elegant small bullet points, large readable typography)
+with ZERO external browser dependencies.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from typing import List, Tuple
 
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, KeepTogether
+    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
 )
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT, TA_RIGHT
@@ -47,71 +48,73 @@ def html_to_reportlab_cv_pdf(html_path: Path, pdf_path: Path) -> bool:
         if contact_m:
             raw_c = contact_m.group(1)
             raw_c = re.sub(r'<a[^>]*>(.*?)</a>', r'\1', raw_c)
-            # Use small subtle bullet separators between contacts
             c_parts = [_clean_text(p) for p in re.split(r'&bull;|•|●|&middot;', raw_c) if _clean_text(p)]
-            contact_str = "  <font size='6' color='#666666'>&#8226;</font>  ".join(c_parts)
+            contact_str = "  <font size='6.5' color='#555555'>&#8226;</font>  ".join(c_parts)
         else:
-            contact_str = "badreddinebarki@gmail.com  <font size='6' color='#666666'>&#8226;</font>  +33 7 45 76 80 10  <font size='6' color='#666666'>&#8226;</font>  linkedin.com/in/barki-badreddine-bb2328146"
+            contact_str = "badreddinebarki@gmail.com  <font size='6.5' color='#555555'>&#8226;</font>  +33 7 45 76 80 10  <font size='6.5' color='#555555'>&#8226;</font>  linkedin.com/in/barki-badreddine-bb2328146"
+
+        from services.automation.fonts_setup import setup_fonts
+        font_main, font_bold = setup_fonts()
 
         styles = getSampleStyleSheet()
 
         head_name_style = ParagraphStyle(
             'CVHeadName', parent=styles['Normal'],
-            fontName='Helvetica-Bold', fontSize=23, leading=26,
+            fontName=font_bold, fontSize=24, leading=26,
             alignment=TA_CENTER, textColor=colors.black
         )
         head_sub_style = ParagraphStyle(
             'CVHeadSub', parent=styles['Normal'],
-            fontName='Helvetica', fontSize=9.0, leading=12.5,
+            fontName=font_main, fontSize=9.0, leading=12.0,
             alignment=TA_CENTER, textColor=colors.HexColor('#222222')
         )
         sec_title_style = ParagraphStyle(
             'CVSecTitle', parent=styles['Normal'],
-            fontName='Helvetica-Bold', fontSize=8.8, leading=11.5,
+            fontName=font_bold, fontSize=9.0, leading=11.5,
             alignment=TA_LEFT, textColor=colors.black
         )
         body_text_style = ParagraphStyle(
             'CVBodyText', parent=styles['Normal'],
-            fontName='Helvetica', fontSize=9.0, leading=13.0,
+            fontName=font_main, fontSize=9.5, leading=12.6,
             alignment=TA_JUSTIFY, textColor=colors.HexColor('#111111')
         )
         company_style = ParagraphStyle(
             'CVCompany', parent=styles['Normal'],
-            fontName='Helvetica-Bold', fontSize=9.2, leading=12.5,
+            fontName=font_bold, fontSize=9.8, leading=12.4,
             textColor=colors.black
         )
         role_style = ParagraphStyle(
             'CVRole', parent=styles['Normal'],
-            fontName='Helvetica-Bold', fontSize=9.0, leading=12.0,
+            fontName=font_bold, fontSize=9.3, leading=12.0,
             textColor=colors.black
         )
         date_style = ParagraphStyle(
             'CVDate', parent=styles['Normal'],
-            fontName='Helvetica', fontSize=8.8, leading=12.0,
+            fontName=font_main, fontSize=9.0, leading=12.0,
             alignment=TA_RIGHT, textColor=colors.HexColor('#222222')
         )
         bullet_style = ParagraphStyle(
             'CVBullet', parent=styles['Normal'],
-            fontName='Helvetica', fontSize=8.8, leading=12.5,
+            fontName=font_main, fontSize=9.1, leading=12.2,
             leftIndent=11, firstLineIndent=-11,
             alignment=TA_JUSTIFY, textColor=colors.HexColor('#111111')
         )
         skill_head_style = ParagraphStyle(
             'CVSkillHead', parent=styles['Normal'],
-            fontName='Helvetica-Bold', fontSize=8.8, leading=11.5,
+            fontName=font_bold, fontSize=9.2, leading=11.8,
             textColor=colors.black
         )
 
-        LEFT_COL_W = 105
-        RIGHT_COL_W = 414
+        LEFT_COL_W = 108
+        RIGHT_COL_W = 417
 
         story = [
             Paragraph(name, head_name_style),
-            Spacer(1, 2.5),
+            Spacer(1, 2),
             Paragraph(addr, head_sub_style),
-            Spacer(1, 1.5),
+            Spacer(1, 1),
             Paragraph(contact_str, head_sub_style),
-            Spacer(1, 12),
+            Spacer(1, 8),
         ]
 
         # 2. Parse all .section-row elements
@@ -136,7 +139,7 @@ def html_to_reportlab_cv_pdf(html_path: Path, pdf_path: Path) -> bool:
             if summary_m:
                 sum_text = _clean_text(summary_m.group(1))
                 right_flowables.append(Paragraph(sum_text, body_text_style))
-                right_flowables.append(Spacer(1, 4))
+                right_flowables.append(Spacer(1, 2))
 
             # Jobs (Experience)
             job_matches = re.findall(r'<article class="job">(.*?)</article>', content_html, re.S)
@@ -153,35 +156,33 @@ def html_to_reportlab_cv_pdf(html_path: Path, pdf_path: Path) -> bool:
 
                     if comp_text:
                         right_flowables.append(Paragraph(comp_text, company_style))
-                        right_flowables.append(Spacer(1, 1.5))
+                        right_flowables.append(Spacer(1, 1))
 
                     if role_text or years_text:
-                        # Clean square symbol
-                        role_label = f"<font size='5.5' color='#222222'>&#9632;</font>&nbsp; {role_text}"
+                        role_label = f"<font size='6.5'>■</font>&nbsp; {role_text}"
                         r_table = Table(
                             [[Paragraph(role_label, role_style), Paragraph(years_text, date_style)]],
-                            colWidths=[305, 109]
+                            colWidths=[310, 107]
                         )
                         r_table.setStyle(TableStyle([
                             ('VALIGN', (0,0), (-1,-1), 'BASELINE'),
                             ('LEFTPADDING', (0,0), (-1,-1), 0),
                             ('RIGHTPADDING', (0,0), (-1,-1), 0),
                             ('TOPPADDING', (0,0), (-1,-1), 0),
-                            ('BOTTOMPADDING', (0,0), (-1,-1), 1),
+                            ('BOTTOMPADDING', (0,0), (-1,-1), 0.5),
                         ]))
                         right_flowables.append(r_table)
-                        right_flowables.append(Spacer(1, 2))
+                        right_flowables.append(Spacer(1, 1))
 
                     bullets = re.findall(r'<li>(.*?)</li>', j_html, re.S)
                     for b in bullets:
                         b_text = _clean_text(b)
-                        # Small, elegant bullet point: &#8226; in 6.5pt
-                        bullet_item = f"<font size='6.5' color='#444444'>&#8226;</font>&nbsp; {b_text}"
+                        bullet_item = f"•&nbsp; {b_text}"
                         right_flowables.append(Paragraph(bullet_item, bullet_style))
-                        right_flowables.append(Spacer(1, 1.5))
+                        right_flowables.append(Spacer(1, 0.8))
 
                     if idx < len(job_matches) - 1:
-                        right_flowables.append(Spacer(1, 4))
+                        right_flowables.append(Spacer(1, 2.5))
 
             # Education
             if "edu-item" in content_html:
@@ -202,33 +203,33 @@ def html_to_reportlab_cv_pdf(html_path: Path, pdf_path: Path) -> bool:
 
                     if sch_text:
                         right_flowables.append(Paragraph(sch_text, company_style))
-                        right_flowables.append(Spacer(1, 1.5))
+                        right_flowables.append(Spacer(1, 1))
 
                     if deg_text or years_text:
-                        deg_label = f"<font size='5.5' color='#222222'>&#9632;</font>&nbsp; {deg_text}"
+                        deg_label = f"<font size='6.5'>■</font>&nbsp; {deg_text}"
                         e_table = Table(
                             [[Paragraph(deg_label, role_style), Paragraph(years_text, date_style)]],
-                            colWidths=[305, 109]
+                            colWidths=[310, 107]
                         )
                         e_table.setStyle(TableStyle([
                             ('VALIGN', (0,0), (-1,-1), 'BASELINE'),
                             ('LEFTPADDING', (0,0), (-1,-1), 0),
                             ('RIGHTPADDING', (0,0), (-1,-1), 0),
                             ('TOPPADDING', (0,0), (-1,-1), 0),
-                            ('BOTTOMPADDING', (0,0), (-1,-1), 1),
+                            ('BOTTOMPADDING', (0,0), (-1,-1), 0.5),
                         ]))
                         right_flowables.append(e_table)
-                        right_flowables.append(Spacer(1, 2))
+                        right_flowables.append(Spacer(1, 1))
 
                     edu_bullets = re.findall(r'<li>(.*?)</li>', chunk, re.S)
                     for eb in edu_bullets:
                         eb_text = _clean_text(eb)
-                        eb_item = f"<font size='6.5' color='#444444'>&#8226;</font>&nbsp; {eb_text}"
+                        eb_item = f"•&nbsp; {eb_text}"
                         right_flowables.append(Paragraph(eb_item, bullet_style))
-                        right_flowables.append(Spacer(1, 1.5))
+                        right_flowables.append(Spacer(1, 0.8))
 
                     if idx < len(edu_chunks) - 1:
-                        right_flowables.append(Spacer(1, 3.5))
+                        right_flowables.append(Spacer(1, 2.5))
 
             # Skills
             if "skillgroup" in content_html:
@@ -250,10 +251,10 @@ def html_to_reportlab_cv_pdf(html_path: Path, pdf_path: Path) -> bool:
 
                     if grp_title:
                         right_flowables.append(Paragraph(grp_title, skill_head_style))
-                        right_flowables.append(Spacer(1, 1))
+                        right_flowables.append(Spacer(1, 0.5))
                     if tags_str:
                         right_flowables.append(Paragraph(tags_str, body_text_style))
-                        right_flowables.append(Spacer(1, 2.5))
+                        right_flowables.append(Spacer(1, 2))
 
             # Inline List (Languages & Certifications)
             if "inline-list" in content_html:
@@ -261,20 +262,20 @@ def html_to_reportlab_cv_pdf(html_path: Path, pdf_path: Path) -> bool:
                 for item_left, item_right in items:
                     left_clean = _clean_text(item_left)
                     right_clean = _clean_text(item_right) if item_right else ""
-                    item_label = f"<font size='5.5' color='#222222'>&#9632;</font>&nbsp; {left_clean}"
+                    item_label = f"<font size='6.5'>■</font>&nbsp; {left_clean}"
                     i_table = Table(
                         [[Paragraph(item_label, body_text_style), Paragraph(right_clean, date_style)]],
-                        colWidths=[305, 109]
+                        colWidths=[310, 107]
                     )
                     i_table.setStyle(TableStyle([
                         ('VALIGN', (0,0), (-1,-1), 'BASELINE'),
                         ('LEFTPADDING', (0,0), (-1,-1), 0),
                         ('RIGHTPADDING', (0,0), (-1,-1), 0),
                         ('TOPPADDING', (0,0), (-1,-1), 0),
-                        ('BOTTOMPADDING', (0,0), (-1,-1), 1),
+                        ('BOTTOMPADDING', (0,0), (-1,-1), 0.5),
                     ]))
                     right_flowables.append(i_table)
-                    right_flowables.append(Spacer(1, 1.5))
+                    right_flowables.append(Spacer(1, 1))
 
             if not right_flowables:
                 clean_raw = _clean_text(content_html)
@@ -291,7 +292,7 @@ def html_to_reportlab_cv_pdf(html_path: Path, pdf_path: Path) -> bool:
                 ('LEFTPADDING', (0,0), (-1,-1), 0),
                 ('RIGHTPADDING', (0,0), (-1,-1), 0),
                 ('TOPPADDING', (0,0), (-1,-1), 0),
-                ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 2),
             ]))
 
             # Page break before Skills section so Page 1 has Experience & Formation, Page 2 has Skills, Languages, Certifications
@@ -299,16 +300,16 @@ def html_to_reportlab_cv_pdf(html_path: Path, pdf_path: Path) -> bool:
                 story.append(PageBreak())
 
             story.append(row_table)
-            story.append(Spacer(1, 3))
+            story.append(Spacer(1, 2))
 
         pdf_path.parent.mkdir(parents=True, exist_ok=True)
         doc = SimpleDocTemplate(
             str(pdf_path),
             pagesize=A4,
-            leftMargin=38,
-            rightMargin=38,
-            topMargin=32,
-            bottomMargin=32
+            leftMargin=35,
+            rightMargin=35,
+            topMargin=22,
+            bottomMargin=22
         )
 
         doc.build(story)

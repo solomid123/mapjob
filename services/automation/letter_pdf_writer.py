@@ -96,45 +96,48 @@ def html_to_reportlab_pdf(html_path: Path, pdf_path: Path) -> bool:
             bottomMargin=40
         )
         
+        from services.automation.fonts_setup import setup_fonts
+        font_main, font_bold = setup_fonts()
+        
         styles = getSampleStyleSheet()
         name_style = ParagraphStyle(
             'HeadName', parent=styles['Normal'],
-            fontName='Helvetica', fontSize=24, leading=26,
+            fontName=font_main, fontSize=24, leading=26,
             textColor=colors.black
         )
         role_style = ParagraphStyle(
             'HeadRole', parent=styles['Normal'],
-            fontName='Helvetica-Bold', fontSize=8.5, leading=11.5,
+            fontName=font_bold, fontSize=8.5, leading=11.5,
             textColor=colors.HexColor('#1a1a1a')
         )
         contact_style = ParagraphStyle(
             'HeadContact', parent=styles['Normal'],
-            fontName='Helvetica', fontSize=8.5, leading=12.5,
+            fontName=font_main, fontSize=8.5, leading=12.5,
             textColor=colors.HexColor('#5a5a54')
         )
         meta_left_style = ParagraphStyle(
             'MetaLeft', parent=styles['Normal'],
-            fontName='Helvetica-Bold', fontSize=10, leading=13,
+            fontName=font_bold, fontSize=10, leading=13,
             textColor=colors.black
         )
         meta_right_style = ParagraphStyle(
             'MetaRight', parent=styles['Normal'],
-            fontName='Helvetica', fontSize=8.5, alignment=TA_RIGHT, leading=12,
+            fontName=font_main, fontSize=8.5, alignment=TA_RIGHT, leading=12,
             textColor=colors.HexColor('#5a5a54')
         )
         subject_style = ParagraphStyle(
             'SubjectStyle', parent=styles['Normal'],
-            fontName='Helvetica-Bold', fontSize=10.5, leading=14,
+            fontName=font_bold, fontSize=10.5, leading=14,
             textColor=colors.black
         )
         body_style = ParagraphStyle(
             'LetterBody', parent=styles['Normal'],
-            fontName='Helvetica', fontSize=9.5, leading=15.5, alignment=TA_JUSTIFY,
+            fontName=font_main, fontSize=9.8, leading=16.0, alignment=TA_JUSTIFY,
             textColor=colors.HexColor('#000000')
         )
         sign_style = ParagraphStyle(
             'LetterSig', parent=styles['Normal'],
-            fontName='Helvetica', fontSize=10.5, leading=14,
+            fontName=font_main, fontSize=10.5, leading=14,
             textColor=colors.black
         )
 
@@ -159,7 +162,7 @@ def html_to_reportlab_pdf(html_path: Path, pdf_path: Path) -> bool:
         # Sender contact table with left vertical rule
         contact_table = Table([[Paragraph(contact_text, contact_style)]], colWidths=[519])
         contact_table.setStyle(TableStyle([
-            ('LINELEFT', (0,0), (0,0), 1.5, colors.black),
+            ('LINEBEFORE', (0,0), (0,0), 1.5, colors.black),
             ('LEFTPADDING', (0,0), (0,0), 8),
             ('RIGHTPADDING', (0,0), (-1,-1), 0),
             ('TOPPADDING', (0,0), (-1,-1), 0),
@@ -176,7 +179,7 @@ def html_to_reportlab_pdf(html_path: Path, pdf_path: Path) -> bool:
         t = Table(meta_table_data, colWidths=[330, 189])
         t.setStyle(TableStyle([
             ('VALIGN', (0,0), (-1,-1), 'TOP'),
-            ('LINELEFT', (0,0), (0,0), 1.5, colors.black),
+            ('LINEBEFORE', (0,0), (0,0), 1.5, colors.black),
             ('LEFTPADDING', (0,0), (0,0), 8),
             ('RIGHTPADDING', (0,0), (-1,-1), 0),
             ('TOPPADDING', (0,0), (-1,-1), 0),

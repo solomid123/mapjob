@@ -2224,6 +2224,19 @@ _SMALL_TALK = re.compile(
     r"sch[oö]n,? dass|k[oö]nnen sie mich h[oö]ren)",
     re.IGNORECASE,
 )
+# "Introduce yourself", in the three languages. Checked before small talk: a
+# recruiter who opens with "Hi, welcome ... could you briefly introduce
+# yourself?" has asked the most important question of the interview, and
+# reading it as a greeting sent the model in with no CV and no name -- it
+# answered "My name is [name], I'm from [city]" out loud.
+_INTRODUCE = re.compile(
+    r"(introduce yourself|tell (me|us) (a (little|bit) )?about yourself|who you are|"
+    r"your (career|background) (so far|to date)|walk (me|us) through your (cv|background|career)|"
+    r"pr[ée]sentez[- ]vous|pr[ée]sente[- ]toi|parlez[- ](moi|nous) de vous|votre parcours|"
+    r"stellen sie sich|stell dich|erz[aä]hlen sie (uns |mir )?(etwas )?(von|[uü]ber) sich|"
+    r"ihren werdegang|ihr werdegang|wer sie sind)",
+    re.IGNORECASE,
+)
 _SHORT_FACT = re.compile(
     r"(when can you start|notice period|are you available|availability|"
     r"salary|expectations|where are you based|do you live|driving licen[cs]e|"
@@ -2248,6 +2261,14 @@ def _answer_shape(question: str) -> tuple[str, int]:
     this is writes the right thing at the right length.
     """
     q = (question or "").strip()
+    if _INTRODUCE.search(q):
+        return (
+            "You have been asked to introduce yourself. Say your real name, "
+            "where you are from, what you do or studied, and -- if they asked -- "
+            "why this role, all taken from the CV. 70-120 words, as speech, "
+            "warm and confident. Answer only the parts that were asked.",
+            360,
+        )
     if _ASK_STORY.search(q):
         return (
             "This one asks for a real example, so tell one: what the situation "
@@ -2255,7 +2276,9 @@ def _answer_shape(question: str) -> tuple[str, int]:
             "example only, told as speech -- no labels, no headings.",
             420,
         )
-    if _SMALL_TALK.search(q):
+    # A greeting is short. "Hi" at the front of a long turn that ends in a
+    # question is a recruiter being polite before the real question.
+    if _SMALL_TALK.search(q) and not (len(q) > 160 and "?" in q[40:]):
         return (
             "This is small talk, not a question about your experience. Answer "
             "it the way a person would: one sentence, two at most, warm and "
@@ -2275,6 +2298,28 @@ def _answer_shape(question: str) -> tuple[str, int]:
         "just answer.",
         300,
     )
+
+
+_NO_PLACEHOLDERS = (
+    "Never write a placeholder -- no [name], [city], [company], [X years] or "
+    "anything else in square brackets. These words are read aloud as they "
+    "stand. Use the real fact from the profile, and if it is not there, word "
+    "the sentence so it is not needed."
+)
+
+
+def _identity_line(who: str, speaking: dict) -> str:
+    """Name, home and what they do: enough to say hello as themselves."""
+    try:
+        from services.automation import profile_store as _store
+        p = _store.profile_for(who)
+    except Exception:
+        p = {}
+    name = str(p.get("full_name") or speaking.get("display_name") or "").strip()
+    home = ", ".join(x for x in (str(p.get("city") or "").strip(),
+                                 str(p.get("country") or "").strip()) if x)
+    title = str(p.get("current_title") or speaking.get("focus") or "").strip()
+    return " | ".join(x for x in (name, home, title) if x) or "the candidate"
 
 
 def _answer_prompt(req: "InterviewAnswerRequest") -> tuple[str, str, str, int]:
@@ -2313,14 +2358,19 @@ def _answer_prompt(req: "InterviewAnswerRequest") -> tuple[str, str, str, int]:
         # misuse, no example to shape and nothing to invent, so every one of
         # those paragraphs was four hundred tokens of instruction read before
         # a ten-word answer that somebody is waiting for in real time.
+        # Still named, though. The CV is left out to keep a greeting quick, but
+        # "nice to meet you, I'm ..." is small talk too, and a model with no
+        # name to hand writes "[name]" and the candidate reads it out.
         return question, (
-            f"You are helping someone in a live interview, speaking as them in "
-            f"{lang}, first person. The recruiter has just said something "
-            f"conversational, not a question about their experience.\n\n"
+            f"You are helping {speaking.get('display_name') or 'someone'} in a "
+            f"live interview, speaking as them in {lang}, first person. The "
+            f"recruiter has just said something conversational, not a question "
+            f"about their experience.\n\n"
             f"{shape}\n\n"
+            f"{_NO_PLACEHOLDERS}\n\n"
             "Reply with the words to say and nothing else: warm, natural, "
             "contractions welcome, no headings and no markdown."
-        ), f"THE RECRUITER JUST SAID:\n{question}", budget
+        ), f"WHO YOU ARE: {_identity_line(who, speaking)}\n\nTHE RECRUITER JUST SAID:\n{question}", budget
     system = (
         f"You are a real-time interview copilot for {speaking.get('display_name') or 'the candidate'}"
         + (", " + str(speaking.get("focus")).lower() if speaking.get("focus") else "") + ". "
@@ -2349,6 +2399,7 @@ def _answer_prompt(req: "InterviewAnswerRequest") -> tuple[str, str, str, int]:
         "everything factual comes from the CV below. When a THIS INTERVIEW "
         "brief is present, aim the answer at that role and company and borrow "
         "their vocabulary, but claim no knowledge the brief does not contain.\n\n"
+        + _NO_PLACEHOLDERS + "\n\n"
         "Reply with the words to say and nothing else -- no preamble, no notes, "
         "no options, no explanation of what you are doing."
     )

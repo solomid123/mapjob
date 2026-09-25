@@ -653,6 +653,23 @@ def chrome_binary() -> str:
     return ""
 
 
+def _owner_of(pdf_path: Path) -> str:
+    """
+    Whose papers these are, read off where they are kept.
+
+    Every generated document sits at documents/<account>/<job>/<file>, so the
+    folder two up is the account. The fallbacks below rebuild a page from the
+    profile rather than from the HTML, and without this they rebuilt it from the
+    default account's: Chaimaa's cover sheet came out with her photograph -- read
+    from the HTML -- under Badreddine's name and address.
+    """
+    try:
+        rel = Path(pdf_path).resolve().relative_to(documents.ROOT.resolve())
+    except (ValueError, OSError):
+        return ""
+    return rel.parts[0] if len(rel.parts) >= 3 else ""
+
+
 def html_to_pdf(html_path: Path, pdf_path: Path, log=None) -> bool:
     """
     True if a PDF came out. Uses headless Chromium or Playwright with container-safe flags.
@@ -727,8 +744,12 @@ def html_to_pdf(html_path: Path, pdf_path: Path, log=None) -> bool:
             if log:
                 log(f"ReportLab CV engine failed: {e}")
 
+        # That file is Badreddine's CV. It is a stand-in for his account only:
+        # for anyone else it would be somebody else's CV sent under their name,
+        # and no attachment is better than that.
+        from services.automation import people
         master_cv_file = Path(__file__).resolve().parent.parent.parent / "Badreddine_Barki_CV.pdf"
-        if master_cv_file.exists():
+        if people.resolve(_owner_of(pdf_path)) == people.DEFAULT and master_cv_file.exists():
             try:
                 pdf_path.parent.mkdir(parents=True, exist_ok=True)
                 pdf_path.write_bytes(master_cv_file.read_bytes())
@@ -755,8 +776,8 @@ def html_to_pdf(html_path: Path, pdf_path: Path, log=None) -> bool:
     if "deckblatt" in pdf_path.name.lower():
         try:
             from services.automation import deckblatt_pdf_writer
-            user_hint = "chaimaa" if "chaimaa" in str(pdf_path).lower() or "chaimaa" in str(html_path).lower() else None
-            if deckblatt_pdf_writer.html_to_reportlab_deckblatt_pdf(html_path, pdf_path, user=user_hint):
+            if deckblatt_pdf_writer.html_to_reportlab_deckblatt_pdf(
+                    html_path, pdf_path, user=_owner_of(pdf_path) or None):
                 if log:
                     log("Deckblatt printed via ReportLab fallback")
                 return True

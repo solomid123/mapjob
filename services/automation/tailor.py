@@ -909,6 +909,11 @@ def write_letter(job: Dict, language: str, log=None, user: str = "") -> Dict[str
             log("Letter fell back to the plain version")
     heading, default_greeting = LETTER_HEADINGS[language]
     subject = heading + " - " + str(job.get("title") or "")
+    if language == "de":
+        # The Deckblatt's wording, so a German dossier's cover sheet and its
+        # letter name the post the same way.
+        from services.automation import deckblatt
+        subject = deckblatt.german_subject(job, user or None)
     greeting = greeting_for({"company": job.get("company")}, language) or default_greeting
     # Same rule as the outreach letters: a letter does not announce what kind of
     # letter it is. This one is answering an advert and has less reason to, but
@@ -1069,7 +1074,10 @@ def letter_html(letter: Dict[str, str], job: Dict) -> str:
 
     if subj.lower() in ("bewerbung", "candidature", "application"):
         if letter["language"] == "de":
-            subj = f"Bewerbung als {role_fallback}" if role_fallback else "Bewerbung"
+            from services.automation import deckblatt
+            subj = deckblatt.german_subject(
+                {"title": str(job.get("title") or "") or role_fallback},
+                str(job.get("user") or "") or None)
         elif letter["language"] == "fr":
             subj = f"Candidature au poste de {role_fallback}" if role_fallback else "Candidature"
         else:

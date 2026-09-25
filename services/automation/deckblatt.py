@@ -82,6 +82,7 @@ _NOISE = (
     r"\b(?:ref\.?|kennziffer|stellen-?nr\.?)\s*[:\s]\s*\S+",
     r"\bab\s+(?:sofort|\d{2}\.\d{2}\.\d{4}|\w+\s+\d{4})\b",
     r"\b(?:20\d\d)\s*/\s*(?:20\d\d)\b",
+    r"\s(?:20\d\d)\s*$",                                       # "... 2027"
 )
 
 _STARTERS = (
@@ -139,13 +140,52 @@ def post_line(job: Dict[str, Any], user: Optional[str] = None) -> str:
     she = _feminine(user)
     if she is not None:
         for pattern, female, male in _PAIRS:
-            title = re.sub(pattern, female if she else male, title, flags=re.I)
+            word = female if she else male
+            # Keep the case the advert used: inside a compound the pair is
+            # lower-case, and "Industriekaufmann/-frau" must become
+            # "Industriekauffrau", not "IndustrieKauffrau".
+            title = re.sub(pattern, lambda m, w=word: (w[:1].lower() + w[1:])
+                           if m.group(0)[:1].islower() else w, title, flags=re.I)
 
     # Whatever is left after a dash at the end is usually the employer's own
     # note -- a location, a start date, a department -- and not the post.
     title = re.sub(r"\s*[–—|]\s*$", "", title)
     title = re.sub(r"\s{2,}", " ", title).strip(" ,;:-–—")
     return title
+
+
+_TRAINING = re.compile(r"\b(?:berufs)?ausbildung(?:splatz)?\b", re.I)
+_TRAINING_LEAD = re.compile(
+    r"^(?:berufs)?ausbildung(?:splatz)?\s*(?:(?:zum|zur|als)\s+|[:\-–]\s*)?", re.I)
+
+
+def post_phrase(job: Dict[str, Any], user: Optional[str] = None) -> str:
+    """
+    What follows the word "Bewerbung", on the sheet and in the subject alike.
+
+    One function for both, because the two used to disagree on the same
+    application: the sheet said "als Ausbildung Kauffrau für Büromanagement"
+    and the subject "Bewerbung als Ausbildung Kaufmann/-frau (m/w/d) für
+    Büromanagement". Neither is German -- nobody applies *as* a training -- and
+    they did not even agree on her gender.
+
+    A training post is asked for the way it is asked for in German, "um einen
+    Ausbildungsplatz als ...". Anything else is "als ...".
+    """
+    raw = str(job.get("title") or job.get("job_title") or "")
+    post = post_line(job, user)
+    if not post:
+        return ""
+    if _TRAINING.search(raw) or _TRAINING.search(post):
+        rest = _TRAINING_LEAD.sub("", post).strip(" ,;:-–—")
+        return "um einen Ausbildungsplatz als " + rest if rest else "um einen Ausbildungsplatz"
+    return "als " + post
+
+
+def german_subject(job: Dict[str, Any], user: Optional[str] = None) -> str:
+    """The subject line of a German letter, worded the way the sheet words it."""
+    phrase = post_phrase(job, user)
+    return ("Bewerbung " + phrase) if phrase else "Bewerbung"
 
 
 def specialisation(job: Dict[str, Any], user: Optional[str] = None) -> str:
@@ -157,6 +197,12 @@ def specialisation(job: Dict[str, Any], user: Optional[str] = None) -> str:
     IHK-FOSA anerkannt" is not a claim about this vacancy -- so an advert that
     happens to omit it must not delete it from the sheet.
     """
+    # Except under a training post. "Um einen Ausbildungsplatz als Kauffrau für
+    # Büromanagement" over "Kauffrau für Groß- und Außenhandelsmanagement" reads
+    # as two different applications on one page, and the letter's letterhead
+    # already says what she is now.
+    if post_phrase(job, user).startswith("um einen Ausbildungsplatz"):
+        return ""
     return sheet_profile(user).get("headline", "")
 
 
@@ -242,7 +288,7 @@ _MAIL = ('<svg width="11" height="8" viewBox="-0.15 -0.10 0.30 0.20" fill="none"
 
 def _lines(profile: Dict[str, str]) -> list:
     """
-    The contact block: address, phone, email, each only if there is one.
+    The contact block: address, email, phone, each only if there is one.
 
     An empty row printed anyway leaves a bare icon floating beside nothing,
     which reads as a document that failed rather than as a detail withheld.
@@ -253,9 +299,11 @@ def _lines(profile: Dict[str, str]) -> list:
         part for part in (profile.get("address"), town, profile.get("country"))
         if part)
     rows = []
+    # Email before phone: the letter's sender block runs address, email,
+    # portfolio, phone, and the two pages of one application must agree.
     for icon, text in ((_PIN, where),
-                       (_PHONE, profile.get("phone_formatted") or profile.get("phone")),
-                       (_MAIL, profile.get("email"))):
+                       (_MAIL, profile.get("email")),
+                       (_PHONE, profile.get("phone_formatted") or profile.get("phone"))):
         if text:
             rows.append('<div class="contact-row"><span class="contact-icon">'
                         + icon + "</span><span>" + _escape(text) + "</span></div>")
@@ -369,9 +417,9 @@ def sheet_html(job: Dict[str, Any], user: Optional[str] = None) -> str:
     photo_block = ('<img src="' + photo + '" alt="">') if photo else ""
 
     title_block = '<div class="title-bewerbung">BEWERBUNG</div>'
-    post = post_line(job, user)
+    post = post_phrase(job, user)
     if post:
-        title_block += '<div class="subtitle-target">als ' + _escape(post) + "</div>"
+        title_block += '<div class="subtitle-target">' + _escape(post) + "</div>"
     extra = specialisation(job, user)
     if extra:
         title_block += ('<div class="subtitle-specialization">'

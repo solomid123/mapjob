@@ -130,7 +130,9 @@ def generate_deckblatt_pdf(job: Optional[Dict[str, Any]] = None, pdf_path: Optio
                         where = txt
 
             if not post:
-                post_m = re.search(r'<div class="subtitle-target">als\s+(.*?)</div>', html_content, re.S)
+                # The whole line, "als ..." or "um einen Ausbildungsplatz als ...",
+                # exactly as the sheet worded it.
+                post_m = re.search(r'<div class="subtitle-target">(.*?)</div>', html_content, re.S)
                 if post_m:
                     post = _clean_text(post_m.group(1))
 
@@ -159,9 +161,12 @@ def generate_deckblatt_pdf(job: Optional[Dict[str, Any]] = None, pdf_path: Optio
             email = profile.get("email") or ""
 
         if not post:
-            post = deckblatt.post_line(job, user)
+            post = deckblatt.post_phrase(job, user)
 
-        if not extra:
+        # A sheet that printed no second line meant it: under a training post
+        # the profile's headline is left off on purpose, and filling it back in
+        # from the profile here would undo that.
+        if not extra and not html_content and not post.startswith("um einen Ausbildungsplatz"):
             extra = deckblatt.specialisation(job, user)
 
         full_name = f"{name_first} {name_last}".strip() or profile.get("full_name") or ""
@@ -240,10 +245,11 @@ def generate_deckblatt_pdf(job: Optional[Dict[str, Any]] = None, pdf_path: Optio
         contacts = []
         if where:
             contacts.append(("pin", where))
-        if phone:
-            contacts.append(("phone", phone))
+        # Same order as the letter's sender block: address, email, phone.
         if email:
             contacts.append(("mail", email))
+        if phone:
+            contacts.append(("phone", phone))
 
         contact_x = 78 * mm
         contact_base_y = PAGE_H - (58.5 * mm + 9)
@@ -303,7 +309,7 @@ def generate_deckblatt_pdf(job: Optional[Dict[str, Any]] = None, pdf_path: Optio
             return lines
 
         spec_lines = _wrap_text(extra, font_main, 11.5)
-        target_lines = _wrap_text("als " + post if post else "", font_bold, 13.0)
+        target_lines = _wrap_text(post, font_bold, 13.0)
 
         cur_y = bottom_anchor
 

@@ -354,7 +354,11 @@ def write(prospect: Dict[str, object], role: str = "",
 
     company = str(prospect.get("company") or "")
     if language == "de":
-        subject = f"Bewerbung als {role}" if role else "Bewerbung"
+        # Worded by the Deckblatt, so the subject and the cover sheet of one
+        # application name the post the same way -- same gender, no (m/w/d),
+        # and a training place asked for as one.
+        from services.automation import deckblatt
+        subject = deckblatt.german_subject({"title": role}, user)
     elif language == "fr":
         subject = f"Candidature au poste de {role}" if role else "Candidature"
     else:

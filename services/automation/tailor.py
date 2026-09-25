@@ -755,7 +755,8 @@ def html_to_pdf(html_path: Path, pdf_path: Path, log=None) -> bool:
     if "deckblatt" in pdf_path.name.lower():
         try:
             from services.automation import deckblatt_pdf_writer
-            if deckblatt_pdf_writer.html_to_reportlab_deckblatt_pdf(html_path, pdf_path):
+            user_hint = "chaimaa" if "chaimaa" in str(pdf_path).lower() or "chaimaa" in str(html_path).lower() else None
+            if deckblatt_pdf_writer.html_to_reportlab_deckblatt_pdf(html_path, pdf_path, user=user_hint):
                 if log:
                     log("Deckblatt printed via ReportLab fallback")
                 return True

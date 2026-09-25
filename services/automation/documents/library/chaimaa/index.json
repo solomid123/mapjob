@@ -1,0 +1,49 @@
+{
+  "documents": [
+    {
+      "id": "8e07d073a0c9",
+      "user_id": "chaimaa",
+      "title": "lebenslauf_chaimaa.pdf",
+      "kind": "master_cv",
+      "filename": "lebenslauf_chaimaa.pdf",
+      "storage_path": "chaimaa/8e07d073a0c9__lebenslauf_chaimaa.pdf",
+      "mime": "application/pdf",
+      "bytes": 1462831,
+      "pages": 2,
+      "mergeable": true,
+      "sha256": "50ee76a5ffde8e42",
+      "attach_by_default": false,
+      "added_at": "2026-09-21T05:06:55+00:00"
+    },
+    {
+      "id": "a07f8bdb2a59",
+      "user_id": "chaimaa",
+      "title": "Bewerbungsfoto",
+      "kind": "photo",
+      "filename": "chai-cv-pic.png",
+      "storage_path": "chaimaa/a07f8bdb2a59__chai-cv-pic.png",
+      "mime": "image/png",
+      "bytes": 766866,
+      "pages": 0,
+      "mergeable": false,
+      "sha256": "604d45a684b5aef3",
+      "attach_by_default": false,
+      "added_at": "2026-09-21T07:08:08+00:00"
+    },
+    {
+      "id": "056d613966b9",
+      "user_id": "chaimaa",
+      "title": "Bewerbungsunterlagen_Chaimaa_BARKI_chaima_LTd-4-28",
+      "kind": "other",
+      "filename": "Bewerbungsunterlagen_Chaimaa_BARKI_chaima_LTd-4-28.pdf",
+      "storage_path": "chaimaa/056d613966b9__Bewerbungsunterlagen_Chaimaa_BARKI_chaima_LTd-4-28.pdf",
+      "mime": "application/pdf",
+      "bytes": 3535321,
+      "pages": 25,
+      "mergeable": true,
+      "sha256": "9f33432453ca0ffd",
+      "attach_by_default": false,
+      "added_at": "2026-09-24T17:52:24+00:00"
+    }
+  ]
+}

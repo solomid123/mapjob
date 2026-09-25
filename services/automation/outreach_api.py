@@ -1098,6 +1098,27 @@ def remove_prospect(prospect_id: int, user: str = "") -> Dict[str, Any]:
     return {"removed": True}
 
 
+@router.get("/backup")
+def get_backup(user: str = "") -> Dict[str, Any]:
+    """Export full prospects snapshot, sends, and mailbox configuration."""
+    return store.dump_backup(user=user)
+
+
+class BackupIn(BaseModel):
+    user: str = ""
+    version: Optional[int] = 1
+    prospects: List[Dict[str, Any]] = []
+    sends: Optional[List[Dict[str, Any]]] = []
+    mailboxes: Optional[Dict[str, Any]] = {}
+
+
+@router.post("/restore")
+def post_restore(body: BackupIn) -> Dict[str, Any]:
+    """Restore prospects, sends, and mailboxes from backup."""
+    result = store.restore_backup(body.model_dump(), user=body.user)
+    return {"ok": True, **result}
+
+
 class ProspectIds(BaseModel):
     user: str = ""
     ids: List[int] = []

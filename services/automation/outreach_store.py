@@ -122,6 +122,7 @@ def init_db() -> None:
         _add_document_columns(conn)
         _backfill_sends(conn)
         _backfill_job_titles(conn)
+        _seed_from_file(conn)
 
 
 def _backfill_sends(conn: sqlite3.Connection) -> None:
@@ -792,6 +793,124 @@ def stats(user: str = "") -> Dict[str, int]:
                 + "AND p.stage IN ('new','verified','letter','dossier')", who),
             **{f"stage_{name}": by_stage.get(name, 0) for name in STAGES},
         }
+
+
+def dump_backup(user: str = "") -> Dict[str, Any]:
+    """Export all prospects, sends, and mailboxes for this account."""
+    who = (_DEFAULT_OWNER(), _owner(user))
+    with connect() as conn:
+        prospect_rows = conn.execute(
+            "SELECT * FROM prospects WHERE COALESCE(NULLIF(user,''), ?) = ?", who
+        ).fetchall()
+        sends_rows = conn.execute("SELECT * FROM sends").fetchall()
+
+    prospects = [dict(r) for r in prospect_rows]
+    sends = [dict(r) for r in sends_rows]
+
+    mailboxes = {}
+    try:
+        from services.automation import mailbox
+        if mailbox.STORE.exists():
+            mailboxes = json.loads(mailbox.STORE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+
+    return {
+        "version": 1,
+        "user": _owner(user),
+        "exported_at": _now(),
+        "prospects": prospects,
+        "sends": sends,
+        "mailboxes": mailboxes,
+    }
+
+
+def restore_backup(data: Dict[str, Any], user: str = "") -> Dict[str, int]:
+    """
+    Restore prospects, sends, and mailboxes from a backup dict.
+    Upserts prospects and inserts missing sends.
+    """
+    target_user = _owner(user or data.get("user") or "")
+    prospects = data.get("prospects") or []
+    sends = data.get("sends") or []
+    mailboxes = data.get("mailboxes") or {}
+
+    p_restored = 0
+    s_restored = 0
+
+    with connect() as conn:
+        for p in prospects:
+            key = p.get("dedupe_key")
+            if not key:
+                key = f"{p.get('company', '').lower()}::{p.get('email', '').lower()}::{target_user}"
+
+            existing = conn.execute(
+                "SELECT id FROM prospects WHERE dedupe_key = ? OR (lower(company)=? AND lower(email)=? AND COALESCE(NULLIF(user,''), ?)=?)",
+                (key, str(p.get("company", "")).lower(), str(p.get("email", "")).lower(), _DEFAULT_OWNER(), target_user)
+            ).fetchone()
+
+            if existing:
+                conn.execute(
+                    "UPDATE prospects SET stage=?, notes=?, role=?, job_title=?, email_status=?, website=?, city=? WHERE id=?",
+                    (p.get("stage", "new"), p.get("notes", ""), p.get("role", ""), p.get("job_title", ""),
+                     p.get("email_status", "unknown"), p.get("website", ""), p.get("city", ""), existing[0])
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO prospects (dedupe_key, company, contact_name, role, job_title, email, email_status, website, city, source, stage, notes, user, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (key, p.get("company", ""), p.get("contact_name", ""), p.get("role", ""), p.get("job_title", ""),
+                     p.get("email", ""), p.get("email_status", "unknown"), p.get("website", ""), p.get("city", ""),
+                     p.get("source", "manual"), p.get("stage", "new"), p.get("notes", ""), target_user,
+                     p.get("created_at") or _now(), p.get("updated_at") or _now())
+                )
+                p_restored += 1
+
+        for s in sends:
+            to_email = s.get("to_email", "")
+            sent_at = s.get("sent_at", "")
+            msg_id = s.get("message_id", "")
+            if to_email and sent_at:
+                exists = conn.execute(
+                    "SELECT 1 FROM sends WHERE to_email = ? AND sent_at = ?", (to_email, sent_at)
+                ).fetchone()
+                if not exists:
+                    conn.execute(
+                        "INSERT INTO sends (prospect_id, to_email, message_id, sent_at) VALUES (?, ?, ?, ?)",
+                        (s.get("prospect_id"), to_email, msg_id, sent_at)
+                    )
+                    s_restored += 1
+
+    if mailboxes and isinstance(mailboxes, dict):
+        try:
+            from services.automation import mailbox
+            cur = {}
+            if mailbox.STORE.exists():
+                try:
+                    cur = json.loads(mailbox.STORE.read_text(encoding="utf-8"))
+                except Exception:
+                    cur = {}
+            cur.update(mailboxes)
+            mailbox.STORE.parent.mkdir(parents=True, exist_ok=True)
+            mailbox.STORE.write_text(json.dumps(cur, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+    return {"prospects_restored": p_restored, "sends_restored": s_restored}
+
+
+def _seed_from_file(conn: sqlite3.Connection) -> None:
+    """If database is empty on fresh container deployment, seed from outreach_seed.json."""
+    try:
+        count = conn.execute("SELECT COUNT(*) FROM prospects").fetchone()[0]
+        if count > 0:
+            return
+        seed_file = Path(__file__).resolve().parent / "outreach_seed.json"
+        if seed_file.exists():
+            data = json.loads(seed_file.read_text(encoding="utf-8"))
+            restore_backup(data)
+    except Exception:
+        pass
 
 
 init_db()

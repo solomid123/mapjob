@@ -2,8 +2,8 @@ import { API_BASE } from '../services/apiBase';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { currentUser, userKey, withUser } from '../services/account';
 import {
-  Activity, Building2, FileText, Loader2, MailCheck,
-  Plug, Plus, RefreshCw, Search, Send, ShieldCheck, Trash2,
+  Activity, Building2, Download, FileText, Loader2, MailCheck,
+  Plug, Plus, RefreshCw, Search, Send, ShieldCheck, Trash2, Upload,
   Users, X,
 } from 'lucide-react';
 import {
@@ -463,9 +463,54 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
       if (search.trim()) params.set('query', search.trim());
       const res = await fetch(`${BACKEND}/api/outreach/prospects?${params}`);
       const data = await res.json();
-      setProspects(data.items || []);
-      setTotal(data.total || 0);
-      setPages(data.pages || 1);
+      const items = data.items || [];
+      const totalCount = data.total || 0;
+
+      if (totalCount > 0) {
+        setProspects(items);
+        setTotal(totalCount);
+        setPages(data.pages || 1);
+
+        // Silently persist backup snapshot in browser storage
+        try {
+          fetch(withUser(`${BACKEND}/api/outreach/backup`))
+            .then((r) => r.json())
+            .then((backup) => {
+              if (backup && Array.isArray(backup.prospects) && backup.prospects.length > 0) {
+                window.localStorage.setItem(userKey('mapjob_outreach_backup'), JSON.stringify(backup));
+              }
+            })
+            .catch(() => {});
+        } catch {}
+      } else {
+        // If backend returned 0 prospects (e.g. fresh Render container deploy),
+        // check if browser localStorage has a saved snapshot to auto-restore!
+        try {
+          const raw = window.localStorage.getItem(userKey('mapjob_outreach_backup'));
+          if (raw && !search.trim()) {
+            const saved = JSON.parse(raw);
+            if (saved && Array.isArray(saved.prospects) && saved.prospects.length > 0) {
+              const restRes = await fetch(`${BACKEND}/api/outreach/restore`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ...saved, user: currentUser() }),
+              });
+              if (restRes.ok) {
+                const retryRes = await fetch(`${BACKEND}/api/outreach/prospects?${params}`);
+                const retryData = await retryRes.json();
+                setProspects(retryData.items || []);
+                setTotal(retryData.total || 0);
+                setPages(retryData.pages || 1);
+                return;
+              }
+            }
+          }
+        } catch {}
+
+        setProspects([]);
+        setTotal(0);
+        setPages(1);
+      }
     } catch {
       setProspects([]);
     } finally {
@@ -500,6 +545,52 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
       setMailbox(NO_MAILBOX);
     }
   }, []);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleExportBackup = useCallback(async () => {
+    try {
+      const res = await fetch(withUser(`${BACKEND}/api/outreach/backup`));
+      const data = await res.json();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `mapjob_outreach_backup_${currentUser() || 'export'}_${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError('Could not export backup: ' + String(e));
+    }
+  }, []);
+
+  const handleImportBackup = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      setBusy(true);
+      const res = await fetch(`${BACKEND}/api/outreach/restore`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...parsed, user: currentUser() }),
+      });
+      if (res.ok) {
+        window.localStorage.setItem(userKey('mapjob_outreach_backup'), JSON.stringify(parsed));
+        await Promise.all([loadProspects(1, ''), loadOverview(), loadDocuments()]);
+      } else {
+        setError('Failed to restore backup.');
+      }
+    } catch (err) {
+      setError('Invalid backup JSON file: ' + String(err));
+    } finally {
+      setBusy(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }, [loadProspects, loadOverview, loadDocuments]);
 
   useEffect(() => {
     loadOverview();
@@ -1418,6 +1509,29 @@ export const OutreachPage: React.FC<{ onClose: () => void }> = ({ onClose }) => 
                 <Trash2 className="w-4 h-4" /> No address
               </button>
             ) : null}
+            <button
+              type="button"
+              onClick={handleExportBackup}
+              title="Download a backup file (.json) of all prospects and sending history to your PC."
+              className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-white/[0.08] hover:bg-white/[0.14] text-[rgba(235,235,245,0.72)] hover:text-white text-[13px] font-semibold transition-colors"
+            >
+              <Download className="w-4 h-4" /> Backup
+            </button>
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleImportBackup}
+              accept=".json"
+              className="hidden"
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              title="Upload a previously saved backup file (.json) to restore your prospects and send history."
+              className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-white/[0.08] hover:bg-white/[0.14] text-[rgba(235,235,245,0.72)] hover:text-white text-[13px] font-semibold transition-colors"
+            >
+              <Upload className="w-4 h-4" /> Restore
+            </button>
             <button
               type="button"
               onClick={() => setShowAdd((v) => !v)}

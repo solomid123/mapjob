@@ -66,6 +66,7 @@ scratch/
 !public/wallpaper-*.jpg
 !public/integrations/*
 !public/integrations/
+!services/automation/documents/library/**
 
 # Same mistake, worse consequence: /*.html was meant to catch captured pages
 # dumped at the repo root by agent runs, and it also caught index.html -- the
@@ -101,7 +102,8 @@ services/automation/browser_use_cache.json
 services/automation/profile.json
 
 # Tailored CVs and letters: a home address and an employment history per job.
-services/automation/documents/
+services/automation/documents/*
+!services/automation/documents/library/
 
 # Connected mailboxes: one refresh token per account. A key to somebody's mail.
 services/automation/mailboxes.json
